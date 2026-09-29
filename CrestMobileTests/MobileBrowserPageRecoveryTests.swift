@@ -6,60 +6,34 @@ import XCTest
 @MainActor
 final class MobileBrowserPageRecoveryTests: XCTestCase {
 
-    // MARK: - Reclaimed web-content processes
+    // MARK: - Stopped web-content processes
 
-    func testTerminationOffScreenNeitherReloadsNorSpendsTheRecoveryBudget() {
+    func testAStoppedWebContentProcessReachesTheCoresRecoveryBudget() throws {
         let space = makeSpace(index: 1)
-        let page = MobileBrowserPage(
-            tab: space.tabs[0],
-            space: space,
-            websiteDataStore: WKWebsiteDataStore.nonPersistent(),
-            openNewTab: { _ in }
-        )
-        XCTAssertNil(page.webView.window, "A resident background page is attached to no window.")
+        let tab = try XCTUnwrap(space.tabs.first)
+        // The window shows the page's tab, so the core recovers it in view.
+        let browser = BrowserStore.hostingPages(
+            SessionState.Seed(spaces: [space]), showing: space.id, tabs: [space.id: tab.id])
+        let page = try openPage(in: space, through: browser)
 
+        // The core has WebKit reload a page in view while its budget lasts.
         page.recordWebContentTermination()
         page.recordWebContentTermination()
+        browser.core.drain()
+        XCTAssertNil(page.live.failure)
+
+        // Past it, the page shows the failure.
         page.recordWebContentTermination()
-
-        XCTAssertFalse(
-            page.showsProcessFailure,
-            "iOS reclaiming a background tab's process is routine eviction, not repeated failure."
-        )
-    }
-
-    func testAReclaimedBackgroundPageIsRestoredWhenItIsSelectedAgain() throws {
-        let space = makeSpace(index: 2)
-        let session = BrowserSession(spaces: [space], selectedSpaceID: space.id)
-        let pages = MobileBrowserPageStore(usesEphemeralWebsiteDataStores: true)
-        pages.select(session: session)
-        let page = try XCTUnwrap(pages.activePage)
-
-        page.recordWebContentTermination()
-
-        XCTAssertTrue(page.needsWebContentRestore)
-        XCTAssertFalse(page.showsProcessFailure)
-
-        pages.deactivatePagePresentation()
-        pages.select(session: session)
-
-        XCTAssertTrue(try XCTUnwrap(pages.activePage) === page)
-        XCTAssertFalse(
-            page.needsWebContentRestore,
-            "Selecting the tab again is where a reclaimed page comes back."
-        )
+        browser.core.drain()
+        XCTAssertEqual(page.live.failure?.error, .webContentProcessStopped)
     }
 
     // MARK: - App-initiated navigation marker
 
     func testTheAppInitiatedMarkerIsConsumedByTheNavigationItAuthorized() throws {
         let space = makeSpace(index: 4)
-        let page = MobileBrowserPage(
-            tab: space.tabs[0],
-            space: space,
-            websiteDataStore: WKWebsiteDataStore.nonPersistent(),
-            openNewTab: { _ in }
-        )
+        let browser = BrowserStore.hostingPages(SessionState.Seed(spaces: [space]))
+        let page = try openPage(in: space, through: browser)
         let fileURL = URL(fileURLWithPath: "/tmp/crest-mobile-fixture.html")
         let replay = MobileReplayNavigationAction(url: fileURL)
 
@@ -76,7 +50,7 @@ final class MobileBrowserPageRecoveryTests: XCTestCase {
             "Web content must not be able to replay a file URL Crest once loaded."
         )
         XCTAssertEqual(
-            BrowserExternalSchemePolicy.disposition(
+            BrowserCorePolicy.externalSchemeDisposition(
                 for: fileURL,
                 isAppInitiated: page.isAppInitiated(replay)
             ),
@@ -84,20 +58,36 @@ final class MobileBrowserPageRecoveryTests: XCTestCase {
         )
     }
 
-    private func makeSpace(index: Int) -> BrowserSpace {
-        let tab = BrowserTab.startPage(
-            id: TabID(rawValue: fixedUUID(index * 10 + 1)),
+    /// Opens the page for `space`'s first tab through `browser`'s core, as a
+    /// page store opens one. Keep `browser` alive while the page is in use.
+    private func openPage(in space: SpaceState.Seed, through browser: BrowserStore) throws -> MobileBrowserPage {
+        let tab = try XCTUnwrap(space.tabs.first)
+        return try XCTUnwrap(
+            browser.openWebKitPage(in: space.id, for: tab.id).map { opened in
+                MobileBrowserPage(
+                    corePage: opened.core,
+                    webKitPage: opened.webKit,
+                    tab: browser.pageTab(tab.id, in: space.id),
+                    space: browser.hostedSpace(space.id),
+                    openNewTab: { _ in }
+                )
+            }
+        )
+    }
+
+    private func makeSpace(index: Int) -> SpaceState.Seed {
+        let tab = TabState.Seed.startPage(
+            id: fixedUUID(index * 10 + 1),
             placement: .current
         )
-        return BrowserSpace(
-            id: SpaceID(rawValue: fixedUUID(index * 10 + 2)),
-            profile: BrowsingProfile(id: fixedUUID(index * 10 + 3)),
+        return SpaceState.Seed(
+            id: fixedUUID(index * 10 + 2),
+            profileID: fixedUUID(index * 10 + 3),
             name: "Space \(index)",
             symbol: "circle",
             accent: .indigo,
             folders: [],
-            tabs: [tab],
-            selectedTabID: tab.id
+            tabs: [tab]
         )
     }
 
@@ -122,7 +112,7 @@ private final class MobileReplayNavigationAction: WKNavigationAction,
     override var request: URLRequest { stubRequest }
     override var navigationType: WKNavigationType { .other }
     override var targetFrame: WKFrameInfo? { nil }
-    var browserSourceOrigin: BrowserSiteOrigin? {
-        BrowserSiteOrigin(scheme: "https", host: "replay.crest.test", port: 443)
+    var browserSourceOrigin: SiteOrigin? {
+        SiteOrigin(scheme: "https", host: "replay.crest.test", port: 443)
     }
 }

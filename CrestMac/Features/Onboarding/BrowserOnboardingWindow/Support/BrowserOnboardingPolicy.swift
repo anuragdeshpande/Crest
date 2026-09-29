@@ -4,64 +4,6 @@ import SwiftUI
 enum BrowserImportPreviewControls {
     static let sourceFooterLeadingSymbol: String? = nil
     static let usesAnchoredImportFooter = true
-    static let describesDestinationAsSimplifiedBrandingPreview = true
-}
-
-enum BrowserImportReviewNavigation {
-    static func nextSpaceID(
-        after currentID: SpaceID?,
-        in spaceIDs: [SpaceID]
-    ) -> SpaceID? {
-        guard !spaceIDs.isEmpty else { return nil }
-        guard let currentID,
-            let index = spaceIDs.firstIndex(of: currentID)
-        else {
-            return spaceIDs.first
-        }
-        let nextIndex = spaceIDs.index(after: index)
-        return nextIndex < spaceIDs.endIndex ? spaceIDs[nextIndex] : nil
-    }
-
-    static func isFinalSpace(
-        _ currentID: SpaceID?,
-        in spaceIDs: [SpaceID]
-    ) -> Bool {
-        guard let currentID, let last = spaceIDs.last else { return false }
-        return currentID == last
-    }
-}
-
-enum BrowserMacOnboardingPolicy {
-    static func startupBehavior(
-        preferred: BrowserStartupBehavior,
-        hasActiveLaunchGate: Bool
-    ) -> BrowserStartupBehavior {
-        // Setup owns the initial destination; normal launches use the saved preference.
-        hasActiveLaunchGate ? .lastActiveTab : preferred
-    }
-
-    static func nextFirstRunStep(
-        after step: BrowserOnboardingStep
-    ) -> BrowserOnboardingStep? {
-        switch step {
-        case .welcome:
-            .importBrowser
-        case .featureSpaces:
-            .featureTabs
-        case .featureTabs:
-            .featureSync
-        case .featureSync:
-            .importBrowser
-        case .importBrowser, .review, .manualSetup, .complete:
-            nil
-        }
-    }
-
-    static func destinationAfterImport(
-        for entryPoint: BrowserOnboardingEntryPoint
-    ) -> BrowserOnboardingStep {
-        entryPoint.isGuidedSetup ? .manualSetup : .complete
-    }
 }
 
 enum BrowserOnboardingAppearancePolicy {
@@ -125,7 +67,15 @@ enum BrowserOnboardingSummary {
         }
     }
 
-    static func completedManualSetup(
+    /// What setup did, as the core summed it up.
+    static func completed(_ summary: SetupSummary) -> LocalizedStringResource {
+        summary.isImport
+            ? completedImport(
+                tabCount: summary.tabCount, passwordCount: summary.passwordCount, spaceCount: summary.spaceCount)
+            : completedManualSetup(newSpaceCount: summary.spaceCount, addedTabCount: summary.tabCount)
+    }
+
+    private static func completedManualSetup(
         newSpaceCount: Int,
         addedTabCount: Int
     ) -> LocalizedStringResource {
@@ -144,7 +94,7 @@ enum BrowserOnboardingSummary {
         )
     }
 
-    static func completedImport(
+    private static func completedImport(
         tabCount: Int,
         passwordCount: Int,
         spaceCount: Int

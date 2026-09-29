@@ -3,24 +3,25 @@ import Observation
 @Observable
 @MainActor
 final class BrowserPasskeyAccessController {
-    static let shared = BrowserPasskeyAccessController()
     typealias CapabilityCheck = @MainActor () -> Bool
     typealias DeviceConfigurationCheck =
-        @MainActor () -> BrowserPasskeyDeviceConfiguration
-    typealias AuthorizationCheck = @MainActor () -> BrowserPasskeyAuthorizationState
+        @MainActor () -> PasskeyDeviceConfiguration
+    typealias AuthorizationCheck = @MainActor () -> PasskeyAuthorizationState
     typealias AuthorizationRequester =
-        @MainActor () async -> BrowserPasskeyAuthorizationState
+        @MainActor () async -> PasskeyAuthorizationState
 
-    private(set) var status = BrowserPasskeyAccessStatus.checking
+    private(set) var status = PasskeyAccessStatus.checking
     private(set) var isRequesting = false
 
+    @ObservationIgnored private let core: CrestCore
     @ObservationIgnored private let capabilityCheck: CapabilityCheck
     @ObservationIgnored private let deviceConfigurationCheck: DeviceConfigurationCheck
     @ObservationIgnored private let authorizationCheck: AuthorizationCheck
     @ObservationIgnored private let authorizationRequester: AuthorizationRequester
-    @ObservationIgnored private var authorizationTask: Task<BrowserPasskeyAuthorizationState, Never>?
+    @ObservationIgnored private var authorizationTask: Task<PasskeyAuthorizationState, Never>?
 
     init(
+        core: CrestCore,
         capabilityCheck: @escaping CapabilityCheck =
             BrowserPasskeyAccessSystem.hasManagedCapability,
         deviceConfigurationCheck: @escaping DeviceConfigurationCheck =
@@ -30,6 +31,7 @@ final class BrowserPasskeyAccessController {
         authorizationRequester: @escaping AuthorizationRequester =
             BrowserPasskeyAccessSystem.requestAuthorization
     ) {
+        self.core = core
         self.capabilityCheck = capabilityCheck
         self.deviceConfigurationCheck = deviceConfigurationCheck
         self.authorizationCheck = authorizationCheck
@@ -37,7 +39,7 @@ final class BrowserPasskeyAccessController {
     }
 
     var canRequestAccess: Bool {
-        status == .notDetermined && !isRequesting
+        status.canRequestAccess && !isRequesting
     }
 
     func refreshStatus() {
@@ -70,16 +72,17 @@ final class BrowserPasskeyAccessController {
     }
 
     private func evaluatedStatus(
-        authorizationState: BrowserPasskeyAuthorizationState? = nil
-    ) -> BrowserPasskeyAccessStatus {
+        authorizationState: PasskeyAuthorizationState? = nil
+    ) -> PasskeyAccessStatus {
         guard capabilityCheck() else {
             return .managedCapabilityRequired
         }
 
-        return BrowserPasskeyAccessPolicy.status(
-            hasManagedCapability: true,
-            deviceConfiguration: deviceConfigurationCheck(),
-            authorizationState: authorizationState ?? authorizationCheck()
-        )
+        // A core that cannot answer keeps checking, which never requests
+        // system consent.
+        let access = PasskeyAccess(
+            hasManagedCapability: true, deviceConfiguration: deviceConfigurationCheck(),
+            authorizationState: authorizationState ?? authorizationCheck())
+        return (try? core.query(access))?.status ?? .checking
     }
 }

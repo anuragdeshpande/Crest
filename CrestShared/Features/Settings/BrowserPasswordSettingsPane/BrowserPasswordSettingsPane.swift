@@ -1,6 +1,13 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+// MARK: - Types
+
+struct BrowserSettingsSpaceDataRequest: Equatable {
+    let assignment: BrowserSpaceRuntimeAssignment?
+    let canRevealSpaceData: Bool
+}
+
 /// Shared Space password preferences and manager, configured by each platform's layout.
 struct BrowserPasswordSettingsPane: View {
     let browser: BrowserStore
@@ -13,14 +20,14 @@ struct BrowserPasswordSettingsPane: View {
 
     @State private var credentials: BrowserCredentialSpaceStore
     @Environment(\.browserSettingsSelections) private var selections
-    @State private var localSelectedSpaceID: SpaceID?
-    private var selectedSpaceID: SpaceID? {
+    @State private var localSelectedSpaceID: UUID?
+    private var selectedSpaceID: UUID? {
         get { if let selections { selections.passwordSpaceID } else { localSelectedSpaceID } }
         nonmutating set {
             if let selections { selections.passwordSpaceID = newValue } else { localSelectedSpaceID = newValue }
         }
     }
-    private var selectedSpaceBinding: Binding<SpaceID?> {
+    private var selectedSpaceBinding: Binding<UUID?> {
         Binding(get: { selectedSpaceID }, set: { selectedSpaceID = $0 })
     }
     @State private var credentialPendingDeletion: CredentialDescriptor?
@@ -29,7 +36,7 @@ struct BrowserPasswordSettingsPane: View {
     @State private var isExporting = false
     @State private var isChoosingImportFile = false
     @State private var isSelectingCredentials = false
-    @State private var selectedCredentialIDs: Set<CredentialID> = []
+    @State private var selectedCredentialIDs: Set<UUID> = []
     @State private var confirmsSelectionDeletion = false
 
     init(
@@ -115,9 +122,9 @@ struct BrowserPasswordSettingsPane: View {
             )
             .id(request.id)
         }
-        .sheet(item: $credentials.importPlan) { plan in
+        .sheet(item: $credentials.importReview) { review in
             BrowserCredentialImportReviewView(
-                initialPlanID: plan.id,
+                initialReviewID: review.id,
                 credentials: credentials,
                 browser: browser,
                 spaceAccess: spaceAccess
@@ -166,7 +173,7 @@ struct BrowserPasswordSettingsPane: View {
             CrestSpaceMenuPicker(
                 "Passwords for",
                 selection: selectedSpaceBinding,
-                spaces: CrestSpaceIdentity.list(browser.session.spaces)
+                spaces: CrestSpaceIdentity.list(browser.spaceModels)
             )
         }
 
@@ -216,9 +223,9 @@ struct BrowserPasswordSettingsPane: View {
                             )
                         }
                     }
-                    .disabled(!space.credentialPreferences.isEnabled)
+                    .disabled(!space.settings.credentialPreferences.isEnabled)
 
-                    if !space.credentialPreferences.isEnabled {
+                    if !space.settings.credentialPreferences.isEnabled {
                         Text(BrowserCredentialSettingsPolicy.disabledDescription)
                             .crestFormFootnote()
                     }
@@ -303,16 +310,16 @@ struct BrowserPasswordSettingsPane: View {
         }
     }
 
-    private func importButton(space: BrowserSpace) -> some View {
+    private func importButton(space: SpaceModel) -> some View {
         Button(
-            "Import into \(space.name)…",
+            "Import into \(space.settings.name)…",
             systemImage: "square.and.arrow.down"
         ) {
             isChoosingImportFile = true
         }
         .buttonStyle(.crestTertiary)
         .disabled(
-            !space.credentialPreferences.isEnabled
+            !space.settings.credentialPreferences.isEnabled
                 || credentials.isPreparingImport
                 || credentials.isCommittingImport
         )
@@ -332,7 +339,7 @@ struct BrowserPasswordSettingsPane: View {
     }
 
     @ViewBuilder
-    private func credentialPreferences(in space: BrowserSpace) -> some View {
+    private func credentialPreferences(in space: SpaceModel) -> some View {
         Toggle(
             "Sync with iCloud Keychain",
             isOn: credentials.synchronizationBinding(
@@ -346,9 +353,7 @@ struct BrowserPasswordSettingsPane: View {
             ProgressView("Updating existing credentials…")
         }
 
-        if BrowserSystemPasswordWriteThroughSystem.launchAvailability
-            == .available
-        {
+        if browser.systemPasswordWriteThroughAvailability == .available {
             Toggle(
                 "Offer a copy to Passwords",
                 isOn: browser.credentialPreferenceBinding(
@@ -358,8 +363,7 @@ struct BrowserPasswordSettingsPane: View {
             )
 
             Text(
-                BrowserSystemPasswordWriteThroughSystem.launchAvailability
-                    .detail
+                "After Crest saves in this Space, the system can ask whether to save or update a copy in your preferred password manager."
             )
             .crestFormFootnote()
         }
@@ -377,7 +381,7 @@ struct BrowserPasswordSettingsPane: View {
                 searchText.isEmpty ? "No Saved Passwords" : "No Matching Passwords",
                 systemImage: searchText.isEmpty ? "key.slash" : "magnifyingglass",
                 description: Text(
-                    space?.credentialPreferences.isEnabled == false
+                    space?.settings.credentialPreferences.isEnabled == false
                         ? BrowserCredentialSettingsPolicy.disabledDescription
                         : credentials.emptyDescription(
                             isSearching: !searchText.isEmpty
@@ -389,7 +393,7 @@ struct BrowserPasswordSettingsPane: View {
             ForEach(descriptors) { descriptor in
                 BrowserPasswordDescriptorRow(
                     descriptor: descriptor,
-                    space: space,
+                    space: space?.identity,
                     isDeleting: credentials.isDeleting(descriptor),
                     isSelectionActive: isSelectingCredentials,
                     isSelected: selectedCredentialIDs.contains(descriptor.id),
@@ -415,9 +419,9 @@ struct BrowserPasswordSettingsPane: View {
 
     // MARK: - Derived state
 
-    private var space: BrowserSpace? {
+    private var space: SpaceModel? {
         guard let selectedSpaceID else { return nil }
-        return browser.session.space(id: selectedSpaceID)
+        return browser.spaceModel(selectedSpaceID)
     }
 
     private var filteredDescriptors: [CredentialDescriptor] {
@@ -425,10 +429,8 @@ struct BrowserPasswordSettingsPane: View {
     }
 
     private var canRevealSelectedSpaceData: Bool {
-        BrowserSettingsPrivacyPolicy.canRevealSpaceData(
-            in: space,
-            accessController: spaceAccess
-        )
+        guard let space else { return false }
+        return !spaceAccess.isLocked(space)
     }
 
     private var credentialLoadRequest: BrowserSettingsSpaceDataRequest {
@@ -462,7 +464,7 @@ struct BrowserPasswordSettingsPane: View {
     }
 
     private var selectionDeletionMessage: String {
-        let spaceName = space?.name ?? "this Space"
+        let spaceName = space?.settings.name ?? "this Space"
         let count = selectedCredentialIDs.count
         let passwordLabel = count == 1 ? "password" : "passwords"
         return

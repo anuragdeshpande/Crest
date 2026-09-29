@@ -4,26 +4,32 @@ import UIKit
 import UniformTypeIdentifiers
 import WebKit
 
-#if CREST_PHYSICAL_VALIDATION
-    import CryptoKit
-    import OSLog
-    import Security
-#endif
-
 @Observable
 @MainActor
-final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, BrowserPagePermissionProviding {
-    var opensModifiedLinksInForeground = false
-    private(set) var tabID: TabID
-    let spaceID: SpaceID
+final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint {
+    /// The core's page, which `release(keepingState:)` ends.
+    @ObservationIgnored let corePage: CorePage
+    private(set) var tabID: UUID
+    let spaceID: UUID
     let profileID: UUID
+    /// What WebKit's binding built for the page, which it keeps while it
+    /// lives.
+    @ObservationIgnored let webKitPage: WebKitEnginePage
+    /// The page's direct path to WebKit: going back, reloading, zooming,
+    /// finding text and keeping its history.
+    @ObservationIgnored let enginePage: EnginePage
     let webView: WKWebView
+    var webKitView: WKWebView? { webView }
+    // iOS composes one engine. Naming its type here keeps the page port in
+    // play everywhere it is used while removing the force-cast the history
+    // accessor needed to reach a WebKit-only service.
+    @ObservationIgnored let pageEngine: BrowserWebKitPageEngine
 
     /// The store that owns this page. Weak because the store owns the page.
     weak var host: (any MobileBrowserPageHosting)?
 
-    /// True when web content opened this page through `window.open()`. It gates
-    /// `window.close()`, which may only close what script itself opened.
+    /// True when web content opened this page through `window.open()`. WebKit
+    /// drives such a page's history, so it neither restores nor archives any.
     var wasOpenedAsPopup = false
 
     /// True from adoption until WebKit starts the popup's own navigation. WebKit
@@ -31,22 +37,24 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
     /// loading it here is what breaks `window.opener` and `document.write`.
     var isAwaitingPopupNavigation = false
 
-    var url: URL?
-    private(set) var title: String?
+    /// What the page shows as the core holds it: its address, title,
+    /// loading, history, security, failure and media. Presentation that
+    /// changes constantly, such as progress, find and zoom, stays here.
+    var live: PageLiveState { corePage.live }
     private(set) var estimatedProgress = 0.0
-    private(set) var isLoading = false
     private(set) var faviconData: Data?
     private(set) var themeColor: UIColor?
-    private(set) var canGoBack = false
-    private(set) var canGoForward = false
+    /// Documents the page committed and finished, which reveal its surface.
     var committedNavigationCount = 0
     private(set) var completedNavigationCount = 0
-    private(set) var navigationFailure: BrowserNavigationFailure?
     var blockedPopupState = BrowserBlockedPopupPageState()
     var pendingServerTrustIdentity: BrowserServerTrustIdentity?
-    var pendingNavigationURL: URL?
-    var navigationHistory = BrowserPageNavigationHistory()
-    private(set) var showsProcessFailure = false
+    /// The document's address as WebKit last published it.
+    @ObservationIgnored private var documentURL: URL?
+    var navigationHistory: BrowserPageNavigationHistory {
+        get { pageEngine.history }
+        set { pageEngine.history = newValue }
+    }
     var isFindPresented: Bool { findSession.isPresented }
     var findQuery: String { findSession.query }
     var findMatchState: BrowserFindMatchState { findSession.matchState }
@@ -59,7 +67,6 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
     var isCredentialAccessEnabled: Bool { credentialSession.isEnabled }
     /// True once iOS reclaimed this page's web-content process while it was off
     /// screen. Selecting the tab again is what brings the page back.
-    private(set) var needsWebContentRestore = false
     var credentialFillRequest: BrowserCredentialFillRequest? { credentialState.fillRequest }
     var credentialSaveCandidate: BrowserCredentialSaveCandidate? { credentialState.saveCandidate }
     var hasActiveLinkActivationBridge: Bool { linkActivationMessageProxy != nil }
@@ -71,9 +78,16 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
     @ObservationIgnored private let openModifiedLink: MobileBrowserPageStore.ModifiedLinkOpener
     @ObservationIgnored let downloadCenter: BrowserDownloadCenter
     let sitePermissionRequests = BrowserPagePermissionController()
-    @ObservationIgnored lazy var mediaCaptureSession = BrowserMediaCaptureSession(
-        webView: webView, permissionCenter: permissionCenter, spaceID: spaceID
-    )
+    /// Carries Crest's site permission decisions to the page as they change.
+    @ObservationIgnored lazy var sitePermissionSession: BrowserPageSitePermissionSession = {
+        let session = BrowserPageSitePermissionSession(
+            page: enginePage, permissionCenter: permissionCenter, spaceID: spaceID)
+        session.siteURL = { [weak self] in self?.pageEngine.currentURL ?? self?.live.documentURL }
+        session.siteDecisionDidChange = { [weak self] permission in
+            if permission == .popups { self?.synchronizePopupPermission() }
+        }
+        return session
+    }()
     @ObservationIgnored let permissionCenter: BrowserSitePermissionCenter
     @ObservationIgnored let serverTrustOverrides: BrowserServerTrustOverrideStore
     @ObservationIgnored let navigationDecider: BrowserNavigationDecider
@@ -88,7 +102,6 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
     @ObservationIgnored var navigationContext: BrowserPageNavigationContext?
     @ObservationIgnored var activeNavigation: WKNavigation?
     @ObservationIgnored let spaceName: String
-    @ObservationIgnored private var processRecovery = BrowserProcessRecovery()
     @ObservationIgnored private let findSession = BrowserFindSession()
     @ObservationIgnored lazy var readerModeSession = BrowserReaderModeSession(
         document: BrowserWebKitReaderModeDocument(webView: webView, translation: translation)
@@ -96,10 +109,22 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
     @ObservationIgnored lazy var faviconSession = BrowserFaviconSession(
         document: BrowserWebKitFaviconDocument(webView: webView, profileID: profileID),
         policy: .immediate,
-        receive: { [weak self] in self?.faviconData = $0 }
+        receive: { [weak self] data in
+            self?.faviconData = data
+            self?.reporter.foundIcon(data, at: self?.webView.url)
+        }
     )
-    @ObservationIgnored private let credentialSession: BrowserWebKitCredentialSession
-    var credentialState: BrowserCredentialPageState<BrowserWebKitCredentialSession.FillTarget> {
+    /// Tells the core what the page shows and what its navigations and icon do.
+    @ObservationIgnored lazy var reporter = EnginePageReporter(page: corePage) { [weak self] pendingURL in
+        self?.snapshot(pendingURL: pendingURL)
+            ?? PageSnapshot(
+                url: nil, pendingURL: pendingURL, title: "", isLoading: false, canGoBack: false,
+                canGoForward: false, security: PageSecurity.none, media: [])
+    }
+    /// The reporter that tells the core what the page's engine shows.
+    var navigationReporter: EnginePageReporter? { reporter }
+    @ObservationIgnored private let credentialSession: BrowserCredentialSession
+    var credentialState: BrowserCredentialPageState<BrowserCredentialSession.FillTarget> {
         credentialSession.state
     }
     @ObservationIgnored private var credentialMessageProxy: BrowserCredentialScriptMessageProxy?
@@ -112,6 +137,11 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
     @ObservationIgnored private var mediaSessionMessageProxy: BrowserMediaSessionScriptMessageProxy?
     @ObservationIgnored var mediaSessionCoordinator: BrowserMediaSessionPageCoordinator?
     @ObservationIgnored var geolocationCoordinator: BrowserGeolocationCoordinator?
+    /// The system's consent the page asks before it sends the person's Allow
+    /// to the core. The page shows no web notifications.
+    @ObservationIgnored lazy var systemConsent: any BrowserSystemConsenting = BrowserSystemConsent(
+        location: { [weak self] in await self?.geolocationCoordinator?.systemAuthorizes() ?? false },
+        notifications: { false })
     @ObservationIgnored private var userActivityHandler: (() -> Void)?
     @ObservationIgnored let httpAuthenticationSession: BrowserHTTPAuthenticationSession
     @ObservationIgnored private let contentRuleSession: BrowserPageContentRuleSession
@@ -123,13 +153,14 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
     @ObservationIgnored private var defaultPageZoom: CGFloat
     @ObservationIgnored private var hasTemporaryPageZoomOverride = false
 
-    var displayURL: URL? {
-        navigationFailure?.failingURL ?? pendingNavigationURL ?? url
-    }
-
+    /// The page hosting what WebKit's binding built as `webKitPage`, for
+    /// `tab` in `space`. `contentRuleList` is a rule list the page applies
+    /// beside its Space's.
     init(
-        tab: BrowserTab,
-        space: BrowserSpace,
+        corePage: CorePage,
+        webKitPage: WebKitEnginePage,
+        tab: BrowserPageTab,
+        space: SpaceModel,
         downloadCenter: BrowserDownloadCenter = BrowserDownloadCenter(),
         permissionCenter: BrowserSitePermissionCenter = BrowserSitePermissionCenter(),
         geolocationService: any BrowserGeolocationServicing =
@@ -138,10 +169,7 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
             BrowserGeolocationCoordinator.RecoverSystemAuthorization? = nil,
         serverTrustOverrides: BrowserServerTrustOverrideStore = BrowserServerTrustOverrideStore(),
         mediaSessionStore: BrowserMediaSessionStore? = nil,
-        websiteDataStore: WKWebsiteDataStore? = nil,
-        adoptedConfiguration: WKWebViewConfiguration? = nil,
         contentRuleList: WKContentRuleList? = nil,
-        contentRuleLists: [WKContentRuleList] = [],
         allowsCredentialAccess: Bool = true,
         isCredentialAccessEnabled: Bool = true,
         defaultPageZoom: CGFloat = BrowserPageZoomPolicy.defaultLevel,
@@ -158,10 +186,10 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
         openPeek: @escaping (BrowserPeekRequest) -> Void = { _ in },
         opensExternalURL: @escaping (URL) -> Void = { UIApplication.shared.open($0) }
     ) {
+        self.corePage = corePage
         tabID = tab.id
         spaceID = space.id
-        profileID = space.profile.id
-        url = tab.url
+        profileID = space.profileID
         faviconData = tab.displayFaviconData
         self.downloadCenter = downloadCenter
         self.permissionCenter = permissionCenter
@@ -171,16 +199,14 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
         self.openModifiedLink = openModifiedLink
         self.openPeek = openPeek
         contentRuleSession = BrowserPageContentRuleSession(
-            ruleLists: contentRuleLists,
+            ruleLists: webKitPage.contentRuleLists,
             additionalRuleList: contentRuleList
         )
-        spaceName = space.name
+        spaceName = space.settings.name
         navigationContext = BrowserPageNavigationContext(
-            tab: tab,
+            tab: tab.state,
             spaceID: space.id,
-            profileID: space.profile.id,
-            automaticallyOpensPeek: BrowserLinkPreferenceStore.shared
-                .preferences.automaticallyOpensPeek
+            profileID: space.profileID
         )
         navigationDecider = BrowserNavigationDecider()
         // Built before the popup coordinator so a popup whose destination belongs
@@ -188,7 +214,7 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
         // ordinary external-scheme navigation takes.
         let externalSchemeCoordinator = BrowserExternalSchemeCoordinator(
             spaceID: space.id,
-            spaceName: space.name,
+            spaceName: space.settings.name,
             permissionCenter: permissionCenter,
             prompt: { origin, destinationURL, requestedSpaceName in
                 await MobileBrowserDialogPresenter.presentExternalApplicationPermission(
@@ -201,7 +227,6 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
         )
         self.externalSchemeCoordinator = externalSchemeCoordinator
         popupCoordinator = BrowserPopupCoordinator(
-            openNewTab: openNewTab,
             handOffExternalScheme: { destinationURL, trigger, origin in
                 externalSchemeCoordinator.handOff(
                     destinationURL: destinationURL,
@@ -223,47 +248,28 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
             saveCredential: saveHTTPAuthenticationCredential
         )
         self.httpAuthenticationSession = httpAuthenticationSession
-        credentialSession = BrowserWebKitCredentialSession(
+        credentialSession = BrowserCredentialSession(
             spaceID: space.id,
+            core: downloadCenter.core,
             supportsAccess: allowsCredentialAccess,
             isEnabled: isCredentialAccessEnabled,
             httpAuthentication: httpAuthenticationSession
         )
 
-        // WebKit hands popups a configuration derived from their opener's, and it
-        // has to be used exactly as given. That copy also shares the opener's
-        // user content controller, so its scripts, rule lists, and message
-        // handlers are already installed: adding them again throws.
-        ownsUserContentController = adoptedConfiguration == nil
-        let configuration: WKWebViewConfiguration
-        if let adoptedConfiguration {
-            configuration = adoptedConfiguration
-        } else {
-            // The shared factory owns every setting both platforms want — the
-            // inactive scheduling policy above all, which is what lets WebKit
-            // suspend a resident background tab on the platform that jetsams.
-            // Only what is genuinely mobile is decorated on top of it.
-            var installedLinkActivationProxy: MobileLinkActivationScriptMessageProxy?
-            configuration = BrowserPageConfiguration.make(
-                for: space.profile,
-                websiteDataStore: websiteDataStore,
-                contentRuleLists: contentRuleSession.ruleLists,
-                preferredContentMode: .recommended
-            ) { configuration in
-                configuration.allowsInlineMediaPlayback = true
-                configuration.allowsPictureInPictureMediaPlayback = true
-                configuration.mediaTypesRequiringUserActionForPlayback = .all
-                configuration.userContentController.addUserScript(
-                    MobileMediaPlaybackPolicy.inlineVideoScript
-                )
-                installedLinkActivationProxy = MobileLinkActivationContentBridge.install(
-                    in: configuration.userContentController
-                )
-            }
-            linkActivationMessageProxy = installedLinkActivationProxy
+        // A popup's configuration is the one WebKit derived from its opener's,
+        // which shares the opener's user content controller, so its scripts,
+        // rule lists, and message handlers are already installed: adding them
+        // again throws.
+        ownsUserContentController = webKitPage.ownsUserContentController
+        self.webKitPage = webKitPage
+        enginePage = webKitPage.makeEnginePage()
+        webView = webKitPage.webView
+        pageEngine = webKitPage.engine
+        if ownsUserContentController {
+            linkActivationMessageProxy = MobileLinkActivationContentBridge.install(
+                in: webView.configuration.userContentController
+            )
         }
-        webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.underPageBackgroundColor = .clear
 
         super.init()
         if normalizedDefaultPageZoom != BrowserPageZoomPolicy.defaultLevel {
@@ -295,8 +301,8 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
                 fallbackTitle: { [weak self] in
                     guard let self else { return nil }
                     return self.navigationContext?.mediaSessionOwnerTitle(
-                        observedPageTitle: self.title
-                    ) ?? BrowserTab.resolvedCustomTitle(self.title)
+                        observedPageTitle: self.live.title
+                    ) ?? BrowserShownTitle.resolve(self.live.title)
                 }
             )
             mediaSessionCoordinator = coordinator
@@ -317,14 +323,9 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
             permissionCenter: permissionCenter,
             service: geolocationService,
             spaceID: space.id,
-            spaceName: space.name,
-            prompt: { [weak self] origin, topLevelURL, requestedSpaceName in
-                guard let self else { return .denyOnce }
-                return await self.sitePermissionRequests.response(
-                    to: .location, origin: origin,
-                    topLevelOrigin: topLevelURL.flatMap(BrowserSiteOrigin.init(url:)) ?? origin,
-                    spaceName: requestedSpaceName
-                )
+            askSite: { [webKitPage] origin, topLevelOrigin in
+                await webKitPage.ask(
+                    PermissionQuestion(permission: .location, origin: origin, topLevelOrigin: topLevelOrigin))
             },
             recoverSystemAuthorization:
                 recoverGeolocationSystemAuthorization
@@ -359,8 +360,13 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
             for: .valueChanged
         )
         webView.scrollView.refreshControl = pullToRefreshControl
+        // Observe permission changes from the start, not from the first grant.
+        _ = sitePermissionSession
 
-        if loadsInitialURL, let url = tab.url {
+        // Last, so a page the core brings back restores into a page that
+        // hears its navigations.
+        webKitPage.attach(self)
+        if loadsInitialURL, webView.url == nil, let url = tab.url {
             load(url)
         }
     }
@@ -369,12 +375,31 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
         load(URLRequest(url: url))
     }
 
+    /// Loads `request` in the page as the app's own load, which only the app
+    /// may make: the core's `LoadPage`, or a request web content made that
+    /// the app replays. An address the person asked for goes through the
+    /// core's `Navigate`, never here.
     func load(_ request: URLRequest) {
+        if let url = request.url {
+            prepareToLoad(url)
+        } else {
+            appInitiatedNavigationCount &+= 1
+            appInitiatedURL = nil
+            prepareForNavigation(to: nil)
+        }
+        pageEngine.load(request)
+    }
+
+    /// The page shows itself heading to `url`, which only an app-initiated
+    /// load may reach when it is a local file.
+    func prepareToLoad(_ url: URL) {
         appInitiatedNavigationCount &+= 1
-        url = request.url
-        appInitiatedURL = request.url
-        prepareForNavigation(to: request.url)
-        webView.load(request)
+        appInitiatedURL = url
+        prepareForNavigation(to: url)
+    }
+
+    func mediaActivityMayHaveChanged() {
+        refreshMediaActivity()
     }
 
     func routeModifiedLink(_ url: URL, selecting: Bool) {
@@ -385,7 +410,7 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
         guard let url = request.url,
             let registration = openModifiedLink(url, spaceID, selecting)
         else { return }
-        host?.loadOpenedLink(registration, request: request, selecting: selecting)
+        host?.loadOpenedLink(registration, request: request, selecting: selecting, opener: corePage.id)
     }
 
     /// WebKit's own opaque per-view session state: the back/forward list and the
@@ -395,8 +420,7 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
     /// answers `interactionState` with an empty session, and archiving that would
     /// replace a real state with one that restores nothing.
     var interactionState: Data? {
-        guard webView.backForwardList.currentItem != nil else { return nil }
-        return webView.interactionState as? Data
+        enginePage.savedHistory()
     }
 
     /// Restores a previously archived `interactionState` instead of starting `url`
@@ -412,13 +436,10 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
         // WebKit owns an adopted popup's first navigation, and an adopted popup
         // has no archived state of its own to restore in the first place.
         guard !isAwaitingPopupNavigation, !wasOpenedAsPopup else { return false }
-        self.url = url
         appInitiatedURL = url
         prepareForNavigation(to: url)
-        navigationHistory = BrowserPageNavigationHistory()
-        webView.interactionState = state
-        guard webView.backForwardList.currentItem != nil else {
-            pendingNavigationURL = nil
+        guard enginePage.restoreHistory(state, expecting: url) else {
+            reporter.interrupted()
             return false
         }
         return true
@@ -441,7 +462,7 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
         }
     }
 
-    func styleVisitedLinks(history: [BrowserHistoryEntry]) async {
+    func styleVisitedLinks(history: [HistoryEntryState]) async {
         await BrowserVisitedLinkStyler.apply(history: history, to: webView)
     }
 
@@ -449,33 +470,30 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
         userActivityHandler = nil
     }
 
-    func adopt(tabID: TabID, tab: BrowserTab) {
+    func adopt(tabID: UUID, tab: BrowserPageTab) {
         self.tabID = tabID
         updateNavigationContext(tab: tab)
     }
 
-    func updateNavigationContext(
-        tab: BrowserTab,
-        automaticallyOpensPeek: Bool = true
-    ) {
+    /// Takes the tab's current context: its title, placement and icon.
+    func updateNavigationContext(tab: BrowserPageTab) {
         let previousTitle = navigationContext?.title
         let shouldRefreshAutomaticIcon =
-            tab.iconMode == .automatic
+            tab.state.iconMode.followsPage
             && !tab.hasCurrentAutomaticFavicon
             && webView.url != nil
             && !webView.isLoading
         if faviconData != tab.displayFaviconData
-            || navigationContext?.iconMode != tab.iconMode
+            || navigationContext?.iconMode != tab.state.iconMode
             || navigationContext?.tabID != tab.id
         {
             faviconSession.invalidate()
             faviconData = tab.displayFaviconData
         }
         navigationContext = BrowserPageNavigationContext(
-            tab: tab,
+            tab: tab.state,
             spaceID: spaceID,
-            profileID: profileID,
-            automaticallyOpensPeek: automaticallyOpensPeek
+            profileID: profileID
         )
         if previousTitle != navigationContext?.title {
             mediaSessionCoordinator?.ownerTitleDidChange()
@@ -485,14 +503,32 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
         }
     }
 
-    func prepareForSpaceDeletion() {
+    /// Ends the page: every page ends here, whether its tab closed, it was
+    /// unloaded, its Space went, or a transient request let it go. The web view
+    /// comes down first, then the core hears the page is gone. `keepingState`
+    /// says the owner kept what it needs to bring the page back.
+    func release(keepingState: Bool) {
+        tearDownWebView()
+        corePage.release(keepingState: keepingState)
+    }
+
+    /// Ends a page the core unloaded under memory pressure: its web view comes
+    /// down as on any release, but the core already closed what its engine
+    /// held, so it hears nothing more.
+    func unloaded() {
+        tearDownWebView()
+        corePage.unloaded()
+    }
+
+    private func tearDownWebView() {
+        enginePage.close()
         faviconSession.stop()
-        mediaCaptureSession.reset()
+        sitePermissionSession.resetMediaGrants()
         sitePermissionRequests.setPresentationAvailable(false)
         translation.reset()
         readerModeSession.invalidate()
         mediaSessionCoordinator?.prepareForRemoval()
-        downloadCenter.resetAutomaticDownloadSequence(in: webView)
+        webKitPage.resetAutomaticDownloads()
         webView.stopLoading()
         webView.removeFromSuperview()
         webView.navigationDelegate = nil
@@ -578,12 +614,12 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
         isRequestingDesktopSite.toggle()
         webView.configuration.defaultWebpagePreferences.preferredContentMode =
             isRequestingDesktopSite ? .desktop : .recommended
-        guard url != nil else { return }
+        guard webView.url != nil else { return }
         webView.reloadFromOrigin()
     }
 
     func applyContentBlocking(
-        policy: BrowserContentBlockingPolicy,
+        policy: ContentBlockingPolicy,
         balancedRuleLists: [WKContentRuleList],
         activation: BrowserContentRuleListActivation = .onNextNavigation
     ) {
@@ -591,26 +627,20 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
             policy: policy,
             balancedRuleLists: balancedRuleLists,
             to: webView,
-            reloadsImmediately: activation == .immediately && url != nil
+            reloadsImmediately: activation == .immediately && webView.url != nil
         )
     }
 
-    func retryAfterProcessFailure() {
-        processRecovery.reset()
-        showsProcessFailure = false
-        webView.reload()
-    }
-
     func presentFind() {
-        findSession.present(hasLoadedPage: url != nil)
+        findSession.present(hasLoadedPage: webView.url != nil)
     }
 
     func dismissFind() {
-        findSession.dismiss(using: webView)
+        findSession.dismiss(using: enginePage)
     }
 
     func find(_ query: String, direction: BrowserFindDirection = .forward) {
-        findSession.find(query, direction: direction, using: webView)
+        findSession.find(query, direction: direction, using: enginePage)
     }
 
     @discardableResult
@@ -646,23 +676,19 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
         await readerModeSession.refreshAvailability()
     }
 
-    func setReaderModeActive(_ isActive: Bool) async throws {
-        try await readerModeSession.setActive(isActive)
-    }
-
     func toggleReaderMode() {
         readerModeSession.toggle()
     }
 
     @discardableResult
     func copyPageLink() -> Bool {
-        BrowserPageLinkClipboard.copy(url)
+        BrowserPageLinkClipboard.copy(live.documentURL)
     }
 
     @discardableResult
     func copyPageLinkAsMarkdown() -> Bool {
-        guard let url else { return false }
-        let label = (title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = live.documentURL else { return false }
+        let label = live.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedLabel = label.isEmpty ? (url.host() ?? url.absoluteString) : label
         let escapedLabel =
             resolvedLabel
@@ -673,14 +699,11 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
     }
 
     func printPage() {
-        guard url != nil else { return }
+        guard webView.url != nil else { return }
         let controller = UIPrintInteractionController.shared
         let printInfo = UIPrintInfo(dictionary: nil)
         printInfo.outputType = .general
-        printInfo.jobName =
-            title?.isEmpty == false
-            ? title ?? ProductIdentity.name
-            : url?.host() ?? ProductIdentity.name
+        printInfo.jobName = live.title.isEmpty ? live.documentURL?.host() ?? ProductIdentity.name : live.title
         controller.printInfo = printInfo
         controller.printFormatter = webView.viewPrintFormatter()
 
@@ -701,13 +724,13 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
     }
 
     func pdfData() async throws -> Data {
-        guard url != nil else { throw BrowserPageExportError.pageUnavailable }
+        guard webView.url != nil else { throw BrowserPageExportError.pageUnavailable }
         return try await webView.pdf(configuration: WKPDFConfiguration())
     }
 
     func exportPDF(to destination: MobileBrowserFileExportDestination) {
-        guard url != nil else { return }
-        let suggestedFilename = BrowserPageExportPolicy.pdfFilename(title: title, url: url)
+        guard webView.url != nil else { return }
+        let suggestedFilename = BrowserPageExportPolicy.pdfFilename(title: live.title, url: live.documentURL)
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -727,7 +750,7 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
     }
 
     func webArchiveData() async throws -> Data {
-        guard url != nil else { throw BrowserPageExportError.pageUnavailable }
+        guard webView.url != nil else { throw BrowserPageExportError.pageUnavailable }
         return try await withCheckedThrowingContinuation { continuation in
             webView.createWebArchiveData { result in
                 continuation.resume(with: result)
@@ -736,10 +759,10 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
     }
 
     func exportWebArchive(to destination: MobileBrowserFileExportDestination) {
-        guard url != nil else { return }
+        guard webView.url != nil else { return }
         let suggestedFilename = BrowserPageExportPolicy.webArchiveFilename(
-            title: title,
-            url: url
+            title: live.title,
+            url: live.documentURL
         )
         Task { [weak self] in
             guard let self else { return }
@@ -783,18 +806,21 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
         observations = [
             webView.observe(\.url, options: [.initial, .new]) { [weak self] webView, _ in
                 Task { @MainActor in
+                    guard let self else { return }
                     if let url = webView.url {
-                        self?.translation.documentURLDidChange(from: self?.url, to: url)
-                        self?.url = url
-                        self?.refreshNavigationState()
+                        self.translation.documentURLDidChange(from: self.documentURL, to: url)
+                        self.documentURL = url
+                        self.refreshNavigationState()
+                        self.reportMoveWithinDocument(to: url)
                     }
-                    self?.credentialState.didChangeTopLevelURL(to: webView.url ?? self?.url)
+                    self.credentialState.didChangeTopLevelURL(to: webView.url ?? self.documentURL)
                 }
             },
-            webView.observe(\.title, options: [.initial, .new]) { [weak self] webView, _ in
+            webView.observe(\.title, options: [.initial, .new]) { [weak self] _, _ in
                 Task { @MainActor in
-                    self?.recordObservedTitle(webView.title)
+                    self?.mediaSessionCoordinator?.ownerTitleDidChange()
                     self?.refreshNavigationState()
+                    self?.reporter.titleChanged()
                 }
             },
             webView.observe(\.estimatedProgress, options: [.initial, .new]) { [weak self] webView, _ in
@@ -802,17 +828,30 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
             },
             webView.observe(\.isLoading, options: [.initial, .new]) { [weak self] webView, _ in
                 Task { @MainActor in
-                    self?.isLoading = webView.isLoading
                     self?.refreshNavigationState()
+                    self?.refreshMediaActivity()
                     if !webView.isLoading {
                         self?.pullToRefreshControl.endRefreshing()
                     }
                 }
             },
+            webView.observe(\.hasOnlySecureContent, options: [.new]) { [weak self] _, _ in
+                Task { @MainActor in self?.reporter.stateChanged() }
+            },
+            webView.observe(\.serverTrust, options: [.new]) { [weak self] _, _ in
+                Task { @MainActor in self?.reporter.stateChanged() }
+            },
+            webView.observe(\.cameraCaptureState, options: [.new]) { [weak self] _, _ in
+                Task { @MainActor in self?.refreshMediaActivity() }
+            },
+            webView.observe(\.microphoneCaptureState, options: [.new]) { [weak self] _, _ in
+                Task { @MainActor in self?.refreshMediaActivity() }
+            },
             webView.observe(\.themeColor, options: [.initial, .new]) { [weak self] webView, _ in
                 Task { @MainActor in
                     let themeColor = webView.themeColor
                     self?.themeColor = themeColor
+                    self?.reporter.themeChanged(self?.siteThemeIconAccent)
                     // A standards-provided theme color owns the browser's
                     // overscroll atmosphere. Nil restores WebKit's derived
                     // html/body background instead of inventing a Crest color.
@@ -828,6 +867,15 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
         ]
     }
 
+    /// WebKit tells its delegate nothing about a move within the document,
+    /// such as `history.pushState` or a fragment. The address changing while
+    /// nothing loads, neither a request Crest made nor a navigation WebKit
+    /// started, is that move.
+    private func reportMoveWithinDocument(to url: URL) {
+        guard activeNavigation == nil, !webView.isLoading else { return }
+        reporter.movedWithinDocument(to: url)
+    }
+
     @objc private func refreshFromPull() {
         guard webView.reload() != nil else {
             pullToRefreshControl.endRefreshing()
@@ -837,25 +885,34 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
 
     func completeNavigation() {
         activeNavigation = nil
-        clearNavigationFailure()
-        url = webView.url
-        recordObservedTitle(webView.title)
-        processRecovery.recordSuccessfulNavigation()
-        showsProcessFailure = false
-        needsWebContentRestore = false
-        completedNavigationCount &+= 1
-        updateUnderPageBackground()
+        refreshNavigationState()
         refreshFavicon()
+        publishCompletedNavigation()
     }
 
-    private func recordObservedTitle(_ observedTitle: String?) {
-        guard title != observedTitle else { return }
-        title = observedTitle
-        mediaSessionCoordinator?.ownerTitleDidChange()
+    /// The session keeps only the metadata a completed navigation reports, and
+    /// `webView.title` can still be empty when WebKit finishes a new document.
+    /// Read the settled document title first, then count the completion unless
+    /// another navigation has replaced this document meanwhile.
+    private func publishCompletedNavigation() {
+        let completedURL = webView.url
+        let committedNavigation = committedNavigationCount
+        Task { @MainActor [weak self, weak webView] in
+            guard let self, let webView else { return }
+            let documentTitle = try? await webView.evaluateJavaScript("document.title") as? String
+            guard activeNavigation == nil,
+                committedNavigationCount == committedNavigation,
+                webView.url == completedURL
+            else { return }
+            let title = documentTitle?.isEmpty == false ? documentTitle : webView.title
+            completedNavigationCount &+= 1
+            if let completedURL { reporter.finished(completedURL, title: title) }
+            updateUnderPageBackground()
+        }
     }
 
     private func refreshFavicon() {
-        guard navigationContext?.iconMode == .automatic,
+        guard navigationContext?.iconMode.followsPage == true,
             webView.url != nil
         else { return }
         faviconSession.refresh()
@@ -881,41 +938,13 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
         )
     }
 
-    /// Reacts to WebKit losing this page's web-content process.
-    ///
-    /// On iOS this is the routine eviction path, not a crash: the system reclaims a
-    /// background tab's process precisely to get its memory back. Reloading such a
-    /// page off screen would hand that memory straight back and spend one of the two
-    /// automatic reloads the error screen depends on, so an off-screen page is
-    /// marked and restored when it is selected again. A page the user is looking at
-    /// still recovers immediately.
+    /// Reacts to WebKit losing this page's web-content process, which the
+    /// core recovers. On iOS this is most often routine eviction: the system
+    /// reclaims a background tab's process to get its memory back, and the
+    /// core brings such a page back once a window shows it.
     func recordWebContentTermination() {
         credentialState.webContentProcessDidTerminate()
-        guard isVisible else {
-            needsWebContentRestore = true
-            return
-        }
-        switch processRecovery.recordTermination() {
-        case .reload:
-            webView.reload()
-        case .showFailure:
-            showsProcessFailure = true
-        }
-    }
-
-    /// Reloads a page whose web-content process was reclaimed while it was off
-    /// screen. The page store calls this as it activates a page.
-    func restoreWebContentIfNeeded() {
-        guard needsWebContentRestore else { return }
-        needsWebContentRestore = false
-        webView.reload()
-    }
-
-    /// True while this page's web view is in a window, which is what being the
-    /// surface the user is looking at amounts to: a resident background tab and a
-    /// released Peek are both detached from the view hierarchy.
-    private var isVisible: Bool {
-        webView.window != nil
+        reportWebContentProcessStopped()
     }
 
     private func setTemporaryPageZoom(_ zoom: CGFloat) -> Bool {
@@ -932,12 +961,12 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
             return false
         }
         pageZoom = zoom
-        webView.pageZoom = zoom
+        enginePage.zoom(to: zoom)
         return true
     }
 
     func prepareForNavigation(to url: URL?) {
-        mediaCaptureSession.reset()
+        sitePermissionSession.resetMediaGrants()
         sitePermissionRequests.cancelAll()
         translation.reset()
         readerModeSession.invalidate()
@@ -945,8 +974,7 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
         beginBlockedPopupNavigation()
         synchronizePopupPermission(for: url)
         faviconSession.invalidate()
-        pendingNavigationURL = url
-        clearNavigationFailure(preservingPendingURL: true)
+        reporter.heading(to: url)
     }
 
     func updateUnderPageBackground() {
@@ -954,35 +982,53 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
             completedNavigationCount == 0 ? .clear : themeColor
     }
 
+    /// Tells the core the page's current navigation failed with `error`,
+    /// which `replacedDocument` when it came after the new document took the
+    /// page's place. A navigation that became a download or was cancelled is
+    /// no failure, and only ends.
     func recordNavigationFailure(
         _ error: any Error,
-        phase: BrowserNavigationFailurePhase,
+        replacedDocument: Bool,
         navigation: WKNavigation?
     ) {
         guard isCurrentNavigation(navigation) else { return }
         activeNavigation = nil
-        let fallbackURL = pendingNavigationURL ?? webView.url ?? url
-        pendingNavigationURL = nil
-        navigationFailure = BrowserNavigationFailure(
-            error: error,
-            phase: phase,
-            fallbackURL: fallbackURL
-        )
-        canGoBack = canReturnFromNavigationFailure || webView.canGoBack
+        if let failure = PageFailure(
+            error: error, replacedDocument: replacedDocument, fallbackURL: reporter.pendingURL ?? webView.url)
+        {
+            reporter.failed(failure)
+        } else {
+            reporter.interrupted()
+        }
     }
 
+    /// Brings WebKit's supplemental history up to date and tells the core what
+    /// the page shows.
     func refreshNavigationState() {
         synchronizeNavigationHistory()
-        canGoBack = canReturnFromNavigationFailure || !navigationHistory.backItems.isEmpty || webView.canGoBack
-        canGoForward = !navigationHistory.forwardItems.isEmpty || webView.canGoForward
+        reporter.stateChanged()
     }
 
-    func clearNavigationFailure(preservingPendingURL: Bool = false) {
-        navigationFailure = nil
-        if !preservingPendingURL {
-            pendingNavigationURL = nil
-        }
-        refreshNavigationState()
+    /// What WebKit shows for the page now: the document and its title,
+    /// whether it loads, its history with Crest's supplement, the page's
+    /// security from its secure-content flag and the trust it kept, and the
+    /// media WebKit last said it runs.
+    private func snapshot(pendingURL: String?) -> PageSnapshot {
+        let overrides = serverTrustOverrides
+        let profileID = profileID
+        return PageSnapshot(
+            url: webView.url?.absoluteString,
+            pendingURL: pendingURL,
+            title: webView.title ?? "",
+            isLoading: webView.isLoading,
+            canGoBack: !navigationHistory.backItems.isEmpty || webView.canGoBack,
+            canGoForward: !navigationHistory.forwardItems.isEmpty || webView.canGoForward,
+            security: PageSecurity(
+                webKitURL: webView.url,
+                hasOnlySecureContent: webView.hasOnlySecureContent,
+                serverTrust: webView.serverTrust,
+                isApprovedOverride: { overrides.isApproved($0, for: profileID) }),
+            media: pageEngine.knownMediaActivity)
     }
 
     private func receiveCredentialMessage(_ scriptMessage: WKScriptMessage) {
@@ -1086,5 +1132,4 @@ final class MobileBrowserPage: NSObject, BrowserMediaSessionCommandEndpoint, Bro
     }
 }
 
-#if CREST_PHYSICAL_VALIDATION
-#endif
+extension MobileBrowserPage: WebKitPageHosting {}

@@ -6,7 +6,6 @@ struct BrowserRootLifecycleModifier: ViewModifier {
     let persistSidebarWidth: (Double) -> Void
     @Binding var storedSidebarWidth: Double
     @State private var runtimeSessionProjection: BrowserRuntimeSessionProjection
-    @State private var reconciledPageSpaces: [BrowserSpace]?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -19,9 +18,7 @@ struct BrowserRootLifecycleModifier: ViewModifier {
         self.persistSidebarWidth = persistSidebarWidth
         _storedSidebarWidth = storedSidebarWidth
         _runtimeSessionProjection = State(
-            initialValue: BrowserRuntimeSessionProjection(
-                session: model.browser.session
-            )
+            initialValue: model.pages.runtimeProjection
         )
     }
 
@@ -33,7 +30,7 @@ struct BrowserRootLifecycleModifier: ViewModifier {
             }
             .onChange(of: model.isWindowFocused, initial: true) {
                 _, isFocused in
-                model.extensionHostWindowFocusChanged(isFocused)
+                model.hostWindowFocusChanged(isFocused)
             }
             .modifier(
                 BrowserRootSelectionObserver(
@@ -52,51 +49,17 @@ struct BrowserRootLifecycleModifier: ViewModifier {
 
         let pageObservedContent =
             preparedContent
-            .onChange(of: model.browser.selectedTab?.url) { model.synchronizePageMetadata() }
-            .onChange(of: model.pages.activePage?.displayURL) {
+            .onChange(of: model.browser.shownTab?.url) { model.synchronizePageMetadata() }
+            .onChange(of: model.pages.activePage?.live.displayURL) {
                 model.synchronizePageMetadata()
-            }
-            .onChange(of: model.pages.activePage?.title) {
-                model.synchronizePageMetadata()
-            }
-            .onChange(of: model.pages.activePage?.faviconData) {
-                model.synchronizePageMetadata()
-            }
-            .onChange(of: model.pages.activePage?.themeColor) {
-                model.synchronizePageMetadata()
-            }
-            .onChange(of: model.pages.activePage?.completedNavigationCount) {
-                model.recordCompletedNavigation()
-            }
-            .onChange(of: model.pages.activePage?.isLoading) {
-                model.reconcileExtensionTabActivity()
-            }
-            .onChange(of: model.pages.activePage?.readerModeState) {
-                model.reconcileExtensionTabActivity()
             }
 
         let runtimeObservedContent =
             pageObservedContent
             .onChange(of: model.browser.sessionRevision, initial: true) {
-                runtimeSessionProjection = BrowserRuntimeSessionProjection(
-                    session: model.browser.session
-                )
-            }
-            .onChange(
-                of: runtimeSessionProjection.extensionState,
-                initial: true
-            ) {
-                let spaces = model.browser.session.spaces
-                if reconciledPageSpaces == spaces {
-                    // Space selection still changes extension window focus
-                    // when a locked or unloaded destination presents no page.
-                    model.reconcileExtensionTabActivity()
-                } else {
-                    // Compare the full Space values: the extension projection
-                    // alone does not carry profile or native-content identity.
-                    model.reconcileExtensions()
-                    reconciledPageSpaces = spaces
-                }
+                model.browser.followSession()
+                runtimeSessionProjection = model.pages.runtimeProjection
+                model.reconcilePages()
             }
             .onChange(
                 of: runtimeSessionProjection.tabIconState,
@@ -123,14 +86,8 @@ struct BrowserRootLifecycleModifier: ViewModifier {
                 model.restoreSidebarWidth(CGFloat(width))
                 persistSidebarWidth(width)
             }
-            .onChange(of: model.chrome.urlCopyFeedbackRevision) { _, revision in
-                model.presentURLCopyFeedback(
-                    revision: revision,
-                    reduceMotion: reduceMotion
-                )
-            }
-            .onChange(of: model.chrome.pageZoomFeedbackRevision) { _, revision in
-                model.presentPageZoomFeedback(
+            .onChange(of: model.chrome.noticeRevision) { _, revision in
+                model.presentNotice(
                     revision: revision,
                     reduceMotion: reduceMotion
                 )
@@ -142,19 +99,7 @@ struct BrowserRootLifecycleModifier: ViewModifier {
                 model.relockProtectedSpaces(spaceIDs)
             }
 
-        return
-            chromeObservedContent
-            .focusedSceneValue(
-                \.browserCommandContext,
-                BrowserCommandContext(
-                    browser: model.browser,
-                    pages: model.pages,
-                    chrome: model.chrome,
-                    windowID: model.windowState?.id,
-                    spaceAccess: model.spaceAccess,
-                    extensionSidebar: model.extensionSidebar
-                )
-            )
+        return chromeObservedContent
     }
 
     /// A Space change and a tab change are different work, so the transition is

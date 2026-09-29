@@ -4,10 +4,8 @@ import Foundation
 enum BrowserCredentialDetailPreviewFixture {
     static let referenceDate = Date(timeIntervalSince1970: 1_000)
     static let spaceName = "Design"
-    static let spaceID = SpaceID(
-        rawValue: UUID(
-            uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
-        )
+    static let spaceID = UUID(
+        uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
     )
     static let profileID = UUID(
         uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2)
@@ -29,10 +27,8 @@ enum BrowserCredentialDetailPreviewFixture {
         profileID: profileID
     )
     static let descriptor = CredentialDescriptor(
-        id: CredentialID(
-            rawValue: UUID(
-                uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3)
-            )
+        id: UUID(
+            uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3)
         ),
         spaceID: spaceID,
         origin: origin,

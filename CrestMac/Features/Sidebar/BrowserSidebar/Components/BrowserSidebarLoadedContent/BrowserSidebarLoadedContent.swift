@@ -20,6 +20,7 @@ struct BrowserSidebarLoadedContent: View {
     let sidebarToggleAction: BrowserSidebarToggleAction
     let toggleSidebar: () -> Void
     let commandSurfaceNamespace: Namespace.ID
+    let commandPaletteHandoff: BrowserCommandPaletteHandoff
     let tabPromotionNamespace: Namespace.ID
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -32,22 +33,6 @@ struct BrowserSidebarLoadedContent: View {
     }
 
     var body: some View {
-        let toolbarSpaces = Set(
-            context.availableSpaces.filter { space in
-                context.utilityPresentation.surface == nil
-                    && pages.extensionControllerPool.hasPinnedToolbarActions(in: space.id, tabID: space.selectedTabID)
-            }.map(\.id))
-        let topInsets = Dictionary(
-            uniqueKeysWithValues: context.availableSpaces.map { space in
-                (
-                    space.id,
-                    context.utilityPresentation.surface == nil
-                        ? BrowserPinnedExtensionStripLayoutPolicy.contentTopInset(
-                            hasPinnedExtensions: toolbarSpaces.contains(space.id),
-                            hasPinnedTabs: !space.tabSections.pinnedTabs.isEmpty)
-                        : 0
-                )
-            })
         VStack(spacing: 0) {
             SidebarChrome(
                 context: context,
@@ -57,7 +42,8 @@ struct BrowserSidebarLoadedContent: View {
                 addressFocusRequest: addressFocusRequest,
                 activateAddress: activateAddress,
                 submitAddress: submitAddress,
-                commandSurfaceNamespace: commandSurfaceNamespace
+                commandSurfaceNamespace: commandSurfaceNamespace,
+                commandPaletteHandoff: commandPaletteHandoff
             )
             .onGeometryChange(for: CGFloat.self) {
                 $0.size.height
@@ -76,20 +62,8 @@ struct BrowserSidebarLoadedContent: View {
                     tabPromotionNamespace: tabPromotionNamespace
                 )
             }
-            .environment(\.spacePagerContentTopInsets, topInsets)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
-            .overlay(alignment: .top) {
-                SpaceSidebarToolbar(
-                    spaces: context.availableSpaces, selectedSpaceID: context.browser.session.selectedSpaceID,
-                    toolbarSpaces: toolbarSpaces, contentTopInsets: topInsets,
-                    extensionControllerPool: pages.extensionControllerPool,
-                    spaceAccess: context.spaceAccess
-                )
-                .frame(
-                    height: BrowserPinnedExtensionStripLayoutPolicy.contentTopInset(
-                        hasPinnedExtensions: true, hasPinnedTabs: true))
-            }
 
             // The widget deck is a top layer over every Space of every profile.
             // It mounts unconditionally beside the pager — never keyed to the
@@ -117,18 +91,18 @@ struct BrowserSidebarLoadedContent: View {
             )
             .environment(
                 \.colorScheme,
-                context.browser.selectedSpace.map {
-                    BrowserSpaceForegroundPolicy.colorScheme(for: $0.branding)
+                context.browser.shownSpace.map {
+                    BrowserSpaceForegroundPolicy.colorScheme(for: $0.settings.look)
                 } ?? .dark
             )
             .modifier(
                 SpaceForegroundBlend(
-                    spaces: context.availableSpaces, selectedSpaceID: context.browser.session.selectedSpaceID))
+                    spaces: context.availableSpaces, selectedSpaceID: context.browser.selectedSpaceID))
         }
         .environment(\.spacePagerPresentation, spacePagerPresentation)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
-            "\(context.browser.selectedSpace?.name ?? "Browser") Space"
+            "\(context.browser.shownSpace?.settings.name ?? "Browser") Space"
         )
     }
 
@@ -138,16 +112,13 @@ struct BrowserSidebarLoadedContent: View {
         Task { @MainActor in
             guard
                 pages.containsResidentPage(matching: assignment),
-                let space = context.browser.session.space(
-                    id: assignment.spaceID
-                ),
-                space.profile.id == assignment.profileID,
-                space.tabs.contains(where: { $0.id == assignment.tabID }),
+                let space = context.browser.spaceModel(matching: assignment.spaceAssignment),
+                space.tabs.model(assignment.tabID) != nil,
                 await context.spaceAccess.unlock(space)
             else { return }
             context.selectSpace(assignment.spaceID)
             context.browser.selectTab(assignment.tabID)
-            pages.select(session: context.browser.session)
+            pages.select()
         }
     }
 
@@ -158,12 +129,9 @@ struct BrowserSidebarLoadedContent: View {
     private func ownerFaviconData(
         _ assignment: BrowserTabRuntimeAssignment
     ) -> Data? {
-        guard
-            let space = context.browser.session.space(id: assignment.spaceID),
-            space.profile.id == assignment.profileID,
-            let tab = space.tabs.first(where: { $0.id == assignment.tabID })
+        guard context.browser.spaceModel(matching: assignment.spaceAssignment)?.tabs.model(assignment.tabID) != nil
         else { return nil }
-        return tab.displayFaviconData
+        return context.browser.core.state.favicons.image(of: assignment.tabID)
     }
 
     /// The scroll wheel flips the widget deck, so the wheel handler owns no
@@ -417,7 +385,7 @@ final class BrowserSidebarWidgetDeckScrollObserverView: NSView {
     @Previewable @Namespace var commandSurfaceNamespace
     @Previewable @Namespace var tabPromotionNamespace
     let browser = BrowserSidebarPreviewFixture.makeBrowser()
-    let pages = BrowserSidebarPreviewFixture.makePages()
+    let pages = BrowserSidebarPreviewFixture.makePages(for: browser)
     let spaceAccess = BrowserSidebarPreviewFixture.makeSpaceAccess()
     BrowserSidebar(
         browser: browser,
@@ -445,6 +413,7 @@ final class BrowserSidebarWidgetDeckScrollObserverView: NSView {
             sidebarToggleAction: .hide,
             toggleSidebar: {},
             commandSurfaceNamespace: commandSurfaceNamespace,
+            commandPaletteHandoff: .neither,
             tabPromotionNamespace: tabPromotionNamespace
         )
     }

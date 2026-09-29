@@ -1,14 +1,14 @@
 /// Settings destinations whose implementations are available in the mobile shell.
 enum BrowserPlatformSettingsDestinationCatalog {
-    static let cases = BrowserSettingsDestination.allCases.filter(isAvailable)
+    static let cases = BrowserSettingsDestination.all.filter(isAvailable)
 
     static func isAvailable(
         _ destination: BrowserSettingsDestination
     ) -> Bool {
-        // Extensions and WebKit's private feature registry are macOS-only
-        // surfaces, and keyboard shortcuts have no mobile command table to bind.
-        destination != .extensions
-            && destination != .featureFlags
+        // WebKit's private feature registry and the rebindable keyboard
+        // command table are macOS surfaces.
+        destination != .featureFlags
             && destination != .shortcuts
+            && destination != .engines
     }
 }

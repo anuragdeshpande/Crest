@@ -9,8 +9,7 @@ struct MobileBrowserSidebarPager: View {
                 MobileBrowserSidebarChrome(configuration: configuration)
                     .fixedSize(horizontal: false, vertical: true)
                 BrowserSidebarSpacePager(context: configuration.context) { space, isSelected in
-                    MobileBrowserSidebarSpaceSurface(
-                        configuration: configuration, space: space, isSelected: isSelected)
+                    MobileBrowserSidebarSpaceSurface(configuration: configuration, space: space, isSelected: isSelected)
                 }
             }
         }
@@ -18,10 +17,10 @@ struct MobileBrowserSidebarPager: View {
             if configuration.showsPageBackdrop {
                 SpaceBackdropBlend(
                     spaces: configuration.context.availableSpaces,
-                    selectedSpace: configuration.context.browser.selectedSpace
+                    selectedSpace: configuration.context.browser.shownSpace
                 ) { space in
                     if let space {
-                        BrowserSpaceBannerBackground(branding: space.branding)
+                        BrowserSpaceBannerBackground(branding: space.settings.look)
                     } else {
                         Color(uiColor: .systemBackground)
                     }

@@ -1,130 +1,105 @@
-import Observation
+import Foundation
 
-@Observable
+/// The platform's side of the core's shortcut bindings.
+///
+/// The core owns the catalog, the person's choices, conflicts, which commands
+/// this device offers, and what the numbered commands reach; the device store
+/// keeps the choices. This store reads each offered command's live chord from
+/// the read model and sends the person's changes as intents.
 @MainActor
 final class BrowserShortcutStore {
-    private var overrides: [String: BrowserShortcutOverride]
-    @ObservationIgnored private let persistence: any BrowserShortcutPersisting
+    // MARK: - Static Variables
 
-    init(
-        persistence: any BrowserShortcutPersisting,
-        reset: Bool = false
-    ) {
-        self.persistence = persistence
-        if reset {
-            persistence.remove()
-        }
-        overrides = persistence.load() ?? [:]
-    }
+    private static let log = DiagnosticLog.shortcuts
 
+    // MARK: - Variables
+
+    private let core: CrestCore
+
+    /// Whether the person changed any shortcut, including one this device does
+    /// not offer.
     var hasCustomizations: Bool {
-        !overrides.isEmpty
+        core.state.shortcutsAreCustomized
     }
 
-    func shortcut(for command: BrowserShortcutCommand) -> BrowserShortcut? {
-        switch overrides[command.rawValue] {
-        case .custom(let shortcut): return shortcut
-        case .unassigned: return nil
-        case nil: break
-        }
-        guard let shortcut = command.defaultShortcut else { return nil }
-        #if os(macOS)
-            // The new window defaults must not take a chord a user previously
-            // assigned elsewhere. Preserve that override; resetting it restores
-            // the default without leaving an artificial unassigned record.
-            if command == .newBlankWindow || command == .newQuickWindow,
-                BrowserShortcutCommand.userFacingCases.contains(where: { overrides[$0.rawValue] == .custom(shortcut) })
-            {
-                return nil
-            }
-        #endif
-        return shortcut
+    /// The commands this device offers, in the order the settings list them.
+    var offeredCommands: [ShortcutCommand] {
+        core.state.shortcutBindings.map(\.command)
     }
 
-    func isCustomized(_ command: BrowserShortcutCommand) -> Bool {
-        overrides[command.rawValue] != nil
-    }
+    // MARK: - Initializers
 
-    func commands(
-        assignedTo shortcut: BrowserShortcut
-    ) -> [BrowserShortcutCommand] {
-        BrowserShortcutCommand.userFacingCases.filter {
-            self.shortcut(for: $0) == shortcut
+    /// A store over `core`. It carries the choices an installed release kept
+    /// under `crest.keyboard-shortcuts.v1`, `legacyOverrides`, into the core's
+    /// device store once, and reads every offered command's chord.
+    init(core: CrestCore, legacyOverrides: Data? = nil) {
+        self.core = core
+        do {
+            try core.send(AdoptShortcuts(overrides: legacyOverrides))
+        } catch {
+            Self.log.error(
+                "The core could not adopt the saved shortcuts: \(DiagnosticLog.describe(error))")
         }
     }
 
-    func assign(
-        _ shortcut: BrowserShortcut,
-        to command: BrowserShortcutCommand,
-        replacingConflicts: Bool = false
-    ) -> BrowserShortcutAssignmentResult {
-        guard shortcut.isValid else { return .invalid }
-        let conflicts = BrowserShortcutConflictPolicy.conflicts(
-            assigning: shortcut,
-            to: command,
-            currentAssignments: currentAssignments
-        )
-        guard conflicts.isEmpty || replacingConflicts else {
-            return .conflict(commands: conflicts)
-        }
-
-        var revised = overrides
-        for conflict in conflicts {
-            Self.set(nil, for: conflict, in: &revised)
-        }
-        Self.set(shortcut, for: command, in: &revised)
-        save(revised)
-        return .assigned
+    /// A store over a memory-only core of its own, as previews and tests
+    /// use, which keeps nothing.
+    convenience init() {
+        self.init(core: CrestCore())
     }
 
-    func clearShortcut(for command: BrowserShortcutCommand) {
-        var revised = overrides
-        Self.set(nil, for: command, in: &revised)
-        save(revised)
+    // MARK: - Actions - Bindings
+
+    func shortcut(for command: ShortcutCommand) -> BrowserShortcut? {
+        core.state.shortcuts[command]?.keys.flatMap(BrowserShortcut.init(boundKeys:))
     }
 
-    func reset(_ command: BrowserShortcutCommand) {
-        var revised = overrides
-        revised.removeValue(forKey: command.rawValue)
-        save(revised)
+    func isCustomized(_ command: ShortcutCommand) -> Bool {
+        core.state.shortcuts[command]?.isCustomized == true
+    }
+
+    func commands(assignedTo shortcut: BrowserShortcut) -> [ShortcutCommand] {
+        let keys = shortcut.keys
+        return core.state.shortcutBindings.filter { $0.keys == keys }.map(\.command)
+    }
+
+    // MARK: - Actions - Changes
+
+    /// Binds `shortcut` to `command` unless another command holds it.
+    func assign(_ shortcut: BrowserShortcut, to command: ShortcutCommand) -> BrowserShortcutAssignmentResult {
+        answer(AssignShortcut(command: command, keys: shortcut.keys))
+    }
+
+    /// Binds `shortcut` to `command`, taking it from every command that holds it.
+    func reassign(_ shortcut: BrowserShortcut, to command: ShortcutCommand) -> BrowserShortcutAssignmentResult {
+        answer(ReassignShortcut(command: command, keys: shortcut.keys))
+    }
+
+    func clearShortcut(for command: ShortcutCommand) {
+        _ = answer(UnassignShortcut(command: command))
+    }
+
+    func reset(_ command: ShortcutCommand) {
+        _ = answer(ResetShortcut(command: command))
     }
 
     func resetAll() {
-        guard !overrides.isEmpty else { return }
-        overrides = [:]
-        persistence.remove()
+        _ = answer(ResetShortcuts())
     }
 
-    private var currentAssignments: [BrowserShortcutCommand: BrowserShortcut] {
-        Dictionary(
-            uniqueKeysWithValues:
-                BrowserShortcutCommand.userFacingCases.compactMap { command in
-                    shortcut(for: command).map { (command, $0) }
-                }
-        )
-    }
-
-    private static func set(
-        _ shortcut: BrowserShortcut?,
-        for command: BrowserShortcutCommand,
-        in overrides: inout [String: BrowserShortcutOverride]
-    ) {
-        if shortcut == command.defaultShortcut {
-            overrides.removeValue(forKey: command.rawValue)
-            return
+    private func answer(_ intent: some ShortcutIntent) -> BrowserShortcutAssignmentResult {
+        do {
+            try core.send(intent)
+            return .assigned
+        } catch .shortcutInUse(let refusal) {
+            return .conflict(commands: refusal.commands)
+        } catch .invalidShortcut {
+            return .invalid
+        } catch {
+            Self.log.error(
+                "The core refused \(String(describing: type(of: intent))): \(DiagnosticLog.describe(error))"
+            )
+            return .invalid
         }
-        overrides[command.rawValue] =
-            shortcut.map(BrowserShortcutOverride.custom)
-            ?? .unassigned
-    }
-
-    private func save(_ revised: [String: BrowserShortcutOverride]) {
-        guard revised != overrides else { return }
-        overrides = revised
-        guard !revised.isEmpty else {
-            persistence.remove()
-            return
-        }
-        persistence.save(revised)
     }
 }

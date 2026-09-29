@@ -3,7 +3,8 @@ import SwiftUI
 /// The same title and favicon in the list and in the travelling component.
 /// Keeping the native Label layout also preserves its baseline and icon gap.
 struct BrowserSidebarTabLabel: View {
-    let tab: BrowserTab
+    let tab: TabStateModel
+    let favicons: FaviconAssets
     let profileID: UUID
     let isSelected: Bool
     let isLoaded: Bool
@@ -13,16 +14,15 @@ struct BrowserSidebarTabLabel: View {
     var faviconPrimaryClick: (() -> Void)?
     var titleOpacity = 1.0
     var iconOffset: CGFloat = 0
-    var sidePanelSpaceID: SpaceID?
     @AppStorage(BrowserSidebarDensityPreference.scaleKey, store: BrowserSidebarDensityPreference.defaults) private
         var textScale = 1.0
 
     var body: some View {
         BrowserSidebarTabLabelContent(
-            tab: tab, profileID: profileID, isSelected: isSelected, isLoaded: isLoaded,
+            tab: tab, favicons: favicons, profileID: profileID, isSelected: isSelected, isLoaded: isLoaded,
             metrics: metrics, leadingInset: leadingInset, restoreSavedLocation: restoreSavedLocation,
             faviconPrimaryClick: faviconPrimaryClick,
-            titleOpacity: titleOpacity, iconOffset: iconOffset, sidePanelSpaceID: sidePanelSpaceID, textScale: textScale
+            titleOpacity: titleOpacity, iconOffset: iconOffset, textScale: textScale
         )
     }
 }

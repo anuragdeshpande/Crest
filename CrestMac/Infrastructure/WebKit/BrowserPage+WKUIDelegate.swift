@@ -4,9 +4,6 @@ import Foundation
 import Observation
 import UniformTypeIdentifiers
 import WebKit
-import os
-
-extension BrowserPage: BrowserExtensionDebuggerDialogHosting {}
 
 extension BrowserPage: WKUIDelegate {
     /// The PDF HUD supplies its live document bytes through this desktop
@@ -20,7 +17,7 @@ extension BrowserPage: WKUIDelegate {
         mimeType: String,
         originatingURL: URL
     ) {
-        guard webView === self.webView else { return }
+        guard webView === self.webKitView else { return }
         let assignment = BrowserSpaceRuntimeAssignment(spaceID: spaceID, profileID: profileID)
         let feedbackSource = BrowserMacDownloadFeedbackSource.capture(in: webView)
         Task { [downloadCenter, spaceName] in
@@ -35,23 +32,47 @@ extension BrowserPage: WKUIDelegate {
     /// video context menu, including videos inside cross-origin frames.
     @objc(_webView:hasVideoInPictureInPictureDidChange:)
     func webView(_ webView: WKWebView, hasVideoInPictureInPictureDidChange isActive: Bool) {
-        pictureInPicture.nativePresentationDidChange(isActive: isActive)
+        pictureInPicture?.nativePresentationDidChange(isActive: isActive)
+        webKitEngine?.hasVideoInPictureInPicture = isActive
+        refreshMediaActivity()
     }
 
-    /// Native PiP's Restore action asks the embedder to reveal its document.
-    /// The ordinary Close action does not send this callback. Fullscreen also
-    /// uses it, so only a still-valid PiP source may change tab selection.
+    /// WebKit offers beforeunload confirmation only through this desktop SPI;
+    /// without it every dirty page would leave silently. It covers ordinary
+    /// navigations as well as a close the page's engine asked to prepare.
+    @objc(_webView:runBeforeUnloadConfirmPanelWithMessage:initiatedByFrame:completionHandler:)
+    func webView(
+        _ webView: WKWebView,
+        runBeforeUnloadConfirmPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping @MainActor @Sendable (Bool) -> Void
+    ) {
+        let engine = webKitEngine
+        engine?.beforeUnloadPanelWillAppear()
+        askScriptDialog(.beforeUnload, message: message, defaultText: nil, frame: frame) { leaving, _ in
+            completionHandler(leaving)
+            engine?.beforeUnloadPanelDidFinish(leaving: leaving)
+        }
+    }
+
+    /// Native PiP's Restore action asks the embedder to reveal its document,
+    /// and WebKit returns the video inline itself. The ordinary Close action
+    /// does not send this callback. Fullscreen also uses it, so only a
+    /// still-valid PiP source tells the core, which shows the page's tab.
     @objc(_webViewFullscreenMayReturnToInline:)
     func webViewFullscreenMayReturnToInline(_ webView: WKWebView) {
-        guard webView === self.webView, pictureInPicture.canRestoreSource else { return }
-        host?.restorePictureInPictureSourcePage(self)
+        guard webView === self.webKitView, pictureInPicture?.canRestoreSource == true else { return }
+        corePage.report(PictureInPictureReturned(pageID: corePage.id))
     }
 
     /// Returns the popup's web view built from WebKit's own configuration, which
     /// is what keeps `window.open()` non-null, `window.opener` connected, and
-    /// `about:blank` popups writable. Crest never loads that web view itself:
-    /// WebKit drives the navigation it already scheduled. `windowFeatures` is
-    /// ignored because every popup becomes a tab.
+    /// `about:blank` popups writable. The page offers the popup to the core,
+    /// which decides where it shows, a Quick Window for one that asked for a
+    /// window of its own and a tab beside this one otherwise, and keeps it on
+    /// WebKit, this page's engine; Crest never loads that web view itself:
+    /// WebKit drives the navigation it already scheduled. A popup the core
+    /// refuses gets no window, and never a tab of its own.
     func webView(
         _ webView: WKWebView,
         createWebViewWith configuration: WKWebViewConfiguration,
@@ -59,36 +80,26 @@ extension BrowserPage: WKUIDelegate {
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
         recordAcceptedPopup()
-        return popupCoordinator.resolveOpen(
-            for: navigationAction,
-            currentURL: webView.url,
-            navigateCurrent: { [weak self] request in
-                guard let self, let host else { return false }
-                return host.navigatePopupInCurrentPage(
-                    request,
-                    opener: self
-                )
-            },
-            adopt: { [weak self] requestedURL in
-                guard let self, let host else { return nil }
-                return host.adoptPopupWebView(
-                    configuration: configuration,
-                    requestedURL: requestedURL,
-                    opener: self,
-                    selecting: navigationAction.selectsOpenedLink(
-                        using: BrowserLinkPreferenceStore.shared.preferences
-                    )
-                )
-            }
-        )
+        let externalSchemeCoordinator = externalSchemeCoordinator
+        let popups = BrowserPopupCoordinator(handOffExternalScheme: { destinationURL, trigger, origin in
+            externalSchemeCoordinator.handOff(destinationURL: destinationURL, trigger: trigger, origin: origin)
+        })
+        let webKitPage = webKitAdapter?.webKitPage
+        let foreground = corePage.selectsOpenedWindow(gesture: navigationAction.linkGesture)
+        let popup = WebKitPopup(configuration: configuration, wantsWindow: windowFeatures.requestsPopupWindow)
+        let request = navigationAction.request
+        return popups.resolveOpen(for: navigationAction, currentURL: webView.url) { _ in
+            webKitPage?.offer(popup, for: request, foreground: foreground)?.webView
+        }
     }
 
-    /// Closes only tabs that web content opened. A hand-opened tab keeps its
-    /// place: `window.close()` from a page the user navigated to would otherwise
-    /// let any site discard the user's own tab.
+    /// The page's script asked to close its window, as `window.close()` does,
+    /// once its document agreed to go. The core decides, as it does for every
+    /// engine: only a page another page opened closes what owns it.
     func webViewDidClose(_ webView: WKWebView) {
-        guard wasOpenedAsPopup else { return }
-        host?.closeWebContentInitiatedPage(self)
+        // A close Crest prepared reports its approval here, not a script close.
+        if webKitEngine?.webViewDidClose() == true { return }
+        corePage.report(PageCloseRequested(pageID: corePage.id))
     }
 
     func webView(
@@ -97,19 +108,7 @@ extension BrowserPage: WKUIDelegate {
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping @MainActor @Sendable () -> Void
     ) {
-        guard
-            !interceptDebuggerDialog(
-                .alert,
-                message: message,
-                frame: frame,
-                resolve: { _, _ in completionHandler() }
-            )
-        else { return }
-        dialogPresenter.presentAlert(
-            message: message,
-            request: frame.request,
-            completion: completionHandler
-        )
+        askScriptDialog(.alert, message: message, defaultText: nil, frame: frame) { _, _ in completionHandler() }
     }
 
     func webView(
@@ -118,19 +117,9 @@ extension BrowserPage: WKUIDelegate {
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping @MainActor @Sendable (Bool) -> Void
     ) {
-        guard
-            !interceptDebuggerDialog(
-                .confirm,
-                message: message,
-                frame: frame,
-                resolve: { accept, _ in completionHandler(accept) }
-            )
-        else { return }
-        dialogPresenter.presentConfirm(
-            message: message,
-            request: frame.request,
-            completion: completionHandler
-        )
+        askScriptDialog(.confirm, message: message, defaultText: nil, frame: frame) { accepted, _ in
+            completionHandler(accepted)
+        }
     }
 
     func webView(
@@ -140,48 +129,24 @@ extension BrowserPage: WKUIDelegate {
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping @MainActor @Sendable (String?) -> Void
     ) {
-        if BrowserExtensionClipboardBridge.shared.handlePrompt(
-            prompt, webView: webView, frame: frame, reply: completionHandler)
-        {
-            return
+        askScriptDialog(.prompt, message: prompt, defaultText: defaultText, frame: frame) { accepted, text in
+            completionHandler(accepted ? text ?? "" : nil)
         }
-        guard
-            !interceptDebuggerDialog(
-                .prompt,
-                message: prompt,
-                defaultPrompt: defaultText ?? "",
-                frame: frame,
-                resolve: { _, text in completionHandler(text) }
-            )
-        else { return }
-        dialogPresenter.presentPrompt(
-            message: prompt,
-            defaultText: defaultText,
-            request: frame.request,
-            completion: completionHandler
-        )
     }
 
-    /// Offers a dialog to an attached debugger session before Crest presents
-    /// it. Returns true when the session took it, which means the page stays
-    /// blocked until that session answers or the session ends.
-    private func interceptDebuggerDialog(
-        _ kind: BrowserExtensionDebuggerDialogKind,
-        message: String,
-        defaultPrompt: String? = nil,
-        frame: WKFrameInfo,
-        resolve: @escaping (Bool, String?) -> Void
-    ) -> Bool {
-        guard let interceptor = debuggerDialogInterceptor else { return false }
-        return interceptor.intercept(
-            BrowserExtensionDebuggerDialog(
-                kind: kind,
-                message: message,
-                defaultPrompt: defaultPrompt,
-                url: frame.request.url ?? webView.url
-            ),
-            resolve: resolve
-        )
+    /// Asks the core the script dialog `frame`'s document opened, which this
+    /// page shows once the core asks the person. A page WebKit's binding did
+    /// not build has no one to ask, and declines.
+    private func askScriptDialog(
+        _ kind: JavaScriptDialogKind, message: String, defaultText: String?, frame: WKFrameInfo,
+        answer: @escaping @MainActor (Bool, String?) -> Void
+    ) {
+        guard let webKitPage = webKitAdapter?.webKitPage else { return answer(false, nil) }
+        webKitPage.ask(
+            ScriptDialogQuestion(
+                kind: kind, message: message, defaultText: defaultText ?? "",
+                sourceURL: frame.request.url?.absoluteString ?? ""),
+            answer: answer)
     }
 
     func webView(
@@ -191,7 +156,10 @@ extension BrowserPage: WKUIDelegate {
         completionHandler: @escaping @MainActor @Sendable ([URL]?) -> Void
     ) {
         dialogPresenter.presentFileInput(
-            parameters: parameters,
+            options: BrowserFileInputOptions(
+                allowsDirectories: parameters.allowsDirectories,
+                allowsMultipleSelection: parameters.allowsMultipleSelection
+            ),
             request: frame.request,
             completion: { [weak self] urls in
                 guard let self, let urls else {
@@ -218,25 +186,16 @@ extension BrowserPage: WKUIDelegate {
         type: WKMediaCaptureType,
         decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
     ) {
-        guard webView === self.webView,
-            let topLevelOrigin = webView.url.flatMap(BrowserSiteOrigin.init(url:))
+        guard webView === self.webKitView,
+            let topLevelOrigin = webView.url.flatMap(SiteOrigin.init(url:))
         else {
             decisionHandler(.deny)
             return
         }
-        BrowserMediaPermission(type).resolve(
-            origin: BrowserSiteOrigin(origin),
-            topLevelOrigin: topLevelOrigin,
-            spaceID: spaceID,
-            spaceName: spaceName,
-            permissionCenter: permissionCenter,
-            requests: sitePermissionRequests
-        ) { [weak self] decision in
-            if decision == .grant {
-                self?.mediaCaptureSession.recordGrant(BrowserMediaPermission(type), origin: BrowserSiteOrigin(origin))
-            }
-            decisionHandler(decision)
-        }
+        answerPermission(
+            SitePermission(type), origin: SiteOrigin(origin), topLevelOrigin: topLevelOrigin,
+            from: webKitAdapter?.webKitPage,
+            decisionHandler: decisionHandler)
     }
 
     @available(macOS 27.0, *)
@@ -247,21 +206,13 @@ extension BrowserPage: WKUIDelegate {
         decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
     ) {
         guard frame.webView === webView,
-            let topLevelOrigin = webView.url.flatMap(BrowserSiteOrigin.init(url:))
+            let topLevelOrigin = webView.url.flatMap(SiteOrigin.init(url:))
         else {
             decisionHandler(.deny)
             return
         }
-        let siteOrigin = BrowserSiteOrigin(origin)
-        Task { @MainActor [weak self] in
-            guard let self else {
-                decisionHandler(.deny)
-                return
-            }
-            let allowed = await sitePermissionRequests.authorize(
-                .location, origin: siteOrigin, topLevelOrigin: topLevelOrigin,
-                spaceID: spaceID, spaceName: spaceName, permissionCenter: permissionCenter)
-            decisionHandler(allowed ? .grant : .deny)
-        }
+        answerPermission(
+            .location, origin: SiteOrigin(origin), topLevelOrigin: topLevelOrigin, from: webKitAdapter?.webKitPage,
+            decisionHandler: decisionHandler)
     }
 }

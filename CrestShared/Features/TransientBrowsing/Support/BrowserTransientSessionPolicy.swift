@@ -1,26 +1,30 @@
 import Foundation
 
-/// Describes whether a transient request may retain a live page.
-enum BrowserTransientLeaseDisposition: Equatable, Sendable {
+/// Describes whether a transient request may retain a live page. A usable
+/// request carries the Space of the read model its page opens in.
+@MainActor
+enum BrowserTransientLeaseDisposition: Equatable {
     case notPresented
     case sourceMissing
     case sourceLocked
-    case usable(BrowserSpace)
+    case usable(SpaceModel)
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        switch (lhs, rhs) {
+        case (.notPresented, .notPresented), (.sourceMissing, .sourceMissing), (.sourceLocked, .sourceLocked): true
+        case (.usable(let left), .usable(let right)): left === right
+        default: false
+        }
+    }
 }
 
-/// The authorized source and destination of a transient promotion.
-struct BrowserTransientPromotionSpaces: Equatable, Sendable {
-    let source: BrowserSpace
-    let destination: BrowserSpace
-}
-
-/// Shared ownership and authorization rules for transient pages.
+/// Native presentation and authentication observations for transient pages.
 enum BrowserTransientSessionPolicy {
     @MainActor
     static func disposition(
         isPresentingRequest: Bool,
-        space: BrowserSpace?,
-        isLocked: @MainActor (BrowserSpace) -> Bool
+        space: SpaceModel?,
+        isLocked: @MainActor (SpaceModel) -> Bool
     ) -> BrowserTransientLeaseDisposition {
         guard isPresentingRequest else { return .notPresented }
         guard let space else { return .sourceMissing }
@@ -28,17 +32,16 @@ enum BrowserTransientSessionPolicy {
         return .usable(space)
     }
 
-    /// Excludes deleting and locked destinations, retaining the named source Space.
+    /// The Spaces of `browser`'s workspace a transient page may move to or
+    /// unlock: none being deleted, and none locked but the request's own.
     @MainActor
     static func availableSpaces(
-        in spaces: [BrowserSpace],
-        deletingSpaceIDs: Set<SpaceID>,
-        requestSpaceID: SpaceID,
-        isLocked: @MainActor (BrowserSpace) -> Bool
-    ) -> [BrowserSpace] {
-        spaces.filter {
-            !deletingSpaceIDs.contains($0.id)
-                && ($0.id == requestSpaceID || !isLocked($0))
+        in browser: BrowserStore,
+        requestSpaceID: UUID,
+        isLocked: @MainActor (SpaceModel) -> Bool
+    ) -> [SpaceModel] {
+        BrowserSidebarAccessPolicy.availableSpaces(in: browser).filter {
+            $0.id == requestSpaceID || !isLocked($0)
         }
     }
 
@@ -51,29 +54,4 @@ enum BrowserTransientSessionPolicy {
         leaseAssignment == requestAssignment && leaseCanBeReused
     }
 
-    /// Both Spaces must exist and remain unlocked before promotion.
-    @MainActor
-    static func promotionSpaces(
-        source: BrowserSpace?,
-        destination: BrowserSpace?,
-        isLocked: @MainActor (BrowserSpace) -> Bool
-    ) -> BrowserTransientPromotionSpaces? {
-        guard let source,
-            !isLocked(source),
-            let destination,
-            !isLocked(destination)
-        else { return nil }
-        return BrowserTransientPromotionSpaces(
-            source: source,
-            destination: destination
-        )
-    }
-
-    /// A page can be adopted only by the Space and profile that already own it.
-    static func adoptsLivePage(
-        leaseAssignment: BrowserSpaceRuntimeAssignment,
-        destination: BrowserSpace
-    ) -> Bool {
-        leaseAssignment == BrowserSpaceRuntimeAssignment(space: destination)
-    }
 }

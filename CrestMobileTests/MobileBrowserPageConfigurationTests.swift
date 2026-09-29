@@ -5,14 +5,10 @@ import XCTest
 
 @MainActor
 final class MobileBrowserPageConfigurationTests: XCTestCase {
-    func testMobilePageSuspendsInactiveWebContentLikeTheSharedFactory() {
+    func testMobilePageSuspendsInactiveWebContentLikeTheSharedFactory() throws {
         let space = makeSpace(index: 1)
-        let page = MobileBrowserPage(
-            tab: space.tabs[0],
-            space: space,
-            websiteDataStore: WKWebsiteDataStore.nonPersistent(),
-            openNewTab: { _ in }
-        )
+        let browser = BrowserStore.hostingPages(SessionState.Seed(spaces: [space]))
+        let page = try openPage(in: space, through: browser)
         let configuration = page.webView.configuration
 
         XCTAssertEqual(
@@ -31,14 +27,10 @@ final class MobileBrowserPageConfigurationTests: XCTestCase {
         XCTAssertFalse(configuration.suppressesIncrementalRendering)
     }
 
-    func testMobilePageKeepsItsPlatformSpecificMediaAndPeekDecoration() {
+    func testMobilePageKeepsItsPlatformSpecificMediaAndPeekDecoration() throws {
         let space = makeSpace(index: 2)
-        let page = MobileBrowserPage(
-            tab: space.tabs[0],
-            space: space,
-            websiteDataStore: WKWebsiteDataStore.nonPersistent(),
-            openNewTab: { _ in }
-        )
+        let browser = BrowserStore.hostingPages(SessionState.Seed(spaces: [space]))
+        let page = try openPage(in: space, through: browser)
         let configuration = page.webView.configuration
 
         XCTAssertEqual(
@@ -89,14 +81,10 @@ final class MobileBrowserPageConfigurationTests: XCTestCase {
         XCTAssertFalse(preview.webView.isLoading)
     }
 
-    func testMobileWebViewIsOnlyInspectableInADebugBuild() {
+    func testMobileWebViewIsOnlyInspectableInADebugBuild() throws {
         let space = makeSpace(index: 3)
-        let page = MobileBrowserPage(
-            tab: space.tabs[0],
-            space: space,
-            websiteDataStore: WKWebsiteDataStore.nonPersistent(),
-            openNewTab: { _ in }
-        )
+        let browser = BrowserStore.hostingPages(SessionState.Seed(spaces: [space]))
+        let page = try openPage(in: space, through: browser)
 
         #if DEBUG
             XCTAssertTrue(
@@ -111,20 +99,36 @@ final class MobileBrowserPageConfigurationTests: XCTestCase {
         #endif
     }
 
-    private func makeSpace(index: Int) -> BrowserSpace {
-        let tab = BrowserTab.startPage(
-            id: TabID(rawValue: fixedUUID(index * 10 + 1)),
+    /// Opens the page for `space`'s first tab through `browser`'s core, as a
+    /// page store opens one. Keep `browser` alive while the page is in use.
+    private func openPage(in space: SpaceState.Seed, through browser: BrowserStore) throws -> MobileBrowserPage {
+        let tab = try XCTUnwrap(space.tabs.first)
+        return try XCTUnwrap(
+            browser.openWebKitPage(in: space.id, for: tab.id).map { opened in
+                MobileBrowserPage(
+                    corePage: opened.core,
+                    webKitPage: opened.webKit,
+                    tab: browser.pageTab(tab.id, in: space.id),
+                    space: browser.hostedSpace(space.id),
+                    openNewTab: { _ in }
+                )
+            }
+        )
+    }
+
+    private func makeSpace(index: Int) -> SpaceState.Seed {
+        let tab = TabState.Seed.startPage(
+            id: fixedUUID(index * 10 + 1),
             placement: .current
         )
-        return BrowserSpace(
-            id: SpaceID(rawValue: fixedUUID(index * 10 + 2)),
-            profile: BrowsingProfile(id: fixedUUID(index * 10 + 3)),
+        return SpaceState.Seed(
+            id: fixedUUID(index * 10 + 2),
+            profileID: fixedUUID(index * 10 + 3),
             name: "Space \(index)",
             symbol: "circle",
             accent: .indigo,
             folders: [],
-            tabs: [tab],
-            selectedTabID: tab.id
+            tabs: [tab]
         )
     }
 

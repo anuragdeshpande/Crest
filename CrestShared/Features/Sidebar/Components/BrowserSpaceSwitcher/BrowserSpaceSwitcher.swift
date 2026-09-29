@@ -18,7 +18,7 @@ struct BrowserSpaceSwitcher: View {
     /// commands, it only needs to know what the profile has downloaded.
     let downloadCenter: BrowserDownloadCenter
     let capabilities: BrowserInteractionCapabilities
-    let selectSpace: (SpaceID) -> Void
+    let selectSpace: (UUID) -> Void
     var accessories = BrowserSpaceSwitcherAccessories()
 
     var body: some View {
@@ -50,21 +50,21 @@ struct BrowserSpaceSwitcher: View {
     /// without one never touches the download center from here.
     private var downloads: BrowserSpaceSwitcherDownloads {
         guard accessories.commonLists != nil,
-            let space = browser.selectedSpace
+            let space = browser.shownSpace
         else { return .none }
         return BrowserSpaceSwitcherDownloads(
-            items: downloadCenter.items(for: space.profile.id),
-            newItems: downloadCenter.unacknowledgedItems(for: space.profile.id),
-            badgeColor: space.branding.colors.first?.color ?? .accentColor
+            items: downloadCenter.items(for: space.profileID),
+            newItems: downloadCenter.unacknowledgedItems(for: space.profileID),
+            badgeColor: space.settings.look.colors.first?.color ?? .accentColor
         )
     }
 
-    private var spaces: [BrowserSpace] {
-        BrowserSidebarAccessPolicy.availableSpaces(in: browser)
+    private var spaces: [BrowserSpaceIdentity] {
+        BrowserSidebarAccessPolicy.availableSpaces(in: browser).map(BrowserSpaceIdentity.init(space:))
     }
 
-    private var selectedSpaceID: SpaceID {
-        browser.session.selectedSpaceID
+    private var selectedSpaceID: UUID {
+        browser.selectedSpaceID
     }
 
     private var metrics: BrowserSpacePickerMetrics {

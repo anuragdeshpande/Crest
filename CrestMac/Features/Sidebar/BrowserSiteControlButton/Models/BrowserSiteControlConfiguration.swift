@@ -1,10 +1,12 @@
+import Foundation
+
 struct BrowserSiteControlConfiguration {
     let page: BrowserPage
-    let space: BrowserSpace
-    let selectedTabID: TabID?
-    let extensionControllerPool: BrowserExtensionControllerPool
+    /// The page's Space in the read model, which the engine's extension
+    /// controls act for.
+    let space: SpaceModel
+    let selectedTabID: UUID?
     let permissionCenter: BrowserSitePermissionCenter
-    let manageExtensions: () -> Void
     let presentationChanged: (Bool) -> Void
     let contextMenuPresentationChanged: (Bool) -> Void
 }

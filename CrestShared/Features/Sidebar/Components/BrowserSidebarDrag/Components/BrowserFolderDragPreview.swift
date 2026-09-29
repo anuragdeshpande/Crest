@@ -1,12 +1,13 @@
 import SwiftUI
 
 struct BrowserFolderDragPreview: View {
-    let folder: BrowserFolder
+    let folder: FolderStateModel
+    var favicons: FaviconAssets? = nil
     var rowWidth = BrowserTabDragPreviewLayout.rowSize.width
     var sourceHeight: CGFloat = BrowserFolderDragPreviewLayout.height
     var rows: [BrowserFolderDragPreviewRow] = []
     var profileID: UUID?
-    var loadedTabIDs: Set<TabID>?
+    var loadedTabIDs: Set<UUID>?
 
     var body: some View {
         let shape = RoundedRectangle(
@@ -26,8 +27,8 @@ struct BrowserFolderDragPreview: View {
         .background(CrestColor.selectedSurface, in: shape)
         .background(.regularMaterial, in: shape)
         .overlay {
-            shape.fill(folder.color.color.opacity(0.12))
-            shape.strokeBorder(folder.color.color.opacity(0.35), lineWidth: 0.5)
+            shape.fill(folder.displayColor.color.opacity(0.12))
+            shape.strokeBorder(folder.displayColor.color.opacity(0.35), lineWidth: 0.5)
         }
         .clipShape(shape)
         .shadow(color: .black.opacity(0.22), radius: 10, y: 5)
@@ -35,10 +36,11 @@ struct BrowserFolderDragPreview: View {
         .accessibilityLabel("\(folder.title) folder")
     }
 
-    private func folderHeader(_ folder: BrowserFolder, depth: Int = 0) -> some View {
+    private func folderHeader(_ folder: FolderStateModel, depth: Int = 0) -> some View {
         HStack(spacing: CrestSpacing.small) {
-            BrowserFolderArtwork(symbol: folder.symbol, color: folder.color, isExpanded: !folder.isCollapsed)
-                .foregroundStyle(folder.color.color.opacity(0.86))
+            let color = folder.displayColor
+            BrowserFolderArtwork(symbol: folder.displaySymbol, color: color, isExpanded: !folder.isCollapsed)
+                .foregroundStyle(color.color.opacity(0.86))
                 .frame(width: 20)
             Text(folder.title).lineLimit(1)
             Spacer(minLength: CrestSpacing.small)
@@ -58,7 +60,7 @@ struct BrowserFolderDragPreview: View {
             VStack(spacing: 0) {
                 Label("\(members.count)", systemImage: "rectangle.split.2x1")
                     .font(.caption).frame(maxWidth: .infinity, alignment: .leading)
-                ForEach(members) { tab in tabLine(tab, leadingInset: 0).frame(maxHeight: .infinity) }
+                ForEach(members, id: \.id) { tab in tabLine(tab, leadingInset: 0).frame(maxHeight: .infinity) }
             }
             .padding(CrestSpacing.extraSmall)
             .background(CrestColor.chromeSurface, in: .rect(cornerRadius: CrestRadius.control))
@@ -66,12 +68,12 @@ struct BrowserFolderDragPreview: View {
         }
     }
 
-    private func tabLine(_ tab: BrowserTab, leadingInset: CGFloat) -> some View {
+    private func tabLine(_ tab: TabStateModel, leadingInset: CGFloat) -> some View {
         HStack(spacing: CrestSpacing.small) {
-            if let profileID {
-                TabFaviconView(tab: tab, profileID: profileID, size: 18).frame(width: 20)
+            if let profileID, let favicons {
+                TabStateFaviconView(tab: tab, favicons: favicons, profileID: profileID, size: 18).frame(width: 20)
             }
-            Text(tab.displayTitle).lineLimit(1)
+            Text(tab.shownTitle).lineLimit(1)
             Spacer(minLength: 0)
         }
         .padding(.leading, CrestSpacing.medium + leadingInset)

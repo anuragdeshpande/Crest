@@ -7,7 +7,7 @@ struct BrowserTabSelectionMonitor: View {
     let browser: BrowserStore
     let spaceAccess: BrowserSpaceAccessController
     let assignment: BrowserSpaceRuntimeAssignment
-    let activate: (TabID) -> Void
+    let activate: (UUID) -> Void
     var ownsFocus = false
 
     var body: some View {
@@ -24,7 +24,7 @@ struct BrowserTabSelectionMonitor: View {
         let sidebarInteraction: BrowserSidebarInteractionState
         let spaceAccess: BrowserSpaceAccessController
         let assignment: BrowserSpaceRuntimeAssignment
-        let activate: (TabID) -> Void
+        let activate: (UUID) -> Void
         let ownsFocus: Bool
         let globalFrame: CGRect
 
@@ -37,7 +37,7 @@ struct BrowserTabSelectionMonitor: View {
             view.assignment = assignment
             view.activate = activate
             view.globalFrame = globalFrame
-            if ownsFocus, browser.session.selectedSpaceID == assignment.spaceID,
+            if ownsFocus, browser.selectedSpaceID == assignment.spaceID,
                 view.window?.attachedSheet == nil,
                 view.window?.firstResponder !== view
             {
@@ -53,7 +53,7 @@ struct BrowserTabSelectionMonitor: View {
         weak var sidebarInteraction: BrowserSidebarInteractionState?
         weak var spaceAccess: BrowserSpaceAccessController?
         var assignment: BrowserSpaceRuntimeAssignment?
-        var activate: ((TabID) -> Void)?
+        var activate: ((UUID) -> Void)?
         var globalFrame: CGRect = .zero
         private var monitor: Any?
         private var windowObservers: [NSObjectProtocol] = []
@@ -105,7 +105,7 @@ struct BrowserTabSelectionMonitor: View {
                 if event.type == .leftMouseDragged { return event }
             }
             guard let browser, let sidebarInteraction, let spaceAccess, let assignment,
-                browser.session.selectedSpaceID == assignment.spaceID
+                browser.selectedSpaceID == assignment.spaceID
             else { return event }
             guard
                 BrowserSidebarAccessPolicy.selectedUnlockedSpace(
@@ -140,7 +140,7 @@ struct BrowserTabSelectionMonitor: View {
                 selection.clear()
                 return event
             }
-            let units = BrowserSidebarSelection.itemUnits(in: browser, reorder: sidebarInteraction.sidebarReorderState)
+            let units = BrowserSidebarSelection.itemUnits(in: browser)
             selection.reconcile(units: units)
             if event.type == .rightMouseDown || event.modifierFlags.contains(.control) {
                 if !selection.contains(id) { selection.clear() }
@@ -163,7 +163,7 @@ struct BrowserTabSelectionMonitor: View {
         private func handleKey(_ event: NSEvent, browser: BrowserStore) -> NSEvent? {
             guard let sidebarInteraction else { return event }
             let selection = browser.tabMultiSelection
-            let units = BrowserSidebarSelection.itemUnits(in: browser, reorder: sidebarInteraction.sidebarReorderState)
+            let units = BrowserSidebarSelection.itemUnits(in: browser)
             selection.reconcile(units: units)
             let command = event.modifierFlags.contains(.command)
             let shift = event.modifierFlags.contains(.shift)
@@ -178,8 +178,7 @@ struct BrowserTabSelectionMonitor: View {
             }
             if command, !shift, !event.modifierFlags.contains(.option),
                 !event.modifierFlags.contains(.control), let id = selection.focusedItem,
-                let request = BrowserSidebarSelection.request(
-                    for: id, browser: browser, reorder: sidebarInteraction.sidebarReorderState), let spaceAccess
+                let request = BrowserSidebarSelection.capture(for: id, in: browser), let spaceAccess
             {
                 let actions = BrowserTabBatchActions(browser: browser, spaceAccess: spaceAccess)
                 switch event.charactersIgnoringModifiers?.lowercased() {
@@ -187,15 +186,15 @@ struct BrowserTabSelectionMonitor: View {
                     actions.copyLinks(request)
                     return nil
                 case "d":
-                    actions.perform(request, action: .duplicate)
+                    actions.perform(browser.duplicating(request), for: request)
                     return nil
                 case "w":
-                    actions.perform(request, action: .close)
+                    actions.perform(browser.closing(request), for: request)
                     return nil
                 default: break
                 }
                 if BrowserShortcutHardwareKeyCode(rawValue: event.keyCode) == .delete {
-                    actions.perform(request, action: .delete)
+                    actions.perform(browser.deleting(request), for: request)
                     return nil
                 }
             }
@@ -216,10 +215,10 @@ struct BrowserTabSelectionMonitor: View {
             if BrowserShortcutHardwareKeyCode(rawValue: event.keyCode) == .returnKey, let id = selection.focusedItem {
                 if let tabID = id.tabID { activate?(tabID) }
                 if let folderID = id.folderID,
-                    let folder = browser.selectedSpace?.folders.first(where: { $0.id == folderID })
+                    let folder = browser.shownSpace?.folders.model(folderID)
                 {
                     browser.setFolderCollapsed(
-                        folderID, in: browser.session.selectedSpaceID, isCollapsed: !folder.isCollapsed)
+                        folderID, in: browser.selectedSpaceID, isCollapsed: !folder.isCollapsed)
                 }
                 return nil
             }
@@ -227,9 +226,9 @@ struct BrowserTabSelectionMonitor: View {
         }
 
         override func selectAll(_ sender: Any?) {
-            guard let browser, let sidebarInteraction else { return }
+            guard let browser, sidebarInteraction != nil else { return }
             browser.tabMultiSelection.selectAll(
-                units: BrowserSidebarSelection.itemUnits(in: browser, reorder: sidebarInteraction.sidebarReorderState))
+                units: BrowserSidebarSelection.itemUnits(in: browser))
         }
     }
 }

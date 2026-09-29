@@ -3,8 +3,8 @@ import SwiftUI
 struct BrowserNavigationFailureView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    let failure: BrowserNavigationFailure
-    let branding: BrowserSpaceBranding?
+    let failure: PageFailure
+    let branding: SpaceBranding?
     let layout: BrowserNavigationFailureLayout
     let canGoBack: Bool
     let canProceed: Bool

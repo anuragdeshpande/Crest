@@ -27,9 +27,9 @@ extension MobileBrowserRootModel {
             isPrivateBrowsing: browser.isPrivateBrowsing,
             canGoBack: pageActions?.canGoBack == true,
             canGoForward: pageActions?.canGoForward == true,
-            hasSelectedTab: browser.selectedTab != nil,
+            hasSelectedTab: browser.shownTab != nil,
             hasActivePage: pageActions?.isAvailable == true,
-            isLoading: pageActions?.activePage?.isLoading == true,
+            isLoading: pageActions?.activePage?.live.isLoading == true,
             canDismissSelectedTab: controller.canDismissSelectedTab
                 && transientBrowsing.peekRequest == nil
                 && transientBrowsing.quickWindowRequest == nil,
@@ -38,20 +38,20 @@ extension MobileBrowserRootModel {
                 && transientBrowsing.quickWindowRequest == nil,
             canDuplicateSelectedTab: controller.canDuplicateSelectedTab,
             canReopenClosedTab: controller.canReopenClosedTab,
-            tabCount: controller.orderedTabs.count,
-            spaceCount: browser.session.spaces.count,
+            tabCount: controller.tabCount,
+            spaceCount: browser.spaceModels.count,
+            numberedSelections: browser.core.numberedSelections(windowID: browser.windowID),
             isSelectedTabInSplit: controller.isSelectedTabInSplit,
             canSplitWithNextTab: controller.canSplitWithNextTab,
             layoutDirection: layoutDirection,
+            isOffered: { [state = browser.core.state] in $0.isOffered(in: state) },
             readerModeActionTitle: pageActions?.readerModeActionTitle ?? "Show Reader",
             canToggleReaderMode: pageActions?.readerModeState.canToggle == true,
             canToggleTranslationToolbar: usesPageToolbars && pageActions?.isAvailable == true
                 && pageActions?.readerModeState.isActive != true,
             isTranslationToolbarVisible: pageActions?.activePage?.translation.showsToolbar == true,
-            contentBlockingActionTitle: MobileContentBlockingActionTitle.resolve(
-                policy: browser.selectedSpace?.browsingPreferences
-                    .contentBlockingPolicy
-            ),
+            contentBlockingActionTitle: ContentBlockingPolicy.switchTitle(
+                for: browser.shownSpace?.settings.browsingPreferences.contentBlocking),
             openNewTab: openNewTab,
             togglePrivateBrowsing: togglePrivateBrowsing,
             openLocation: openLocation,
@@ -105,9 +105,9 @@ extension MobileBrowserRootModel {
                     beforeSynchronization: prepareForSelectionSynchronization
                 )
             },
-            selectTab: { index in
+            selectTab: { tabID in
                 _ = self.selectTabFromCommand(
-                    index,
+                    tabID,
                     beforeSynchronization: prepareForSelectionSynchronization
                 )
             },
@@ -154,9 +154,9 @@ extension MobileBrowserRootModel {
                     beforeSynchronization: prepareForSelectionSynchronization
                 )
             },
-            selectSpace: { index in
+            selectSpace: { spaceID in
                 _ = self.selectSpaceFromCommand(
-                    index,
+                    spaceID,
                     beforeSynchronization: prepareForSelectionSynchronization
                 )
             },
@@ -275,10 +275,10 @@ extension MobileBrowserRootModel {
 
     @discardableResult
     func selectTabFromCommand(
-        _ index: Int,
+        _ tabID: UUID,
         beforeSynchronization: () -> Void = {}
     ) -> Bool {
-        guard commandController.selectTab(at: index) != nil else { return false }
+        guard commandController.selectNumberedTab(tabID) != nil else { return false }
         beforeSynchronization()
         synchronizeAfterCommandSelection()
         return true
@@ -306,10 +306,10 @@ extension MobileBrowserRootModel {
 
     @discardableResult
     func selectSpaceFromCommand(
-        _ index: Int,
+        _ spaceID: UUID,
         beforeSynchronization: () -> Void = {}
     ) -> Bool {
-        guard commandController.selectSpace(at: index) != nil else { return false }
+        guard commandController.selectNumberedSpace(spaceID) != nil else { return false }
         beforeSynchronization()
         synchronizeAfterCommandSelection()
         return true
@@ -329,7 +329,7 @@ extension MobileBrowserRootModel {
         guard commandController.focusAdjacentSplitCard(offset: offset) != nil
         else { return false }
         beforeSynchronization()
-        address = browser.selectedTab?.url?.absoluteString ?? ""
+        address = browser.shownTab?.url ?? ""
         return true
     }
 
@@ -378,8 +378,8 @@ extension MobileBrowserRootModel {
     }
 
     private func synchronizeAfterCommandSelection() {
-        address = browser.selectedTab?.url?.absoluteString ?? ""
-        if browser.selectedTab == nil {
+        address = browser.shownTab?.url ?? ""
+        if browser.shownTab == nil {
             navigation.showTabViewer()
         } else {
             navigation.selectTab()

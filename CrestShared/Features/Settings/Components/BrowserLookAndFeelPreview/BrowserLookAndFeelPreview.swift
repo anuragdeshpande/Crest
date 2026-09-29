@@ -1,4 +1,19 @@
+import Foundation
 import SwiftUI
+
+// MARK: - Types
+
+/// How much of a window a Look and Feel preview shows.
+///
+/// The pinned preview shows the whole window; a group's own card shows only the
+/// part that group changes, so the reader never has to hunt for what moved.
+enum BrowserLookAndFeelPreviewFocus: Equatable {
+    case window
+    case page
+    case tabs
+    case addressField
+    case folders
+}
 
 /// The live answer to "what does this do", built from the real sidebar.
 ///
@@ -12,7 +27,7 @@ import SwiftUI
 /// top of a card it takes a fixed height instead, so a compact pane still
 /// scrolls like a form.
 struct BrowserLookAndFeelPreview: View {
-    var space: BrowserSpace?
+    var space: BrowserSpaceAppearance?
     var focus: BrowserLookAndFeelPreviewFocus = .window
     var fillsHeight = false
 

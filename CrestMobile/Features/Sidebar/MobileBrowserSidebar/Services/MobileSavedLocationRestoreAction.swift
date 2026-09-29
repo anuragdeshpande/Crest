@@ -4,22 +4,19 @@ import Foundation
 struct MobileSavedLocationRestoreAction {
     let browser: BrowserStore
     let pages: MobileBrowserPageStore
-    let selectTab: (TabID) -> Void
+    let selectTab: (UUID) -> Void
     var spaceAccess = BrowserSpaceAccessController()
 
     @discardableResult
     func perform(_ assignment: BrowserTabRuntimeAssignment) -> Bool {
         guard
-            let space = browser.selectedSpace,
+            let space = browser.shownSpace,
             space.id == assignment.spaceID,
-            space.profile.id == assignment.profileID,
-            !browser.deletingSpaceIDs.contains(space.id),
+            space.profileID == assignment.profileID,
             !spaceAccess.isLocked(space),
-            let tab = space.tabs.first(where: { $0.id == assignment.tabID }),
-            BrowserSavedLocationRestorePolicy.shouldRestore(
-                tab, pendingURL: pages.residentPage(matching: assignment)?.pendingNavigationURL
-            ),
-            !pages.containsResidentPage(for: tab.id) || pages.containsResidentPage(matching: assignment)
+            space.tabs.contains(assignment.tabID),
+            browser.returnsToSavedAddress(assignment.tabID, in: space.id),
+            !pages.containsResidentPage(for: assignment.tabID) || pages.containsResidentPage(matching: assignment)
         else { return false }
 
         let hadResidentPage = pages.containsResidentPage(matching: assignment)
@@ -35,7 +32,7 @@ struct MobileSavedLocationRestoreAction {
         )
         guard let page = pageActions.activePage
         else { return false }
-        if hadResidentPage && page.pendingNavigationURL != url { page.load(url) }
+        if hadResidentPage && page.live.pendingNavigationURL != url { page.corePage.navigate(to: url.absoluteString) }
         return true
     }
 }

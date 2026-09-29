@@ -1,11 +1,7 @@
 protocol BrowserShortcutSearchProviding {
     func matches(
-        _ command: BrowserShortcutCommand,
+        _ command: ShortcutCommand,
         currentShortcut: BrowserShortcut?,
-        query: String
-    ) -> Bool
-    func matches(
-        _ command: BrowserShortcutExtensionCommand,
         query: String
     ) -> Bool
 }

@@ -2,33 +2,17 @@ import SwiftUI
 
 struct MobileOnboardingLifecycleModifier: ViewModifier {
     let request: BrowserOnboardingRequest
-    @Bindable var progress: BrowserOnboardingProgressStore
-    @Binding var plan: BrowserManualSetupPlan
-    @Binding var customizedSpaceID: SpaceID?
-    let draftPersistence: MobileOnboardingDraftPersistence
-    let existingSession: BrowserSession
+    /// Starts what the onboarding shows once it appears, since a view may be
+    /// built more than once.
+    let appeared: () -> Void
     let requestChanged: (BrowserOnboardingRequest) -> Void
 
     func body(content: Content) -> some View {
         content
-            .task {
-                if progress.isChecking {
-                    await progress.refresh()
-                }
-            }
-            .onChange(of: plan) { _, plan in
-                draftPersistence.save(plan)
-            }
+            .onAppear(perform: appeared)
             .onChange(of: request) { _, request in
                 requestChanged(request)
             }
             .interactiveDismissDisabled(request.entryPoint == .firstRun)
-            .sheet(item: $customizedSpaceID) { spaceID in
-                MobileOnboardingSpaceCustomizationSheet(
-                    spaceID: spaceID,
-                    plan: $plan,
-                    existingSession: existingSession
-                )
-            }
     }
 }

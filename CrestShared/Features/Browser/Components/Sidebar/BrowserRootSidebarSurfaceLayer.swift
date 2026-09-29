@@ -4,9 +4,9 @@ struct BrowserRootSidebarSurfaceLayer<Content: View>: View {
     let presentation: BrowserSidebarPresentation
     let width: CGFloat
     let edge: HorizontalEdge
-    let space: BrowserSpace?
+    let space: SpaceModel?
     let reduceTransparency: Bool
-    let spaces: [BrowserSpace]
+    let spaces: [SpaceModel]
     let hoverChanged: @MainActor @Sendable (Bool) -> Void
     let content: Content
 
@@ -16,9 +16,9 @@ struct BrowserRootSidebarSurfaceLayer<Content: View>: View {
         presentation: BrowserSidebarPresentation,
         width: CGFloat,
         edge: HorizontalEdge = .leading,
-        space: BrowserSpace?,
+        space: SpaceModel?,
         reduceTransparency: Bool,
-        spaces: [BrowserSpace] = [],
+        spaces: [SpaceModel] = [],
         hoverChanged: @escaping @MainActor @Sendable (Bool) -> Void,
         @ViewBuilder content: () -> Content
     ) {
@@ -40,11 +40,12 @@ struct BrowserRootSidebarSurfaceLayer<Content: View>: View {
             .contentShape(.interaction, .rect)
             #if os(macOS)
                 .overlay {
-                    BrowserSidebarHoverTracker(
-                        isEnabled: presentation.showsSidebar,
-                        onHoverChange: hoverChanged
-                    )
-                    .accessibilityHidden(true)
+                    // A hidden sidebar tracks nothing, and its tracker would
+                    // stay over the page it slid away from, where it would
+                    // take the page's cursor updates.
+                    if presentation.showsSidebar {
+                        BrowserSidebarHoverTracker(onHoverChange: hoverChanged).accessibilityHidden(true)
+                    }
                 }
             #else
                 .onHover(perform: hoverChanged)

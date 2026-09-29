@@ -25,20 +25,22 @@ import SwiftUI
 ///   gesture cannot replace it, because web content consumes the clicks that
 ///   matter. The reorder state's registry, in the global space, is how a drag
 ///   arriving from the sidebar knows which cards it is between.
-/// - **`BrowserSplitCardLifecycleModifier`**, which keeps this member's tab row and
-///   history current while some other card holds focus.
+///
+/// Every card's page, focused or not, reports its navigations to the core,
+/// which keeps its tab row and history current.
 struct BrowserSplitCardView: View {
     @Environment(BrowserSidebarInteractionState.self) private var sidebarInteraction
 
-    let tab: BrowserTab
-    let space: BrowserSpace
+    let tab: TabStateModel
+    let space: SpaceModel
     let browser: BrowserStore
     let pages: BrowserPagePool
     let spaceAccess: BrowserSpaceAccessController
     let tabPromotionNamespace: Namespace.ID
     let startPageFocusRequest: Int
     let isCommandPalettePresented: Bool
-    var fitsBesideExtensionSidebar = false
+    /// The window's commands, for a Start Page card's palette.
+    let commands: BrowserCommandPaletteCommandRegistry
     /// Where this card records its bounds for the surface's click monitor.
     let cardFrames: BrowserSplitCardFrameRegistry
     /// Asked when the pointer enters the card, never during layout, so the guards
@@ -48,7 +50,7 @@ struct BrowserSplitCardView: View {
     let onFocusRequest: @MainActor @Sendable () -> Void
 
     private var isSelectedSpace: Bool {
-        browser.session.selectedSpaceID == space.id && !spaceAccess.isLocked(space)
+        browser.selectedSpaceID == space.id && !spaceAccess.isLocked(space)
     }
 
     var body: some View {
@@ -57,23 +59,14 @@ struct BrowserSplitCardView: View {
             page: page,
             tab: tab,
             space: space,
-            pagePresentation: pagePresentation(for: page),
+            pagePresentation: .of(tab.surface, page: page),
             browser: browser,
             pages: pages,
             spaceAccess: spaceAccess,
             tabPromotionNamespace: tabPromotionNamespace,
             startPageFocusRequest: startPageFocusRequest,
-            isCommandPalettePresented: isCommandPalettePresented
-        )
-        .modifier(BrowserExtensionSidebarPageFitModifier(page: page, isEnabled: fitsBesideExtensionSidebar))
-        .modifier(
-            BrowserSplitCardLifecycleModifier(
-                tab: tab,
-                space: space,
-                page: isSelectedSpace ? page : nil,
-                browser: browser,
-                pages: pages
-            )
+            isCommandPalettePresented: isCommandPalettePresented,
+            commands: commands
         )
         .overlay {
             BrowserSplitCardHoverTracker { isHovering in
@@ -97,20 +90,6 @@ struct BrowserSplitCardView: View {
     }
 
     private var presentedPage: BrowserPage? {
-        pages.surfacePage(for: tab, in: space, accessController: spaceAccess)
-    }
-
-    private func pagePresentation(
-        for page: BrowserPage?
-    ) -> BrowserPagePresentation {
-        BrowserPagePresentationPolicy.resolve(
-            BrowserPagePresentationInput(
-                selection: tab.pagePresentationSelection,
-                hasActivePage: page != nil,
-                hasNavigationFailure: page?.navigationFailure != nil,
-                hasProcessFailure: page?.webContentFailureMessage != nil,
-                unloadedBehavior: .remainUnloaded
-            )
-        )
+        pages.surfacePage(for: tab.id, in: space, accessController: spaceAccess)
     }
 }

@@ -8,57 +8,25 @@ struct BrowserShortcutPresentationCatalog: BrowserShortcutSearchProviding {
     }
 
     func matches(
-        _ command: BrowserShortcutCommand,
+        _ command: ShortcutCommand,
         currentShortcut: BrowserShortcut?,
         query: String
     ) -> Bool {
-        BrowserShortcutSearchPolicy.matches(
+        let searchTerms = command.searchTerms.map { BrowserShortcutLocalization.string($0, locale: locale) }
+        return BrowserShortcutSearchPolicy.matches(
             query: query,
             document: BrowserShortcutSearchDocument(
                 fields: [
-                    BrowserShortcutLocalization.string(
-                        command.titleResource,
-                        locale: locale
-                    ),
-                    BrowserShortcutLocalization.string(
-                        command.section.titleResource,
-                        locale: locale
-                    ),
-                    BrowserShortcutLocalization.string(
-                        command.relatedSearchTermsResource,
-                        locale: locale
-                    ),
+                    command.title(locale: locale),
+                    command.section.title(locale: locale),
+                    searchTerms,
                     currentShortcut?.spokenDescription(locale: locale)
                         ?? BrowserShortcutLocalization.string(
                             "unassigned none no shortcut",
                             locale: locale
                         ),
-                ]
+                ].compactMap { $0 }
             )
-        )
-    }
-
-    func matches(
-        _ command: BrowserShortcutExtensionCommand,
-        query: String
-    ) -> Bool {
-        BrowserShortcutSearchPolicy.containsTrimmedPhrase(
-            query: query,
-            fields: [
-                command.extensionDisplayName,
-                command.title,
-                command.commandID,
-                command.shortcut?.displayString(locale: locale)
-                    ?? BrowserShortcutLocalization.string(
-                        "unassigned",
-                        locale: locale
-                    ),
-                command.shortcut?.spokenDescription(locale: locale)
-                    ?? BrowserShortcutLocalization.string(
-                        "no shortcut",
-                        locale: locale
-                    ),
-            ]
         )
     }
 }
@@ -112,81 +80,10 @@ extension BrowserShortcut {
     }
 }
 
-extension BrowserShortcutCommand {
-    var titleResource: LocalizedStringResource {
-        if let number = tabNumber {
-            return "Select Tab \(number)"
-        }
-        if let number = spaceNumber {
-            return "Select Space \(number)"
-        }
-
-        return switch self {
-        case .newBlankWindow: "New Blank Window"
-        case .newWindow: "New Window"
-        case .newTab: "New Tab"
-        case .newQuickWindow: "New Quick Window"
-        case .newPrivateWindow: "New Private Window"
-        case .closeTabOrWindow: "Close Current Tab or Window"
-        case .closeWindow: "Close Window"
-        case .openLocation: "Open Location"
-        case .back: "Back"
-        case .forward: "Forward"
-        case .reloadPage: "Reload Page"
-        case .stopLoading: "Stop Loading"
-        case .reloadFromOrigin: "Reload from Origin"
-        case .toggleSelectedTabPinned: "Pin or Unpin Current Tab"
-        case .duplicateTab: "Duplicate Tab"
-        case .reopenClosedTab: "Reopen Last Closed Tab"
-        case .clearUnpinnedTabs: "Clear Unpinned Tabs"
-        case .archiveTab: "Archive Tab"
-        case .previousTab: "Previous Tab"
-        case .nextTab: "Next Tab"
-        case .mostRecentTab: "Most Recent Tab"
-        case .previousSpace: "Previous Space"
-        case .nextSpace: "Next Space"
-        case .toggleReaderMode: "Show or Hide Reader"
-        case .toggleContentBlocking: "Toggle Content Blocking"
-        case .findInPage: "Find in Page"
-        case .zoomIn: "Zoom In"
-        case .zoomOut: "Zoom Out"
-        case .actualSize: "Actual Size"
-        case .copyPageLink: "Copy Page Link"
-        case .copyPageLinkAsMarkdown: "Copy Page Link as Markdown"
-        case .sharePage: "Share Page"
-        case .exportPDF: "Export as PDF"
-        case .saveWebArchive: "Save Web Archive"
-        case .printPage: "Print Page"
-        case .toggleSidebar: "Show or Hide Sidebar"
-        case .toggleExtensionSidePanel: "Toggle Extension Side Panel"
-        case .showHistory: "Show History"
-        case .showArchive: "Show Archive"
-        case .showDownloads: "Show Downloads"
-        case .showWebInspector: "Show Web Inspector"
-        case .toggleDeveloperToolbar: "Show or Hide Developer Toolbar"
-        case .toggleTranslationToolbar: "Show or Hide Translation Toolbar"
-        case .splitWithNextTab: "Split With Next Tab"
-        case .focusNextSplitCard: "Focus Next Split Card"
-        case .focusPreviousSplitCard: "Focus Previous Split Card"
-        case .removeTabFromSplit: "Remove Tab From Split"
-        case .separateSplitTabs: "Separate All Tabs"
-        case .moveSplitCardLeft: "Move Split Card Left"
-        case .moveSplitCardRight: "Move Split Card Right"
-        case .selectTab1, .selectTab2, .selectTab3, .selectTab4, .selectTab5,
-            .selectTab6, .selectTab7, .selectTab8, .selectTab9,
-            .selectSpace1, .selectSpace2, .selectSpace3, .selectSpace4,
-            .selectSpace5, .selectSpace6, .selectSpace7, .selectSpace8,
-            .selectSpace9:
-            preconditionFailure("Numbered shortcuts resolve before this switch")
-        }
-    }
-
-    var title: String {
-        title()
-    }
-
+extension ShortcutCommand {
+    /// The title in `locale`, for text composed around it.
     func title(locale: Locale = .current) -> String {
-        BrowserShortcutLocalization.string(titleResource, locale: locale)
+        BrowserShortcutLocalization.string(self.title, locale: locale)
     }
 
     func matches(search query: String) -> Bool {
@@ -206,44 +103,6 @@ extension BrowserShortcutCommand {
             currentShortcut: currentShortcut,
             query: query
         )
-    }
-
-    var relatedSearchTermsResource: LocalizedStringResource {
-        switch self {
-        case .copyPageLink: "copy url address clipboard"
-        case .copyPageLinkAsMarkdown: "copy url address markdown clipboard"
-        case .openLocation: "change current tab url address focus"
-        case .closeTabOrWindow: "close archive current tab window"
-        case .clearUnpinnedTabs: "clean tidy archive unpinned tabs"
-        case .mostRecentTab: "toggle recent switch tabs"
-        case .previousTab, .nextTab: "switch cycle tabs up down arrow"
-        case .previousSpace, .nextSpace:
-            "switch cycle spaces left right arrow"
-        case .toggleSelectedTabPinned: "favorite bookmark pin unpin"
-        case .newPrivateWindow: "incognito private browsing"
-        case .newBlankWindow: "temporary disposable unsynced window"
-        case .newQuickWindow: "little arc quick lookup"
-        case .showHistory: "visited pages history"
-        case .toggleExtensionSidePanel: "extension sidepanel sidebar panel toggle"
-        case .showArchive: "closed tabs archive"
-        case .showDownloads: "download files transfers"
-        case .toggleReaderMode: "reader reading mode"
-        case .toggleContentBlocking: "ads trackers privacy protection"
-        case .actualSize: "reset zoom zero"
-        case .showWebInspector:
-            "developer tools inspect element webkit safari"
-        case .toggleDeveloperToolbar:
-            "developer toolbar viewport preview responsive custom size"
-        case .toggleTranslationToolbar: "translate translation language toolbar show hide"
-        case .splitWithNextTab: "split view cards side by side columns"
-        case .focusNextSplitCard, .focusPreviousSplitCard:
-            "split view cards focus cycle left right arrow"
-        case .removeTabFromSplit: "split view card remove leave unsplit"
-        case .separateSplitTabs: "split view break up unsplit separate cards"
-        case .moveSplitCardLeft, .moveSplitCardRight:
-            "split view cards move reorder rearrange left right arrow"
-        default: ""
-        }
     }
 }
 
@@ -275,7 +134,7 @@ extension BrowserShortcutKey {
     }
 }
 
-extension BrowserShortcutModifiers {
+extension ShortcutModifiers {
     var displayString: String {
         var result = ""
         if contains(.control) { result += "⌃" }
@@ -302,107 +161,38 @@ extension BrowserShortcutModifiers {
     }
 }
 
-extension BrowserShortcutSection {
-    var titleResource: LocalizedStringResource {
-        switch self {
-        case .everyday: "Everyday Use"
-        case .tabs: "Tabs"
-        case .spaces: "Spaces"
-        case .page: "Page"
-        case .view: "View & Tools"
-        }
-    }
-
-    var title: String {
-        title()
-    }
-
+extension ShortcutSection {
+    /// The title in `locale`, for text composed around it.
     func title(locale: Locale = .current) -> String {
-        BrowserShortcutLocalization.string(titleResource, locale: locale)
+        BrowserShortcutLocalization.string(self.title, locale: locale)
     }
 }
 
-extension BrowserShortcutSpecialKey {
+extension ShortcutSpecialKey {
     var displayString: String {
         displayString()
     }
 
+    /// The key's glyph, or its name where no glyph stands for it.
     func displayString(locale: Locale = .current) -> String {
-        switch self {
-        case .tab: "⇥"
-        case .leftArrow: "←"
-        case .rightArrow: "→"
-        case .upArrow: "↑"
-        case .downArrow: "↓"
-        case .escape: "⎋"
-        case .returnKey: "↩"
-        case .delete: "⌫"
-        case .forwardDelete: "⌦"
-        case .home: "↖"
-        case .end: "↘"
-        case .pageUp: "⇞"
-        case .pageDown: "⇟"
-        case .space:
-            BrowserShortcutLocalization.string("Space", locale: locale)
-        case .f1: "F1"
-        case .f2: "F2"
-        case .f3: "F3"
-        case .f4: "F4"
-        case .f5: "F5"
-        case .f6: "F6"
-        case .f7: "F7"
-        case .f8: "F8"
-        case .f9: "F9"
-        case .f10: "F10"
-        case .f11: "F11"
-        case .f12: "F12"
-        case .f13: "F13"
-        case .f14: "F14"
-        case .f15: "F15"
-        case .f16: "F16"
-        case .f17: "F17"
-        case .f18: "F18"
-        case .f19: "F19"
-        case .f20: "F20"
-        }
+        glyph ?? title.map { BrowserShortcutLocalization.string($0, locale: locale) } ?? name
     }
 
+    /// How assistive technology reads the key; a key without a spoken name is
+    /// read by its name.
     func spokenDescription(locale: Locale = .current) -> String {
-        guard let resource = spokenDescriptionResource else { return rawValue }
-        return BrowserShortcutLocalization.string(resource, locale: locale)
+        spokenName.map { BrowserShortcutLocalization.string($0, locale: locale) } ?? name
     }
 
     var spokenDescription: String {
         spokenDescription()
     }
-
-    private var spokenDescriptionResource: LocalizedStringResource? {
-        switch self {
-        case .tab: "tab"
-        case .leftArrow: "left arrow"
-        case .rightArrow: "right arrow"
-        case .upArrow: "up arrow"
-        case .downArrow: "down arrow"
-        case .escape: "escape"
-        case .returnKey: "return"
-        case .delete: "delete"
-        case .forwardDelete: "forward delete"
-        case .home: "home"
-        case .end: "end"
-        case .pageUp: "page up"
-        case .pageDown: "page down"
-        case .space: "space"
-        case .f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10,
-            .f11, .f12, .f13, .f14, .f15, .f16, .f17, .f18, .f19, .f20:
-            nil
-        }
-    }
 }
 
 extension BrowserShortcutStore {
-    func commands(matching query: String) -> [BrowserShortcutCommand] {
+    func commands(matching query: String) -> [ShortcutCommand] {
         let catalog = BrowserShortcutPresentationCatalog()
-        return BrowserShortcutCommand.userFacingCases.filter {
+        return offeredCommands.filter {
             catalog.matches(
                 $0,
                 currentShortcut: shortcut(for: $0),

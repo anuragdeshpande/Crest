@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 
 @testable import Crest
@@ -5,9 +6,8 @@ import XCTest
 @MainActor
 final class BrowserTransientBrowsingTests: XCTestCase {
     func testLinkPullCancelsWhenTheSourceRuntimeAssignmentChanges() throws {
-        let tab = BrowserTab(
-            title: "Source", url: try XCTUnwrap(URL(string: "https://example.com/source")), placement: .current)
-        let spaceID = SpaceID()
+        let tab = BrowserPageTab.transient(showing: try XCTUnwrap(URL(string: "https://example.com/source"))).state
+        let spaceID = UUID()
         var source: BrowserPageNavigationContext? = BrowserPageNavigationContext(
             tab: tab, spaceID: spaceID, profileID: UUID())
         let coordinator = BrowserTransientBrowsingCoordinator()
@@ -31,9 +31,8 @@ final class BrowserTransientBrowsingTests: XCTestCase {
 
     func testLinkPullReleaseCommitsOnlyInsideItsSourceWindow() throws {
         let source = BrowserPageNavigationContext(
-            tab: BrowserTab(
-                title: "Source", url: try XCTUnwrap(URL(string: "https://example.com/source")), placement: .current),
-            spaceID: SpaceID(), profileID: UUID())
+            tab: BrowserPageTab.transient(showing: try XCTUnwrap(URL(string: "https://example.com/source"))).state,
+            spaceID: UUID(), profileID: UUID())
         let coordinator = BrowserTransientBrowsingCoordinator()
         let handler = BrowserLinkPullHandler(context: { source }, handle: coordinator.handleLinkDrag)
         let url = try XCTUnwrap(URL(string: "https://example.com/destination"))
@@ -77,8 +76,8 @@ final class BrowserTransientBrowsingTests: XCTestCase {
     func testReturningPullStaysStagedAndLateUpdatesCannotReplaceAnotherPeek() throws {
         let request = BrowserPeekRequest(
             url: try XCTUnwrap(URL(string: "https://example.com/pull")),
-            sourceTabID: TabID(), sourceTitle: "Source",
-            spaceAssignment: BrowserSpaceRuntimeAssignment(spaceID: SpaceID(), profileID: UUID()),
+            sourceTabID: UUID(), sourceTitle: "Source",
+            spaceAssignment: BrowserSpaceRuntimeAssignment(spaceID: UUID(), profileID: UUID()),
             trigger: .linkDrag)
         let coordinator = BrowserTransientBrowsingCoordinator()
         var state = BrowserPeekMotionState(
@@ -104,16 +103,10 @@ final class BrowserTransientBrowsingTests: XCTestCase {
         XCTAssertEqual(coordinator.peekRequest?.id, request.id)
     }
 
-    func testExternalURLsPreferAnExistingBrowserAndOtherwiseCreateOnlyAQuickWindow() {
-        XCTAssertEqual(BrowserExternalLinkScenePolicy.existingBrowserPreference, ["*"])
-        XCTAssertEqual(BrowserExternalLinkScenePolicy.primarySceneActivation, [])
-        XCTAssertEqual(BrowserExternalLinkScenePolicy.quickWindowSceneActivation, ["*"])
-    }
-
     func testEmptyQuickWindowRequestStartsWithoutNavigating() {
         let request = BrowserQuickWindowRequest.empty(
             spaceAssignment: BrowserSpaceRuntimeAssignment(
-                spaceID: SpaceID(),
+                spaceID: UUID(),
                 profileID: UUID()
             )
         )
@@ -121,27 +114,8 @@ final class BrowserTransientBrowsingTests: XCTestCase {
         XCTAssertNil(request.initialURL)
     }
 
-    func testQuickWindowCarriesTheSingletonMainBrowserForPromotion() throws {
-        let request = BrowserQuickWindowRequest(
-            url: try XCTUnwrap(URL(string: "https://example.com/reference")),
-            spaceAssignment: BrowserSpaceRuntimeAssignment(
-                spaceID: SpaceID(),
-                profileID: UUID()
-            ),
-            targetWindowID: .main
-        )
-
-        XCTAssertEqual(request.targetWindowID, .main)
-
-        let restored = try JSONDecoder().decode(
-            BrowserQuickWindowRequest.self,
-            from: JSONEncoder().encode(request)
-        )
-        XCTAssertEqual(restored.targetWindowID, .main)
-    }
-
     func testQuickWindowPresentationIdentityFocusesAnExactURLInTheSameSpace() throws {
-        let spaceID = SpaceID()
+        let spaceID = UUID()
         let profileID = UUID()
         let assignment = BrowserSpaceRuntimeAssignment(
             spaceID: spaceID,
@@ -175,18 +149,12 @@ final class BrowserTransientBrowsingTests: XCTestCase {
         )
         XCTAssertEqual(first.assignment.spaceID, spaceID)
         XCTAssertEqual(first.assignment.profileID, profileID)
-
-        let restored = try JSONDecoder().decode(
-            BrowserQuickWindowRequest.self,
-            from: JSONEncoder().encode(first)
-        )
-        XCTAssertEqual(restored.assignment, assignment)
     }
 
     func testQuickWindowCarriesPresentationOriginWithoutChangingWindowIdentity() throws {
-        let spaceID = SpaceID()
+        let spaceID = UUID()
         let url = try XCTUnwrap(URL(string: "https://example.com/reference"))
-        let targetWindowID = BrowserWindowID()
+        let targetWindowID = UUID()
         let source = BrowserPeekSourcePresentation(
             normalizedMinX: 0.12,
             normalizedMinY: 0.28,
@@ -214,25 +182,19 @@ final class BrowserTransientBrowsingTests: XCTestCase {
         XCTAssertEqual(request.targetWindowID, targetWindowID)
         XCTAssertEqual(request, sameWindowWithoutSource)
         XCTAssertEqual(Set([request, sameWindowWithoutSource]).count, 1)
-
-        let restored = try JSONDecoder().decode(
-            BrowserQuickWindowRequest.self,
-            from: JSONEncoder().encode(request)
-        )
-        XCTAssertEqual(restored.sourcePresentation, source)
     }
 
     func testCoordinatorMatchesTheFullQuickWindowRequestBeyondPublicEquality() throws {
         let url = try XCTUnwrap(URL(string: "https://example.com/reference"))
         let assignment = BrowserSpaceRuntimeAssignment(
-            spaceID: SpaceID(),
+            spaceID: UUID(),
             profileID: UUID()
         )
         let first = BrowserQuickWindowRequest(
             id: UUID(),
             url: url,
             spaceAssignment: assignment,
-            targetWindowID: BrowserWindowID(),
+            targetWindowID: UUID(),
             sourcePresentation: BrowserPeekSourcePresentation(
                 normalizedMinX: 0.1,
                 normalizedMinY: 0.2,
@@ -245,7 +207,7 @@ final class BrowserTransientBrowsingTests: XCTestCase {
             id: UUID(),
             url: url,
             spaceAssignment: assignment,
-            targetWindowID: BrowserWindowID(),
+            targetWindowID: UUID(),
             sourcePresentation: nil
         )
         let coordinator = BrowserTransientBrowsingCoordinator()
@@ -264,19 +226,19 @@ final class BrowserTransientBrowsingTests: XCTestCase {
 
     func testDelayedPeekCommitCannotReplaceANewerTransientPresentation() throws {
         let assignment = BrowserSpaceRuntimeAssignment(
-            spaceID: SpaceID(),
+            spaceID: UUID(),
             profileID: UUID()
         )
         let first = BrowserPeekRequest(
             url: try XCTUnwrap(URL(string: "https://example.com/first")),
-            sourceTabID: TabID(),
+            sourceTabID: UUID(),
             sourceTitle: "First",
             spaceAssignment: assignment,
             trigger: .longPress
         )
         let second = BrowserPeekRequest(
             url: try XCTUnwrap(URL(string: "https://example.com/second")),
-            sourceTabID: TabID(),
+            sourceTabID: UUID(),
             sourceTitle: "Second",
             spaceAssignment: assignment,
             trigger: .longPress
@@ -312,19 +274,19 @@ final class BrowserTransientBrowsingTests: XCTestCase {
             normalizedTouchY: 0.31,
             label: "External link"
         )
-        let targetWindowID = BrowserWindowID()
+        let targetWindowID = UUID()
         let request = BrowserQuickWindowRequest(
             id: UUID(),
             url: try XCTUnwrap(URL(string: "https://example.com/original")),
             spaceAssignment: BrowserSpaceRuntimeAssignment(
-                spaceID: SpaceID(),
+                spaceID: UUID(),
                 profileID: UUID()
             ),
             targetWindowID: targetWindowID,
             sourcePresentation: source
         )
         let replacementAssignment = BrowserSpaceRuntimeAssignment(
-            spaceID: SpaceID(),
+            spaceID: UUID(),
             profileID: UUID()
         )
 
@@ -365,120 +327,6 @@ final class BrowserTransientBrowsingTests: XCTestCase {
         XCTAssertEqual(clock.revision, 2)
     }
 
-    func testAutomaticPeekProtectsPinnedAndSavedRootsOnlyAcrossSites() throws {
-        let spaceID = SpaceID()
-        let profileID = UUID()
-        let pinned = BrowserTab(
-            title: "GitHub",
-            url: try XCTUnwrap(URL(string: "https://github.com/crest/repository")),
-            placement: .pinned
-        )
-        let context = BrowserPageNavigationContext(
-            tab: pinned,
-            spaceID: spaceID,
-            profileID: profileID
-        )
-
-        XCTAssertNil(
-            BrowserPeekPolicy.request(
-                destinationURL: try XCTUnwrap(URL(string: "https://www.github.com/features")),
-                context: context,
-                isUserActivatedLink: true,
-                isTopLevelNavigation: true,
-                isAlternateModified: false
-            )
-        )
-
-        let request = BrowserPeekPolicy.request(
-            destinationURL: try XCTUnwrap(URL(string: "https://example.com/reference")),
-            context: context,
-            isUserActivatedLink: true,
-            isTopLevelNavigation: true,
-            isAlternateModified: false
-        )
-
-        XCTAssertEqual(request?.trigger, .protectedSavedSite)
-        XCTAssertEqual(request?.sourceTabID, pinned.id)
-        XCTAssertEqual(
-            request?.assignment,
-            BrowserSpaceRuntimeAssignment(
-                spaceID: spaceID,
-                profileID: profileID
-            )
-        )
-        XCTAssertEqual(request?.spaceID, spaceID)
-    }
-
-    func testOptionClickForcesPeekFromCurrentTabWhileNonLinkNavigationNeverDoes() throws {
-        let current = BrowserTab(
-            title: "Current",
-            url: try XCTUnwrap(URL(string: "https://example.com")),
-            placement: .current
-        )
-        let context = BrowserPageNavigationContext(
-            tab: current,
-            spaceID: SpaceID(),
-            profileID: UUID()
-        )
-        let destination = try XCTUnwrap(URL(string: "https://example.com/next"))
-
-        XCTAssertEqual(
-            BrowserPeekPolicy.request(
-                destinationURL: destination,
-                context: context,
-                isUserActivatedLink: true,
-                isTopLevelNavigation: true,
-                isAlternateModified: true
-            )?.trigger,
-            .modifierClick
-        )
-        XCTAssertNil(
-            BrowserPeekPolicy.request(
-                destinationURL: destination,
-                context: context,
-                isUserActivatedLink: false,
-                isTopLevelNavigation: true,
-                isAlternateModified: true
-            )
-        )
-    }
-
-    func testNewTabModifiersBypassAutomaticPeekWhileOptionKeepsPriority() throws {
-        let pinned = BrowserTab(
-            title: "Pinned",
-            url: try XCTUnwrap(URL(string: "https://example.com/root")),
-            placement: .pinned
-        )
-        let context = BrowserPageNavigationContext(
-            tab: pinned,
-            spaceID: SpaceID(),
-            profileID: UUID()
-        )
-        let destination = try XCTUnwrap(URL(string: "https://another.test/reference"))
-
-        XCTAssertNil(
-            BrowserPeekPolicy.request(
-                destinationURL: destination,
-                context: context,
-                isUserActivatedLink: true,
-                isTopLevelNavigation: true,
-                isAlternateModified: false,
-                isNewTabModified: true
-            )
-        )
-        XCTAssertEqual(
-            BrowserPeekPolicy.request(
-                destinationURL: destination,
-                context: context,
-                isUserActivatedLink: true,
-                isTopLevelNavigation: true,
-                isAlternateModified: true,
-                isNewTabModified: true
-            )?.trigger,
-            .modifierClick
-        )
-    }
-
     func testPeekSourcePresentationBoundsHostileWebContentGeometryAndLabels() {
         let source = BrowserPeekSourcePresentation(
             normalizedMinX: .nan,
@@ -499,386 +347,112 @@ final class BrowserTransientBrowsingTests: XCTestCase {
         XCTAssertEqual(source.label.count, 160)
     }
 
-    func testAutomaticPeekCanBeDisabledWithoutDisablingOptionClick() throws {
-        let pinned = BrowserTab(
-            title: "Pinned",
-            url: try XCTUnwrap(URL(string: "https://example.com")),
-            placement: .pinned
-        )
-        let context = BrowserPageNavigationContext(
-            tab: pinned,
-            spaceID: SpaceID(),
-            profileID: UUID(),
-            automaticallyOpensPeek: false
-        )
-        let destination = try XCTUnwrap(URL(string: "https://webkit.org"))
-
-        XCTAssertNil(
-            BrowserPeekPolicy.request(
-                destinationURL: destination,
-                context: context,
-                isUserActivatedLink: true,
-                isTopLevelNavigation: true,
-                isAlternateModified: false
-            )
-        )
-        XCTAssertNotNil(
-            BrowserPeekPolicy.request(
-                destinationURL: destination,
-                context: context,
-                isUserActivatedLink: true,
-                isTopLevelNavigation: true,
-                isAlternateModified: true
-            )
-        )
-    }
-
-    func testLegacySavedTabUsesItsCurrentURLAsPeekBoundary() throws {
-        var saved = BrowserTab(
-            title: "Saved",
-            url: try XCTUnwrap(URL(string: "https://example.com/root")),
-            placement: .current
-        )
-        saved.placement = .saved
-
-        let context = BrowserPageNavigationContext(
-            tab: saved,
-            spaceID: SpaceID(),
-            profileID: UUID()
-        )
-
-        XCTAssertEqual(context.savedURL, saved.url)
-    }
-
     func testMovingTabIntoSavedAreaCapturesRootAndNavigationDoesNotReplaceIt() throws {
-        var session = BrowserSession.preview
+        let browser = BrowserStore(seed: .preview, core: .hostingPages())
         let destination = try XCTUnwrap(URL(string: "https://example.com/root"))
         let laterURL = try XCTUnwrap(URL(string: "https://example.net/later"))
-        let tabID = try XCTUnwrap(
-            session.openTab(title: "Root", url: destination)
-        )
+        let tabID = try XCTUnwrap(browser.openNewTab(url: destination))
 
-        XCTAssertTrue(session.moveTab(tabID, to: .saved))
-        session.updateSelectedTab(url: laterURL, title: "Later")
+        XCTAssertTrue(browser.moveTab(tabID, to: .saved))
+        let page = try XCTUnwrap(browser.openReportingPage(for: tabID))
+        browser.finishNavigation(of: page, to: laterURL, titled: "Later")
+        page.release(keepingState: false)
 
-        let tab = try XCTUnwrap(session.selectedTab)
-        XCTAssertEqual(tab.url, laterURL)
-        XCTAssertEqual(tab.savedSiteURL, destination)
-    }
-
-    func testOrderedRoutesPrecedeDefaultAndSkipDisabledOrMissingSpaces() throws {
-        let suiteName = "BrowserTransientBrowsingTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let store = BrowserLinkPreferenceStore(
-            defaults: defaults,
-            persistenceKey: "links"
-        )
-        let session = BrowserSession.preview
-        let work = try XCTUnwrap(session.spaces.first)
-        let personal = try XCTUnwrap(session.spaces.last)
-        let url = try XCTUnwrap(URL(string: "https://github.com/crest"))
-
-        store.update { preferences in
-            preferences.externalLinkDestination = .quickWindow
-            preferences.routes = [
-                BrowserLinkRoute(
-                    isEnabled: false,
-                    match: .contains,
-                    pattern: "github.com",
-                    destinationSpaceID: personal.id
-                ),
-                BrowserLinkRoute(
-                    match: .contains,
-                    pattern: "github.com",
-                    destinationSpaceID: work.id
-                ),
-            ]
-        }
-
-        XCTAssertEqual(store.routingDecision(for: url, in: session), .space(work.id))
-    }
-
-    func testQuickWindowRemembersSpaceByNormalizedSite() throws {
-        let suiteName = "BrowserTransientBrowsingTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let store = BrowserLinkPreferenceStore(defaults: defaults, persistenceKey: "links")
-        let session = BrowserSession.preview
-        let personal = try XCTUnwrap(session.spaces.last)
-        let first = try XCTUnwrap(URL(string: "https://www.example.com/first"))
-        let second = try XCTUnwrap(URL(string: "https://example.com/second"))
-
-        store.rememberQuickWindowSpace(personal.id, for: first)
-
-        XCTAssertEqual(
-            store.routingDecision(for: second, in: session),
-            .quickWindow(spaceID: personal.id)
-        )
-    }
-
-    func testIsolatedLaunchCanResetPersistedLinkRoutes() throws {
-        let suiteName = "BrowserTransientBrowsingTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let store = BrowserLinkPreferenceStore(
-            defaults: defaults,
-            persistenceKey: "links"
-        )
-        let destination = try XCTUnwrap(BrowserSession.preview.spaces.first?.id)
-        store.addRoute(destinationSpaceID: destination)
-        XCTAssertEqual(store.preferences.routes.count, 1)
-
-        store.reset()
-
-        XCTAssertEqual(store.preferences, .default)
-        XCTAssertNil(defaults.data(forKey: "links"))
-    }
-
-    func testPeekClickModifierPersistsAndDefaultsToOption() throws {
-        let suiteName = "BrowserTransientBrowsingTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let persistenceKey = "links"
-        var store: BrowserLinkPreferenceStore? = BrowserLinkPreferenceStore(
-            defaults: defaults,
-            persistenceKey: persistenceKey
-        )
-
-        XCTAssertEqual(store?.preferences.peekClickModifier, .option)
-        store?.update { $0.peekClickModifier = .command }
-        store = nil
-
-        let restored = BrowserLinkPreferenceStore(
-            defaults: defaults,
-            persistenceKey: persistenceKey
-        )
-        XCTAssertEqual(restored.preferences.peekClickModifier, .command)
-    }
-
-    func testMovingLinkRoutePersistsOrderAndIgnoresOutOfBoundsMoves() throws {
-        let suiteName = "BrowserTransientBrowsingTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let persistenceKey = "links"
-        let store = BrowserLinkPreferenceStore(
-            defaults: defaults,
-            persistenceKey: persistenceKey
-        )
-        let destination = try XCTUnwrap(BrowserSession.preview.spaces.first?.id)
-
-        store.addRoute(destinationSpaceID: destination)
-        store.addRoute(destinationSpaceID: destination)
-        let originalOrder = store.preferences.routes.map(\.id)
-        XCTAssertEqual(originalOrder.count, 2)
-
-        store.moveRoute(originalOrder[0], by: 1)
-        let movedOrder = Array(originalOrder.reversed())
-        XCTAssertEqual(store.preferences.routes.map(\.id), movedOrder)
-
-        store.moveRoute(originalOrder[0], by: 1)
-        store.moveRoute(originalOrder[1], by: -1)
-        XCTAssertEqual(store.preferences.routes.map(\.id), movedOrder)
-
-        let reloaded = BrowserLinkPreferenceStore(
-            defaults: defaults,
-            persistenceKey: persistenceKey
-        )
-        XCTAssertEqual(reloaded.preferences.routes.map(\.id), movedOrder)
+        let tab = try XCTUnwrap(browser.shownTab)
+        XCTAssertEqual(tab.id, tabID)
+        XCTAssertEqual(tab.address, laterURL)
+        XCTAssertEqual(tab.savedURL, destination.absoluteString)
     }
 
     func testDismissedQuickWindowArchivesAndRecordsHistoryInExactSpace() throws {
-        var session = BrowserSession.preview
-        let personal = try XCTUnwrap(session.spaces.last)
-        let work = try XCTUnwrap(session.spaces.first)
+        let browser = BrowserStore(seed: .preview, core: .hostingPages())
+        let personal = try XCTUnwrap(browser.spaceModels.last)
+        let work = try XCTUnwrap(browser.spaceModels.first)
         let url = try XCTUnwrap(URL(string: "https://example.com/transient"))
 
-        session.archiveTransientPage(url: url, title: "Transient", in: personal.id)
-        session.recordVisit(url: url, title: "Transient", in: personal.id)
+        let page = try XCTUnwrap(browser.openReportingPage(for: nil, in: personal.id))
+        browser.finishNavigation(of: page, to: url, titled: "Transient")
+        XCTAssertTrue(browser.archiveTransientPage(page.id, matching: BrowserSpaceRuntimeAssignment(space: personal)))
+        page.release(keepingState: false)
+        let session = browser.sessionSeed
 
         XCTAssertEqual(session.space(id: personal.id)?.archivedTabs.last?.reason, .quickWindow)
-        XCTAssertEqual(session.space(id: personal.id)?.history.first?.url, url)
-        XCTAssertFalse(session.space(id: work.id)?.history.contains(where: { $0.url == url }) == true)
+        XCTAssertEqual(session.space(id: personal.id)?.history.first?.url, url.absoluteString)
+        XCTAssertFalse(session.space(id: work.id)?.history.contains(where: { $0.url == url.absoluteString }) == true)
     }
 
     func testTransientMutationsRejectAReplacementProfileWithTheSameSpaceID() throws {
-        let source = try XCTUnwrap(BrowserSession.preview.selectedSpace)
+        let source = try XCTUnwrap(BrowserStore(seed: .preview).shownSpace)
         let assignment = BrowserSpaceRuntimeAssignment(space: source)
-        let replacement = BrowserSpace(
-            id: source.id,
-            profile: BrowsingProfile(),
-            name: source.name,
-            symbol: source.symbol,
-            accent: source.accent,
-            branding: source.branding,
-            folders: source.folders,
-            tabs: source.tabs,
-            archivedTabs: source.archivedTabs,
-            history: [],
-            browsingPreferences: source.browsingPreferences,
-            credentialPreferences: source.credentialPreferences,
-            accessPolicy: source.accessPolicy,
-            isSavedTabsExpanded: source.isSavedTabsExpanded,
-            savedTabsExpansionModifiedAt: source.savedTabsExpansionModifiedAt,
-            selectedTabID: source.selectedTabID
-        )
+        var replacement = source.value.seed
+        replacement.profileID = UUID()
+        replacement.history = []
         let browser = BrowserStore(
-            session: BrowserSession(
-                spaces: [replacement],
-                selectedSpaceID: replacement.id
-            ),
-            persistence: InMemoryBrowserSessionPersistence()
+            seed: SessionState.Seed(spaces: [replacement])
         )
         let url = try XCTUnwrap(URL(string: "https://example.com/stale-lease"))
 
         XCTAssertNil(browser.openNewTab(url: url, matching: assignment))
-        XCTAssertFalse(
-            browser.recordVisit(
-                url: url,
-                title: "Stale",
-                matching: assignment
-            )
-        )
-        XCTAssertFalse(
-            browser.archiveTransientPage(
-                url: url,
-                title: "Stale",
-                matching: assignment
-            )
-        )
-        XCTAssertTrue(browser.session.selectedSpace?.history.isEmpty == true)
-        XCTAssertTrue(
-            browser.session.selectedSpace?.archivedTabs
-                == replacement.archivedTabs
-        )
+        XCTAssertFalse(browser.archiveTransientPage(UUID(), matching: assignment))
+        XCTAssertTrue(browser.shownSpace?.history.entries.isEmpty == true)
+        XCTAssertEqual(browser.shownSpace?.archive.entries.map(\.seed), replacement.archivedTabs)
     }
 
     // MARK: - The shared lease ladder
 
-    func testTransientLeaseDispositionAnswersInLadderOrder() {
-        let open = makePolicySpace(name: "Work")
-        var locked = makePolicySpace(name: "Private")
-        locked.accessPolicy = .deviceOwnerAuthentication
+    func testTransientLeaseDispositionAnswersInLadderOrder() throws {
+        let openSeed = makePolicySpace(name: "Work")
+        var lockedSeed = makePolicySpace(name: "Private")
+        lockedSeed.settings.accessPolicy = .deviceOwnerAuthentication
+        let browser = BrowserStore(seed: SessionState.Seed(spaces: [openSeed, lockedSeed]))
+        let open = try XCTUnwrap(browser.spaceModel(openSeed.id))
+        let locked = try XCTUnwrap(browser.spaceModel(lockedSeed.id))
         let access = makeAccessController()
 
         XCTAssertEqual(
             BrowserTransientSessionPolicy.disposition(
-                isPresentingRequest: false,
-                space: locked,
-                isLocked: access.isLocked
-            ),
+                isPresentingRequest: false, space: locked, isLocked: access.isLocked),
             .notPresented
         )
         XCTAssertEqual(
-            BrowserTransientSessionPolicy.disposition(
-                isPresentingRequest: true,
-                space: nil,
-                isLocked: access.isLocked
-            ),
+            BrowserTransientSessionPolicy.disposition(isPresentingRequest: true, space: nil, isLocked: access.isLocked),
             .sourceMissing
         )
         XCTAssertEqual(
             BrowserTransientSessionPolicy.disposition(
-                isPresentingRequest: true,
-                space: locked,
-                isLocked: access.isLocked
-            ),
+                isPresentingRequest: true, space: locked, isLocked: access.isLocked),
             .sourceLocked
         )
         XCTAssertEqual(
             BrowserTransientSessionPolicy.disposition(
-                isPresentingRequest: true,
-                space: open,
-                isLocked: access.isLocked
-            ),
+                isPresentingRequest: true, space: open, isLocked: access.isLocked),
             .usable(open)
         )
     }
 
     func testTransientPromotionListsLiveSpacesAndTheRequestsOwnLockedSpace() {
         var lockedSource = makePolicySpace(name: "Source")
-        lockedSource.accessPolicy = .deviceOwnerAuthentication
+        lockedSource.settings.accessPolicy = .deviceOwnerAuthentication
         var lockedOther = makePolicySpace(name: "Private")
-        lockedOther.accessPolicy = .deviceOwnerAuthentication
+        lockedOther.settings.accessPolicy = .deviceOwnerAuthentication
         let open = makePolicySpace(name: "Work")
         let deleting = makePolicySpace(name: "Going")
         let access = makeAccessController()
+        let browser = BrowserStore(seed: SessionState.Seed(spaces: [lockedSource, lockedOther, open, deleting]))
+        XCTAssertTrue(browser.family.beginDeletingSpace(deleting.id))
+        defer { browser.family.finishDeletingSpace(deleting.id) }
 
         let offered = BrowserTransientSessionPolicy.availableSpaces(
-            in: [lockedSource, lockedOther, open, deleting],
-            deletingSpaceIDs: [deleting.id],
-            requestSpaceID: lockedSource.id,
-            isLocked: access.isLocked
-        )
+            in: browser, requestSpaceID: lockedSource.id, isLocked: access.isLocked)
 
         XCTAssertEqual(offered.map(\.id), [lockedSource.id, open.id])
     }
 
-    func testTransientPromotionRefusesAGoneOrLockedEnd() {
-        let source = makePolicySpace(name: "Source")
-        let destination = makePolicySpace(name: "Destination")
-        var locked = makePolicySpace(name: "Private")
-        locked.accessPolicy = .deviceOwnerAuthentication
-        let access = makeAccessController()
-
-        XCTAssertNil(
-            BrowserTransientSessionPolicy.promotionSpaces(
-                source: nil,
-                destination: destination,
-                isLocked: access.isLocked
-            )
-        )
-        XCTAssertNil(
-            BrowserTransientSessionPolicy.promotionSpaces(
-                source: source,
-                destination: nil,
-                isLocked: access.isLocked
-            )
-        )
-        XCTAssertNil(
-            BrowserTransientSessionPolicy.promotionSpaces(
-                source: locked,
-                destination: destination,
-                isLocked: access.isLocked
-            )
-        )
-        XCTAssertNil(
-            BrowserTransientSessionPolicy.promotionSpaces(
-                source: source,
-                destination: locked,
-                isLocked: access.isLocked
-            )
-        )
-        XCTAssertEqual(
-            BrowserTransientSessionPolicy.promotionSpaces(
-                source: source,
-                destination: destination,
-                isLocked: access.isLocked
-            ),
-            BrowserTransientPromotionSpaces(
-                source: source,
-                destination: destination
-            )
-        )
-    }
-
-    func testTransientLeaseIsAdoptedAndReusedOnlyBySpaceItAlreadyBelongsTo() {
+    func testTransientLeaseIsReusedOnlyByItsRequestAssignment() {
         let space = makePolicySpace(name: "Source")
         let other = makePolicySpace(name: "Destination")
         let assignment = BrowserSpaceRuntimeAssignment(space: space)
 
-        XCTAssertTrue(
-            BrowserTransientSessionPolicy.adoptsLivePage(
-                leaseAssignment: assignment,
-                destination: space
-            )
-        )
-        XCTAssertFalse(
-            BrowserTransientSessionPolicy.adoptsLivePage(
-                leaseAssignment: assignment,
-                destination: other
-            )
-        )
         XCTAssertTrue(
             BrowserTransientSessionPolicy.reusesLease(
                 leaseAssignment: assignment,
@@ -902,17 +476,14 @@ final class BrowserTransientBrowsingTests: XCTestCase {
         )
     }
 
-    private func makePolicySpace(name: String) -> BrowserSpace {
-        let tab = BrowserTab.startPage()
-        return BrowserSpace(
-            id: SpaceID(),
-            profile: BrowsingProfile(),
+    private func makePolicySpace(name: String) -> SpaceState.Seed {
+        let tab = TabState.Seed.startPage()
+        return SpaceState.Seed(
             name: name,
             symbol: "circle",
             accent: .indigo,
             folders: [],
-            tabs: [tab],
-            selectedTabID: tab.id
+            tabs: [tab]
         )
     }
 

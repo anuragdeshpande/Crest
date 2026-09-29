@@ -1,11 +1,8 @@
 import SwiftUI
 
 struct BrowserPasskeyAccessView: View {
-    @State private var access: BrowserPasskeyAccessController
-
-    init(access: BrowserPasskeyAccessController = .shared) {
-        _access = State(initialValue: access)
-    }
+    /// The app's one passkey controller, shared with the pages that refresh it.
+    @Environment(BrowserPasskeyAccessController.self) private var access
 
     var body: some View {
         VStack(alignment: .leading, spacing: CrestSpacing.medium) {
@@ -23,12 +20,12 @@ struct BrowserPasskeyAccessView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 } icon: {
-                    Image(systemName: access.status.systemImage)
+                    Image(systemName: access.status.symbol)
                         .foregroundStyle(statusColor)
                 }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("System passkeys: \(access.status.title)")
-                .accessibilityValue(access.status.detail)
+                .accessibilityLabel("System passkeys: \(String(localized: access.status.title))")
+                .accessibilityValue(Text(access.status.detail))
                 .accessibilityIdentifier("passkey-access-status")
 
                 Spacer(minLength: CrestSpacing.small)
@@ -60,13 +57,7 @@ struct BrowserPasskeyAccessView: View {
     }
 
     private var statusColor: Color {
-        switch access.status {
-        case .authorized:
-            .green
-        case .denied, .deviceNotConfigured:
-            .orange
-        case .checking, .managedCapabilityRequired, .notDetermined:
-            .secondary
-        }
+        if access.status.isReady { return .green }
+        return access.status.needsAttention ? .orange : .secondary
     }
 }

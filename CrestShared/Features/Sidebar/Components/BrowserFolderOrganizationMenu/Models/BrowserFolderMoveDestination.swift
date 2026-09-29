@@ -1,6 +1,8 @@
+import Foundation
+
 struct BrowserFolderMoveDestination: Identifiable {
-    let node: BrowserFolderNode
+    let folder: FolderStateModel
     let path: String
 
-    var id: FolderID { node.id }
+    var id: UUID { folder.id }
 }

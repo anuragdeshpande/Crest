@@ -1,6 +1,8 @@
 import AppKit
 import SwiftUI
 
+/// Tells a window's content which AppKit window hosts it, when that window
+/// gains or loses key focus, and when it closes.
 struct BrowserMacWindowAttachment: NSViewRepresentable {
     var prepare: (NSWindow) -> Void = { _ in }
     let attach: (NSWindow) -> Void

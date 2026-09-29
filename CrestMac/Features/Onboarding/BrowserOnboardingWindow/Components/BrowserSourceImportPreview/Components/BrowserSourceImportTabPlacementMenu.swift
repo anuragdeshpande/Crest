@@ -1,20 +1,16 @@
 import SwiftUI
 
 struct BrowserSourceImportTabPlacementMenu: View {
-    let tab: BrowserTab
-    let setPlacement: (TabID, TabPlacement) -> Void
+    let tab: TabStateModel
+    let setPlacement: (UUID, TabPlacement) -> Void
 
     var body: some View {
         Menu {
             Group {
-                Button("Pinned", systemImage: "pin.fill") {
-                    setPlacement(tab.id, .pinned)
-                }
-                Button("Saved", systemImage: "bookmark.fill") {
-                    setPlacement(tab.id, .saved)
-                }
-                Button("Open", systemImage: "rectangle") {
-                    setPlacement(tab.id, .current)
+                ForEach(TabPlacement.all, id: \.self) { placement in
+                    Button(placement.title, systemImage: placement.symbol) {
+                        setPlacement(tab.id, placement)
+                    }
                 }
             }
             .crestMenuActionLabelStyle()
@@ -27,14 +23,6 @@ struct BrowserSourceImportTabPlacementMenu: View {
         .crestMenuActionLabelStyle()
         .fixedSize()
         .accessibilityLabel(Text("Tab placement for \(tab.title)"))
-        .accessibilityValue(Text(placementTitle))
-    }
-
-    private var placementTitle: LocalizedStringKey {
-        switch tab.placement {
-        case .pinned: "Pinned"
-        case .saved: "Saved"
-        case .current: "Open"
-        }
+        .accessibilityValue(Text(tab.placement.title))
     }
 }

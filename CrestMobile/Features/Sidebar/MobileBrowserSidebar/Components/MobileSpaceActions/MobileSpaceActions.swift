@@ -15,7 +15,7 @@ struct MobileSpaceActions: View {
             )
             MobileSpaceArchiveButton(
                 utilityPresentationStyle: utilityPresentationStyle,
-                archivedTabCount: browser.selectedSpace?.archivedTabs.count ?? 0,
+                archivedTabCount: browser.shownSpace?.archive.entries.count ?? 0,
                 commonListsAreExpanded: configuration.commonListsAreExpanded,
                 downloads: downloads,
                 newDownloads: newDownloads,
@@ -45,21 +45,21 @@ struct MobileSpaceActions: View {
         .frame(height: 60)
     }
 
-    private var downloads: [BrowserDownloadItem] {
-        guard let profileID = browser.selectedSpace?.profile.id else { return [] }
+    private var downloads: [DownloadState] {
+        guard let profileID = browser.shownSpace?.profileID else { return [] }
         return pages.downloadCenter.items(for: profileID)
     }
 
-    private var newDownloads: [BrowserDownloadItem] {
-        guard let profileID = browser.selectedSpace?.profile.id else { return [] }
+    private var newDownloads: [DownloadState] {
+        guard let profileID = browser.shownSpace?.profileID else { return [] }
         return pages.downloadCenter.unacknowledgedItems(for: profileID)
     }
 
     private var selectedAccentColor: Color {
-        browser.selectedSpace?.branding.colors.first?.color ?? .accentColor
+        browser.shownSpace.map(\.settings.look)?.colors.first?.color ?? .accentColor
     }
 
     private var downloadBadgeColor: Color {
-        downloads.contains(where: { $0.state.needsAttention }) ? .red : selectedAccentColor
+        downloads.contains(where: { $0.phase.needsAttention }) ? .red : selectedAccentColor
     }
 }

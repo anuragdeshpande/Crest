@@ -16,15 +16,9 @@ struct BrowserSidebarUtilityCoordinator {
     let spaceAccess: BrowserSpaceAccessController
     let platformActions: BrowserSidebarUtilityPlatformActions
 
-    var selectedDownloads: [BrowserDownloadItem] {
-        guard let selectedSpace = browser.selectedSpace,
-            let space = BrowserSidebarAccessPolicy.selectedUnlockedSpace(
-                matching: BrowserSpaceRuntimeAssignment(space: selectedSpace),
-                in: browser,
-                accessController: spaceAccess
-            )
-        else { return [] }
-        return downloadCenter.items(for: space.profile.id)
+    var selectedDownloads: [DownloadState] {
+        guard let space = browser.shownSpace, !spaceAccess.isLocked(space) else { return [] }
+        return downloadCenter.items(for: space.profileID)
     }
 
     var actions: BrowserUtilityListActions {
@@ -37,19 +31,12 @@ struct BrowserSidebarUtilityCoordinator {
     }
 
     func acknowledgeDownloads(ifPresented surface: BrowserUtilitySurface?) {
-        guard surface == .downloads,
-            let selectedSpace = browser.selectedSpace,
-            let space = BrowserSidebarAccessPolicy.selectedUnlockedSpace(
-                matching: BrowserSpaceRuntimeAssignment(space: selectedSpace),
-                in: browser,
-                accessController: spaceAccess
-            )
-        else { return }
-        downloadCenter.acknowledgeItems(for: space.profile.id)
+        guard surface == .downloads, let space = browser.shownSpace, !spaceAccess.isLocked(space) else { return }
+        downloadCenter.acknowledgeItems(for: space.profileID)
     }
 
     private func restoreArchivedTab(
-        _ tabID: TabID,
+        _ tabID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) {
         guard
@@ -64,7 +51,7 @@ struct BrowserSidebarUtilityCoordinator {
     }
 
     private func openHistoryEntry(
-        _ entry: BrowserHistoryEntry,
+        _ entry: HistoryEntryState,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) {
         guard
@@ -72,9 +59,10 @@ struct BrowserSidebarUtilityCoordinator {
                 matching: assignment,
                 in: browser,
                 accessController: spaceAccess
-            ) != nil
+            ) != nil,
+            let url = URL(string: entry.url)
         else { return }
-        platformActions.openHistoryEntry(entry.url, assignment)
+        platformActions.openHistoryEntry(url, assignment)
     }
 
     private func performDownloadAction(
@@ -88,23 +76,12 @@ struct BrowserSidebarUtilityCoordinator {
         case .open(_, let destination):
             platformActions.openFinishedDownload(item, destination)
         case .retry(let itemID):
-            Task {
-                // The ownership the guard above proved is a moment old by the
-                // time this runs, and the retry itself keeps checking as it
-                // goes, because a download outlives the tap that asked for it.
-                guard downloadItem(for: action, matching: assignment) != nil else {
-                    return
-                }
-                await downloadCenter.retryAutomaticDownload(
-                    itemID,
-                    matching: assignment
-                ) { expectedAssignment in
-                    BrowserSidebarAccessPolicy.unlockedSpace(
-                        matching: expectedAssignment,
-                        in: browser,
-                        accessController: spaceAccess
-                    ) != nil
-                }
+            downloadCenter.retryAutomaticDownload(itemID, matching: assignment) { expectedAssignment in
+                BrowserSidebarAccessPolicy.unlockedSpace(
+                    matching: expectedAssignment,
+                    in: browser,
+                    accessController: spaceAccess
+                ) != nil
             }
         case .cancel(let itemID):
             platformActions.cancelDownload(itemID)
@@ -116,7 +93,7 @@ struct BrowserSidebarUtilityCoordinator {
     private func downloadItem(
         for action: BrowserUtilityDownloadAction,
         matching assignment: BrowserSpaceRuntimeAssignment
-    ) -> BrowserDownloadItem? {
+    ) -> DownloadState? {
         BrowserSidebarUtilityActionPolicy.downloadItem(
             for: action,
             matching: assignment,

@@ -1,3 +1,5 @@
+import Foundation
+
 @MainActor
 struct BrowserQuickWindowContextResolver {
     let browser: BrowserStore
@@ -11,7 +13,7 @@ struct BrowserQuickWindowContextResolver {
             let context = context(
                 targetWindowID: request.targetWindowID
             ),
-            context.browser.space(matching: request.assignment) != nil
+            context.browser.spaceModel(matching: request.assignment) != nil
         else {
             return nil
         }
@@ -19,7 +21,7 @@ struct BrowserQuickWindowContextResolver {
     }
 
     func context(
-        targetWindowID: BrowserWindowID?
+        targetWindowID: UUID?
     ) -> BrowserQuickWindowBrowsingContext? {
         guard let targetWindowID else {
             return BrowserQuickWindowBrowsingContext(

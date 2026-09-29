@@ -1,14 +1,13 @@
 import Foundation
-import Observation
 
 struct BrowserSitePermissionChange {
-    var spaceID: SpaceID?
-    var origin: BrowserSiteOrigin?
-    var permission: BrowserSitePermission?
+    var spaceID: UUID?
+    var origin: SiteOrigin?
+    var permission: SitePermission?
     var detail: String?
     var revokesAuthorization: Bool
 
-    func affects(_ permission: BrowserSitePermission, origin: BrowserSiteOrigin, in spaceID: SpaceID) -> Bool {
+    func affects(_ permission: SitePermission, origin: SiteOrigin, in spaceID: UUID) -> Bool {
         (self.spaceID == nil || self.spaceID == spaceID)
             && (self.origin == nil || self.origin == origin)
             && (self.permission == nil || self.permission == permission)
@@ -21,84 +20,100 @@ protocol BrowserSitePermissionObserver: AnyObject {
     func sitePermissionsDidChange(_ change: BrowserSitePermissionChange)
 }
 
-@Observable
+/// The platform's side of the core's site permission choices.
+///
+/// The core owns every rule and every choice: which choice answers a request
+/// (the narrowest saved choice, then the site-wide rule, with session choices
+/// first), the combined camera and microphone rule, the locked-Space gate,
+/// listing order, and which choices the device store keeps. This center asks
+/// the core its questions, sends the person's answers as intents, reads each
+/// Space's kept choices from the read model, and tells the pages observing it
+/// what each change covered. An answer a rule refuses records nothing.
 @MainActor
 final class BrowserSitePermissionCenter {
+    // MARK: - Static Variables
+
+    private static let log = DiagnosticLog.sitePermissions
+
+    // MARK: - Types
+
     private struct Observer {
         weak var value: (any BrowserSitePermissionObserver)?
     }
-    private struct Key: Hashable {
-        let origin: BrowserSiteOrigin
-        let permission: BrowserSitePermission
-        let detail: String?
 
-        init(
-            origin: BrowserSiteOrigin,
-            permission: BrowserSitePermission,
-            detail: String? = nil
-        ) {
-            self.origin = origin
-            self.permission = permission
-            self.detail = detail
-        }
+    // MARK: - Variables
 
-        /// The site-wide rule this key falls back to, or nil when it already is
-        /// that rule.
-        var siteWide: Key? {
-            guard detail != nil else { return nil }
-            return Key(origin: origin, permission: permission)
-        }
+    private let core: CrestCore
+    private var observers: [Observer] = []
 
-        func matches(_ record: BrowserSitePermissionRecord, in spaceID: SpaceID) -> Bool {
-            record.spaceID == spaceID
-                && record.origin == origin
-                && record.permission == permission
-                && record.detail == detail
+    // MARK: - Initializers
+
+    /// A center over `core`, whose changes it passes to its observers.
+    init(core: CrestCore) {
+        self.core = core
+        core.followSitePermissions(self) { [weak self] change in self?.changed(change) }
+    }
+
+    /// A center over a memory-only core of its own, as previews, practice
+    /// pages and tests use, which keeps nothing.
+    convenience init() {
+        self.init(core: CrestCore())
+    }
+
+    // MARK: - Actions - Adoption
+
+    /// Carries the document an installed release kept under
+    /// `crest.site-permissions.v1` into the core's device store, once, and
+    /// seeds the read model with every Space's kept choices.
+    func adoptLegacyRecords(_ document: Data?) {
+        do {
+            try core.send(AdoptSitePermissions(records: document))
+        } catch {
+            Self.log.error(
+                "The core could not adopt the saved site permissions: \(DiagnosticLog.describe(error))")
         }
     }
 
-    private(set) var persistentRecords: [BrowserSitePermissionRecord]
-    private(set) var revision: UInt64 = 0
-
-    @ObservationIgnored private let persistence: any BrowserSitePermissionPersisting
-    @ObservationIgnored private var sessionDecisions: [SpaceID: [Key: BrowserSitePermissionDecision]] = [:]
-    @ObservationIgnored private var observers: [Observer] = []
-
-    init(persistence: any BrowserSitePermissionPersisting) {
-        self.persistence = persistence
-        persistentRecords = persistence.load().filter {
-            BrowserSitePermissionDecisionPersistencePolicy.isPersistent($0.decision)
-        }
-    }
+    // MARK: - Actions - Decisions
 
     /// The choice that applies to one request. `detail` narrows a capability a
-    /// site can ask for more than one way; the narrowest saved choice wins, and a
-    /// site-wide rule for the same capability answers whatever it does not cover.
+    /// site can ask for more than one way.
     func decision(
-        for permission: BrowserSitePermission,
-        origin: BrowserSiteOrigin,
+        for permission: SitePermission,
+        origin: SiteOrigin,
         detail: String? = nil,
-        in spaceID: SpaceID
-    ) -> BrowserSitePermissionDecision {
-        let key = Key(origin: origin, permission: permission, detail: detail)
-        for candidate in [key, key.siteWide].compactMap(\.self) {
-            if let sessionDecision = sessionDecisions[spaceID]?[candidate] {
-                return sessionDecision
-            }
-            if let record = persistentRecords.first(where: {
-                candidate.matches($0, in: spaceID)
-            }) {
-                return record.decision
-            }
-        }
-        return .ask
+        in spaceID: UUID
+    ) -> SitePermissionDecision {
+        _ = core.state.sitePermissionRevision
+        let question = SiteDecision(
+            spaceID: spaceID, origin: origin, permission: permission, detail: detail)
+        return (try? core.query(question))?.decision ?? .ask
     }
 
-    func records(in spaceID: SpaceID) -> [BrowserSitePermissionRecord] {
-        persistentRecords
-            .filter { $0.spaceID == spaceID }
-            .sorted(by: BrowserSitePermissionRecordOrderingPolicy.areInIncreasingOrder)
+    /// Combined capture must respect a block on either device.
+    func mediaDecision(
+        for media: SitePermission,
+        origin: SiteOrigin,
+        in spaceID: UUID
+    ) -> SitePermissionDecision {
+        _ = core.state.sitePermissionRevision
+        let question = CaptureDecision(spaceID: spaceID, origin: origin, media: media)
+        return (try? core.query(question))?.decision ?? .ask
     }
+
+    /// Whether a notification a document at `origin` posted in a page of the
+    /// Space shows now. An unavailable core shows none.
+    func showsNotification(from origin: SiteOrigin, in spaceID: UUID) -> Bool {
+        _ = core.state.sitePermissionRevision
+        return (try? core.query(NotificationDisplayCheck(spaceID: spaceID, origin: origin)))?.shows ?? false
+    }
+
+    /// The choices a Space keeps, in the order the settings list them.
+    func records(in spaceID: UUID) -> [SitePermissionRecordState] {
+        core.state.sitePermissions[spaceID] ?? []
+    }
+
+    // MARK: - Actions - Observers
 
     /// Authorization withdrawal must be synchronous: observation can coalesce
     /// a reset followed by a new grant, leaving old requests authorized.
@@ -107,128 +122,48 @@ final class BrowserSitePermissionCenter {
         observers.append(Observer(value: observer))
     }
 
-    private func notify(_ change: BrowserSitePermissionChange) {
+    /// Tells each observer what one applied change covered.
+    private func changed(_ change: SitePermissionsChanged) {
         observers.removeAll { $0.value == nil }
-        for observer in observers.compactMap(\.value) {
-            observer.sitePermissionsDidChange(change)
+        let current = observers.compactMap(\.value)
+        for scope in change.touched {
+            let touched = BrowserSitePermissionChange(
+                spaceID: change.spaceID, origin: scope.origin,
+                permission: scope.permission, detail: scope.detail, revokesAuthorization: scope.revokesAuthorization)
+            for observer in current { observer.sitePermissionsDidChange(touched) }
         }
     }
+
+    // MARK: - Actions - Changes
 
     func setDecision(
-        _ decision: BrowserSitePermissionDecision,
-        for permission: BrowserSitePermission,
-        origin: BrowserSiteOrigin,
+        _ decision: SitePermissionDecision,
+        for permission: SitePermission,
+        origin: SiteOrigin,
         detail: String? = nil,
-        in spaceID: SpaceID,
-        at date: Date = .now
+        in spaceID: UUID
     ) {
-        revision &+= 1
-        let key = Key(origin: origin, permission: permission, detail: detail)
-        switch decision {
-        case .ask:
-            sessionDecisions[spaceID]?.removeValue(forKey: key)
-            removePersistentRecord(for: key, in: spaceID)
-        case .grantForSession, .denyForSession:
-            sessionDecisions[spaceID, default: [:]][key] = decision
-        case .grantPersistently, .denyPersistently:
-            sessionDecisions[spaceID]?.removeValue(forKey: key)
-            if let index = persistentRecords.firstIndex(where: {
-                key.matches($0, in: spaceID)
-            }) {
-                persistentRecords[index].decision = decision
-                persistentRecords[index].modifiedAt = date
-            } else {
-                persistentRecords.append(
-                    BrowserSitePermissionRecord(
-                        spaceID: spaceID,
-                        origin: origin,
-                        permission: permission,
-                        detail: detail,
-                        decision: decision,
-                        modifiedAt: date
-                    )
-                )
-            }
-            persist()
-        }
-        notify(BrowserSitePermissionChange(
-            spaceID: spaceID, origin: origin, permission: permission, detail: detail,
-            revokesAuthorization: decision != .grantPersistently && decision != .grantForSession
-        ))
+        send(
+            DecideSitePermission(
+                spaceID: spaceID, origin: origin, permission: permission, detail: detail,
+                decision: decision))
     }
 
-    func reset(recordID: BrowserSitePermissionRecord.ID) {
-        revision &+= 1
-        let record = persistentRecords.first { $0.id == recordID }
-        let count = persistentRecords.count
-        persistentRecords.removeAll { $0.id == recordID }
-        if persistentRecords.count != count {
-            persist()
-        }
-        if let record {
-            notify(BrowserSitePermissionChange(
-                spaceID: record.spaceID, origin: record.origin, permission: record.permission,
-                detail: record.detail, revokesAuthorization: true
-            ))
-        }
+    func reset(recordID: UUID) {
+        send(ResetSitePermission(recordID: recordID))
     }
 
-    func reset(spaceID: SpaceID) {
-        revision &+= 1
-        sessionDecisions.removeValue(forKey: spaceID)
-        let count = persistentRecords.count
-        persistentRecords.removeAll { $0.spaceID == spaceID }
-        if persistentRecords.count != count {
-            persist()
-        }
-        notify(BrowserSitePermissionChange(spaceID: spaceID, revokesAuthorization: true))
+    func reset(spaceID: UUID) {
+        send(ResetSpacePermissions(spaceID: spaceID))
     }
 
-    func resetSession() {
-        revision &+= 1
-        let decisions = sessionDecisions
-        sessionDecisions.removeAll()
-        for (spaceID, keys) in decisions {
-            for key in keys.keys {
-                notify(BrowserSitePermissionChange(
-                    spaceID: spaceID, origin: key.origin, permission: key.permission,
-                    detail: key.detail, revokesAuthorization: true
-                ))
-            }
+    private func send(_ intent: some SitePermissionIntent) {
+        do {
+            try core.send(intent)
+        } catch {
+            Self.log.notice(
+                "The core refused \(String(describing: type(of: intent))): \(DiagnosticLog.describe(error))"
+            )
         }
-    }
-
-    private func removePersistentRecord(for key: Key, in spaceID: SpaceID) {
-        let count = persistentRecords.count
-        persistentRecords.removeAll { key.matches($0, in: spaceID) }
-        if persistentRecords.count != count {
-            persist()
-        }
-    }
-
-    private func persist() {
-        persistence.save(persistentRecords)
-    }
-
-    /// Combined capture must respect a block on either device. Existing combined
-    /// grants remain a fallback for requests for just one of those devices.
-    func mediaDecision(
-        for media: BrowserMediaPermission,
-        origin: BrowserSiteOrigin,
-        in spaceID: SpaceID
-    ) -> BrowserSitePermissionDecision {
-        let combined = decision(for: .cameraAndMicrophone, origin: origin, in: spaceID)
-        let permissions: [BrowserSitePermission] =
-            media == .cameraAndMicrophone
-            ? [.camera, .microphone] : [media.sitePermission]
-        let decisions = permissions.map { decision(for: $0, origin: origin, in: spaceID) }
-        if ([combined] + decisions).contains(.denyPersistently) { return .denyPersistently }
-        if ([combined] + decisions).contains(.denyForSession) { return .denyForSession }
-        if combined == .grantPersistently || combined == .grantForSession { return combined }
-        if decisions.allSatisfy({ $0 == .grantPersistently }) { return .grantPersistently }
-        if decisions.allSatisfy({ $0 == .grantPersistently || $0 == .grantForSession }) {
-            return .grantForSession
-        }
-        return .ask
     }
 }

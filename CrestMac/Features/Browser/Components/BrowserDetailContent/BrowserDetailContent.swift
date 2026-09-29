@@ -5,15 +5,17 @@ struct BrowserDetailContent: View {
     /// The tab this content is rendering. The single-page path passes the
     /// selected tab; a Split View card passes its own member, which is what
     /// keeps an unfocused start-page card bound to itself.
-    let tab: BrowserTab?
-    let space: BrowserSpace?
-    let pagePresentation: BrowserPagePresentation
+    let tab: TabStateModel?
+    let space: SpaceModel?
+    let pagePresentation: PagePresentation
     let browser: BrowserStore
     let pages: BrowserPagePool
     let spaceAccess: BrowserSpaceAccessController
     let tabPromotionNamespace: Namespace.ID
     let startPageFocusRequest: Int
     let isCommandPalettePresented: Bool
+    /// The window's commands, for the Start Page's palette.
+    let commands: BrowserCommandPaletteCommandRegistry
 
     var body: some View {
         if let tab, let space, !spaceAccess.isLocked(space), pages.isMirroringPage(for: tab.id) {
@@ -26,8 +28,6 @@ struct BrowserDetailContent: View {
     @ViewBuilder
     private var content: some View {
         switch pagePresentation {
-        case .noSelection:
-            Color.clear
         case .nativeContent:
             if let tab, let space {
                 BrowserNativeTabHost(tab: tab, space: space)
@@ -36,7 +36,7 @@ struct BrowserDetailContent: View {
                         \.browserNativeTabActions,
                         BrowserNativeTabActions(
                             browser: browser, spaceAccess: spaceAccess,
-                            didOpenURL: { pages.select(session: browser.session) }))
+                            didOpenURL: { pages.select() }))
             }
         case .startPage:
             BrowserStartPageContent(
@@ -47,7 +47,8 @@ struct BrowserDetailContent: View {
                 spaceAccess: spaceAccess,
                 tabPromotionNamespace: tabPromotionNamespace,
                 focusRequest: startPageFocusRequest,
-                isCommandPalettePresented: isCommandPalettePresented
+                isCommandPalettePresented: isCommandPalettePresented,
+                commands: commands
             )
         case .livePage, .navigationFailure, .processFailure:
             BrowserLivePageContent(
@@ -57,6 +58,8 @@ struct BrowserDetailContent: View {
             )
         case .unloaded, .automaticRestore:
             BrowserUnloadedPageSurface()
+        default:
+            Color.clear
         }
     }
 }

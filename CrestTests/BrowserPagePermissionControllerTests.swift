@@ -1,49 +1,19 @@
-import WebKit
+import Foundation
 import XCTest
 
 @testable import Crest
 
 @MainActor
 final class BrowserPagePermissionControllerTests: XCTestCase {
-    func testLocationAuthorizationRemembersAllowAndCannotOverrideANewerBlock() async throws {
-        let controller = BrowserPagePermissionController()
-        controller.setPresentationAvailable(true)
-        let persistence = InMemoryBrowserSitePermissionPersistence()
-        let center = BrowserSitePermissionCenter(persistence: persistence)
-        let origin = BrowserSiteOrigin(scheme: "https", host: "location.example", port: 443)
-        let spaceID = SpaceID()
-        func authorize() async -> Bool {
-            await controller.authorize(
-                .location, origin: origin, topLevelOrigin: origin,
-                spaceID: spaceID, spaceName: "Work", permissionCenter: center)
-        }
-        let first = Task { await authorize() }
-        controller.resolve(try await pendingRequest(in: controller), response: .grantPersistently)
-        let firstAllowed = await first.value
-        XCTAssertTrue(firstAllowed)
-        let remembered = await authorize()
-        XCTAssertTrue(remembered)
-        XCTAssertNil(controller.current)
-        XCTAssertEqual(persistence.records.first?.decision, .grantPersistently)
-        center.setDecision(.ask, for: .location, origin: origin, in: spaceID)
-        let second = Task { await authorize() }
-        let requestID = try await pendingRequest(in: controller)
-        center.setDecision(.denyPersistently, for: .location, origin: origin, in: spaceID)
-        controller.resolve(requestID, response: .grantPersistently)
-        let secondAllowed = await second.value
-        XCTAssertFalse(secondAllowed)
-        XCTAssertEqual(persistence.records.first?.decision, .denyPersistently)
-    }
-
     func testDownloadAndLocationDismissalAreTemporaryAndExplicitChoicesArePreserved() async throws {
         let controller = BrowserPagePermissionController()
-        let origin = BrowserSiteOrigin(scheme: "https", host: "files.example", port: 443)
-        for permission in [BrowserSitePermission.automaticDownloads, .location] {
+        let origin = SiteOrigin(scheme: "https", host: "files.example", port: 443)
+        for permission in [SitePermission.automaticDownloads, .location] {
             let unavailable = await controller.response(
                 to: permission, origin: origin, topLevelOrigin: origin, spaceName: "Work")
             XCTAssertEqual(unavailable, .denyOnce)
             controller.setPresentationAvailable(true)
-            for choice in [BrowserPagePermissionController.Response.grantPersistently, .denyPersistently] {
+            for choice in [BrowserSitePermissionPromptResponse.grantPersistently, .denyPersistently] {
                 let task = Task {
                     await controller.response(to: permission, origin: origin, topLevelOrigin: origin, spaceName: "Work")
                 }
@@ -69,57 +39,50 @@ final class BrowserPagePermissionControllerTests: XCTestCase {
         return try XCTUnwrap(controller.current?.id)
     }
 
-    func testMediaRevocationStopsOnlyTheRevokedCapture() async throws {
-        let view = RecordingCaptureWebView()
+    func testMediaRevocationStopsOnlyTheRevokedCapture() {
+        let pages = RecordingEnginePages()
         let center = BrowserSitePermissionCenter()
-        let spaceID = SpaceID()
-        let origin = BrowserSiteOrigin(scheme: "https", host: "media.example", port: 443)
+        let spaceID = UUID()
+        let origin = SiteOrigin(scheme: "https", host: "media.example", port: 443)
         center.setDecision(.grantPersistently, for: .camera, origin: origin, in: spaceID)
         center.setDecision(.grantPersistently, for: .microphone, origin: origin, in: spaceID)
-        let session = BrowserMediaCaptureSession(webView: view, permissionCenter: center, spaceID: spaceID)
-        session.recordGrant(.camera, origin: origin)
-        session.recordGrant(.microphone, origin: origin)
+        let session = BrowserPageSitePermissionSession(
+            page: pages.page(), permissionCenter: center, spaceID: spaceID)
+        session.recordMediaGrant(.camera, origin: origin)
+        session.recordMediaGrant(.microphone, origin: origin)
         center.setDecision(.denyPersistently, for: .notifications, origin: origin, in: spaceID)
         center.setDecision(.ask, for: .camera, origin: origin, in: spaceID)
-        let deadline = Date().addingTimeInterval(2)
-        while view.cameraStops == 0 && Date() < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        XCTAssertEqual(view.cameraStops, 1)
-        XCTAssertEqual(view.microphoneStops, 0)
+        XCTAssertEqual(pages.stopped, [.camera])
     }
 
-    func testMediaDismissalDoesNotPersistAndAnOutstandingRequestCannotOverrideABlock() throws {
-        let controller = BrowserPagePermissionController()
-        controller.setPresentationAvailable(true)
+    func testDecisionChangedElsewhereReachesAnEngineThatEnforcesItAtOnce() {
+        let pages = RecordingEnginePages()
         let center = BrowserSitePermissionCenter()
-        let spaceID = SpaceID()
-        let origin = BrowserSiteOrigin(scheme: "https", host: "media.example", port: 443)
-        var decisions: [WKPermissionDecision] = []
-        BrowserMediaPermission.camera.resolve(
-            origin: origin, topLevelOrigin: origin, spaceID: spaceID, spaceName: "Work",
-            permissionCenter: center, requests: controller
-        ) { decisions.append($0) }
-        controller.cancelAll()
-        XCTAssertEqual(decisions, [.deny])
-        XCTAssertEqual(center.mediaDecision(for: .camera, origin: origin, in: spaceID), .ask)
-        BrowserMediaPermission.camera.resolve(
-            origin: origin, topLevelOrigin: origin, spaceID: spaceID, spaceName: "Work",
-            permissionCenter: center, requests: controller
-        ) { decisions.append($0) }
-        let request = try XCTUnwrap(controller.current)
-        center.setDecision(.denyPersistently, for: .camera, origin: origin, in: spaceID)
-        controller.resolve(request.id, response: .grantPersistently)
-        XCTAssertEqual(decisions, [.deny, .deny])
-        XCTAssertEqual(center.mediaDecision(for: .camera, origin: origin, in: spaceID), .denyPersistently)
+        let spaceID = UUID()
+        let page = URL(string: "https://maps.example/route")!
+        let origin = SiteOrigin(scheme: "https", host: "maps.example", port: 443)
+        let other = SiteOrigin(scheme: "https", host: "other.example", port: 443)
+        let session = BrowserPageSitePermissionSession(page: pages.page(), permissionCenter: center, spaceID: spaceID)
+        session.siteURL = { page }
+        var refreshed: [SitePermission] = []
+        session.siteDecisionDidChange = { refreshed.append($0) }
+
+        center.setDecision(.grantPersistently, for: .location, origin: other, in: spaceID)
+        center.setDecision(.grantPersistently, for: .location, origin: origin, in: UUID())
+        XCTAssertTrue(pages.applied.isEmpty)
+
+        center.setDecision(.denyPersistently, for: .location, origin: origin, in: spaceID)
+        XCTAssertEqual(pages.applied.map(\.permission), [.location])
+        XCTAssertEqual(pages.applied.map(\.allowed), [false])
+        XCTAssertEqual(refreshed, [.location])
     }
 
     func testDismissalCancelsQueueWithoutSavingDenialsOrAnsweringLaterRequests() throws {
         let controller = BrowserPagePermissionController()
         controller.setPresentationAvailable(true)
-        let origin = BrowserSiteOrigin(scheme: "https", host: "camera.example", port: 443)
-        var responses: [BrowserPagePermissionController.Response?] = []
-        for permission in [BrowserSitePermission.camera, .notifications] {
+        let origin = SiteOrigin(scheme: "https", host: "camera.example", port: 443)
+        var responses: [BrowserSitePermissionPromptResponse?] = []
+        for permission in [SitePermission.camera, .notifications] {
             controller.request(permission, origin: origin, topLevelOrigin: origin, spaceName: "Work") {
                 responses.append($0)
             }
@@ -140,8 +103,8 @@ final class BrowserPagePermissionControllerTests: XCTestCase {
 
     func testOriginsAndPermissionsRemainSeparateAndUnavailablePagesDenyTransiently() throws {
         let controller = BrowserPagePermissionController()
-        let top = BrowserSiteOrigin(scheme: "https", host: "top.example", port: 443)
-        let frame = BrowserSiteOrigin(scheme: "https", host: "frame.example", port: 443)
+        let top = SiteOrigin(scheme: "https", host: "top.example", port: 443)
+        let frame = SiteOrigin(scheme: "https", host: "frame.example", port: 443)
         var count = 0
         controller.request(.camera, origin: frame, topLevelOrigin: top, spaceName: "Work") {
             XCTAssertNil($0)
@@ -160,22 +123,26 @@ final class BrowserPagePermissionControllerTests: XCTestCase {
     }
 }
 
+/// An engine's direct path that records the site decisions carried to it.
 @MainActor
-private final class RecordingCaptureWebView: WKWebView {
-    var cameraStops = 0
-    var microphoneStops = 0
+private final class RecordingEnginePages: EnginePages {
+    private(set) var applied: [(permission: SitePermission, allowed: Bool?)] = []
+    private(set) var stopped: [SitePermission] = []
 
-    override func setCameraCaptureState(
-        _ state: WKMediaCaptureState, completionHandler: (@MainActor @Sendable () -> Void)? = nil
-    ) {
-        if state == .none { cameraStops += 1 }
-        completionHandler?()
+    /// A page over this path.
+    func page() -> EnginePage {
+        EnginePage(id: UUID(), pages: self, historyFamily: .chromium, historyVersion: { nil }, inspectorPanels: [])
     }
 
-    override func setMicrophoneCaptureState(
-        _ state: WKMediaCaptureState, completionHandler: (@MainActor @Sendable () -> Void)? = nil
-    ) {
-        if state == .none { microphoneStops += 1 }
-        completionHandler?()
+    func attach(_ page: EnginePage) {}
+
+    func request<Request: PageRequest>(_ request: Request) -> Request.Answer {
+        switch request {
+        case let setting as SetSitePermission: applied.append((setting.permission, setting.allowed))
+        case let stopping as StopMediaCapture: stopped.append(stopping.permission)
+        default: XCTFail("The session asked for \(Request.self).")
+        }
+        guard let answer = true as? Request.Answer else { preconditionFailure("A site request answers Bool.") }
+        return answer
     }
 }

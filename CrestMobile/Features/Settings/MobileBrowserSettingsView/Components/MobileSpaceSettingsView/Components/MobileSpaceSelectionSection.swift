@@ -2,12 +2,12 @@ import SwiftUI
 
 struct MobileSpaceSelectionSection: View {
     let browser: BrowserStore
-    @Binding var selectedSpaceID: SpaceID?
+    @Binding var selectedSpaceID: UUID?
 
     var body: some View {
         Section("Space", systemImage: "square.grid.2x2") {
             Picker("Edit", selection: $selectedSpaceID) {
-                ForEach(browser.session.spaces) { space in
+                ForEach(browser.spaceModels) { space in
                     BrowserSpaceIdentityLabel(space: space)
                         .tag(Optional(space.id))
                 }
@@ -19,7 +19,7 @@ struct MobileSpaceSelectionSection: View {
                 BrowserSpaceOrderControls(browser: browser, spaceID: selectedSpaceID)
                 BrowserSpaceAddButton {
                     browser.addSpace()
-                    selectedSpaceID = browser.session.selectedSpaceID
+                    selectedSpaceID = browser.selectedSpaceID
                 }
             }
         }

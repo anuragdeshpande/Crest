@@ -33,7 +33,7 @@ extension MobileBrowserPage: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
         translation.reset()
-        mediaCaptureSession.reset()
+        sitePermissionSession.resetMediaGrants()
         sitePermissionRequests.cancelAll()
         activeNavigation = navigation
         // Reloads and history traversal do not necessarily pass through the
@@ -46,23 +46,24 @@ extension MobileBrowserPage: WKNavigationDelegate {
         // WebKit accepted the navigation Crest asked for, so the authorization
         // that came with it is spent.
         consumeAppInitiatedURL()
-        clearNavigationFailure(preservingPendingURL: true)
         pendingServerTrustIdentity = nil
         linkActivationSourceStore.removeAll()
         credentialState.didStartNavigation()
         readerModeSession.invalidate()
         faviconSession.invalidate()
+        reporter.started(webView.url)
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation?) {
         guard isCurrentNavigation(navigation) else { return }
+        if let url = webView.url { reporter.committed(url) }
         mediaSessionCoordinator?.didCommitNavigation()
         committedNavigationCount &+= 1
-        // Supplements belong to the current document. A document replacement
-        // can discard an item that WebKit omits from its public history lists.
-        navigationHistory = BrowserPageNavigationHistory()
+        // A new document drops the supplements that described the old one; a
+        // return to history keeps the entries the person may go forward to.
+        navigationHistory.documentDidCommit(in: webView.backForwardList)
         refreshNavigationState()
-        downloadCenter.resetAutomaticDownloadSequence(in: webView)
+        webKitPage.resetAutomaticDownloads()
     }
 
     func webView(
@@ -72,7 +73,7 @@ extension MobileBrowserPage: WKNavigationDelegate {
         guard isCurrentNavigation(navigation),
             let redirectedURL = webView.url
         else { return }
-        pendingNavigationURL = redirectedURL
+        reporter.redirected(to: redirectedURL)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
@@ -110,59 +111,36 @@ extension MobileBrowserPage: WKNavigationDelegate {
                 trigger: BrowserPopupTrigger.classify(navigationAction.navigationType),
                 origin: externalSchemeCoordinator.sourceOrigin(
                     for: navigationAction,
-                    currentURL: displayURL
+                    currentURL: live.displayURL
                 )
             )
             decisionHandler(.cancel)
             return
         }
-        let isCommandModified = navigationAction.modifierFlags.contains(.command)
-        let isOptionModified = navigationAction.modifierFlags.contains(.alternate)
-        let isShiftModified = navigationAction.modifierFlags.contains(.shift)
-        let isMiddleClick = navigationAction.buttonNumber.rawValue == 1 << 2
-        let isUserActivatedLink = navigationAction.navigationType == .linkActivated
-        let isTopLevelNavigation = navigationAction.targetFrame?.isMainFrame ?? true
+        let gesture = navigationAction.linkGesture
         let sourcePresentation =
-            isUserActivatedLink && isTopLevelNavigation
+            gesture.userActivated && gesture.topLevel
             ? linkActivationSourceStore.consume(
                 destinationURL: navigationAction.request.url
             )
             : nil
-        let clickIntent = BrowserLinkClickModifierPolicy.intent(
-            isCommandModified: isCommandModified,
-            isOptionModified: isOptionModified,
-            peekModifier: BrowserLinkPreferenceStore.shared.preferences.peekClickModifier
-        )
-        if let request = BrowserPeekPolicy.request(
+        // The core decides what the link does, as it does for Chromium's.
+        let decision = webKitPage.linkActivation(to: navigationAction.request.url, gesture: gesture)
+        // A modified click keeps its initiator's referrer through a staged
+        // request; a saved-site Peek starts afresh, as it does on Chromium.
+        let engineNavigation = decision == .peekModifier ? webKitPage.stageLink(navigationAction.request) : nil
+        if let request = decision.peekRequest(
             destinationURL: navigationAction.request.url,
-            context: navigationContext,
-            isUserActivatedLink: isUserActivatedLink,
-            isTopLevelNavigation: isTopLevelNavigation,
-            isAlternateModified: clickIntent == .peek,
-            isNewTabModified: clickIntent == .newTab || isMiddleClick,
-            sourcePresentation: sourcePresentation
-        ) {
+            context: navigationContext, sourcePresentation: sourcePresentation,
+            engineNavigation: engineNavigation)
+        {
             openPeek(request)
             decisionHandler(.cancel)
             return
         }
-        switch BrowserModifiedLinkDisposition.classify(
-            destinationURL: navigationAction.request.url,
-            isUserActivatedLink: navigationAction.navigationType == .linkActivated,
-            isCommandModified: clickIntent == .newTab,
-            isShiftModified: isShiftModified,
-            isMiddleClick: isMiddleClick,
-            focusesNewTabs: opensModifiedLinksInForeground
-                || BrowserLinkPreferenceStore.shared.preferences.focusesNewTabsOpenedFromLinks
-        ) {
-        case .navigate:
-            break
-        case .backgroundTab:
-            routeModifiedLink(navigationAction.request, selecting: false)
-            decisionHandler(.cancel)
-            return
-        case .foregroundTab:
-            routeModifiedLink(navigationAction.request, selecting: true)
+        if let engineNavigation { corePage.discardStagedLink(engineNavigation) }
+        if decision == .foregroundTab || decision == .backgroundTab {
+            routeModifiedLink(navigationAction.request, selecting: decision == .foregroundTab)
             decisionHandler(.cancel)
             return
         }
@@ -211,17 +189,7 @@ extension MobileBrowserPage: WKNavigationDelegate {
             for: navigationAction.request.url,
             in: webView
         )
-        downloadCenter.start(
-            download,
-            in: webView,
-            profileID: profileID,
-            spaceID: spaceID,
-            spaceName: spaceName,
-            isUserInitiated:
-                BrowserDownloadInitiationPolicy
-                .userInitiatedOverride(hasTrustedSource: feedbackSource != nil),
-            feedbackSource: feedbackSource
-        )
+        startDownload(download, feedbackSource: feedbackSource)
         discardDownloadOnlySurfaceIfNeeded()
     }
 
@@ -235,18 +203,26 @@ extension MobileBrowserPage: WKNavigationDelegate {
                 ?? navigationResponse.response.url,
             in: webView
         )
-        downloadCenter.start(
-            download,
-            in: webView,
-            profileID: profileID,
-            spaceID: spaceID,
-            spaceName: spaceName,
-            isUserInitiated:
-                BrowserDownloadInitiationPolicy
-                .userInitiatedOverride(hasTrustedSource: feedbackSource != nil),
-            feedbackSource: feedbackSource
-        )
+        startDownload(download, feedbackSource: feedbackSource)
         discardDownloadOnlySurfaceIfNeeded()
+    }
+
+    /// Hands a download the page's web view started to WebKit's binding, which
+    /// runs it as the engine's own, and shows it leaving from where the
+    /// person started it. Only Crest's trusted activation bridge counts it as
+    /// the person's own.
+    private func startDownload(_ download: WKDownload, feedbackSource: BrowserDownloadFeedbackSource?) {
+        if let feedbackSource {
+            downloadCenter.presentFeedback(
+                BrowserDownloadFeedbackEvent(
+                    id: UUID(), profileID: profileID, spaceID: spaceID,
+                    filename: download.originalRequest?.url?.lastPathComponent.nilIfEmpty ?? "download",
+                    source: feedbackSource))
+        }
+        webKitPage.startDownload(
+            download,
+            isUserInitiated: BrowserDownloadInitiationPolicy.userInitiatedOverride(
+                hasTrustedSource: feedbackSource != nil) ?? false)
     }
 
     func discardDownloadOnlySurfaceIfNeeded() {
@@ -266,12 +242,6 @@ extension MobileBrowserPage: WKNavigationDelegate {
                 URLCredential?
             ) -> Void
     ) {
-        #if CREST_PHYSICAL_VALIDATION
-            if let credential = MobilePhysicalValidationServerTrust.credential(for: challenge) {
-                completionHandler(.useCredential, credential)
-                return
-            }
-        #endif
         if let identity = BrowserServerTrustIdentity.challengeIdentity(
             for: challenge
         ) {
@@ -286,17 +256,7 @@ extension MobileBrowserPage: WKNavigationDelegate {
             }
             return
         }
-        Task {
-            let resolution = await httpAuthenticationSession.response(
-                to: challenge
-            ) { [spaceName] prompt in
-                await MobileBrowserDialogPresenter.presentHTTPAuthentication(
-                    prompt: prompt,
-                    spaceName: spaceName
-                )
-            }
-            completionHandler(resolution.disposition, resolution.credential)
-        }
+        answerSignIn(challenge, from: webKitPage, completionHandler: completionHandler)
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
@@ -316,7 +276,7 @@ extension MobileBrowserPage: WKNavigationDelegate {
         httpAuthenticationSession.authenticationFailed()
         recordNavigationFailure(
             error,
-            phase: .committed,
+            replacedDocument: true,
             navigation: navigation
         )
     }
@@ -329,7 +289,7 @@ extension MobileBrowserPage: WKNavigationDelegate {
         httpAuthenticationSession.authenticationFailed()
         recordNavigationFailure(
             error,
-            phase: .provisional,
+            replacedDocument: false,
             navigation: navigation
         )
     }

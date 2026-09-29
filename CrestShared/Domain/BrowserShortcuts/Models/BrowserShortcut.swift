@@ -1,21 +1,64 @@
 struct BrowserShortcut: Codable, Equatable, Hashable, Sendable {
     let key: BrowserShortcutKey
-    let modifiers: BrowserShortcutModifiers
+    let modifiers: ShortcutModifiers
 
     var isValid: Bool {
         !modifiers.intersection(.supported).isEmpty
     }
 }
 
+extension BrowserShortcut {
+    /// The chord a catalog default names. The catalog names a special key by
+    /// its `ShortcutSpecialKey` name, and every other key as the one character
+    /// it types.
+    init(_ keys: KeyCombination) {
+        let key: BrowserShortcutKey
+        if keys.isSpecialKey {
+            guard let special = ShortcutSpecialKey.named(keys.key) else {
+                preconditionFailure("The shortcut catalog names an unknown special key \(keys.key)")
+            }
+            key = .special(special)
+        } else {
+            guard keys.key.count == 1, let character = keys.key.first else {
+                preconditionFailure("The shortcut catalog's key \(keys.key) is not one character")
+            }
+            key = .character(character)
+        }
+        self.init(key: key, modifiers: keys.modifiers)
+    }
+
+    /// The keys a command is bound to in the core's read model, or nil for
+    /// keys no shortcut here can spell.
+    init?(boundKeys keys: KeyCombination) {
+        if keys.isSpecialKey {
+            guard let special = ShortcutSpecialKey.named(keys.key) else { return nil }
+            self.init(key: .special(special), modifiers: keys.modifiers)
+        } else {
+            guard keys.key.count == 1, let character = keys.key.first else { return nil }
+            self.init(key: .character(character), modifiers: keys.modifiers)
+        }
+    }
+
+    /// The shortcut as the core's rules read it.
+    var keys: KeyCombination {
+        switch key {
+        case .character(let character):
+            KeyCombination(key: String(character), isSpecialKey: false, modifiers: modifiers)
+        case .special(let special):
+            KeyCombination(key: special.name, isSpecialKey: true, modifiers: modifiers)
+        }
+    }
+}
+
 enum BrowserShortcutAssignmentResult: Equatable, Sendable {
     case assigned
-    case conflict(commands: [BrowserShortcutCommand])
+    case conflict(commands: [ShortcutCommand])
     case invalid
 }
 
 enum BrowserShortcutKey: Codable, Hashable, Sendable {
     case character(Character)
-    case special(BrowserShortcutSpecialKey)
+    case special(ShortcutSpecialKey)
 
     private enum CodingKeys: String, CodingKey {
         case character
@@ -36,7 +79,7 @@ enum BrowserShortcutKey: Codable, Hashable, Sendable {
         }
         self = .special(
             try container.decode(
-                BrowserShortcutSpecialKey.self,
+                ShortcutSpecialKey.self,
                 forKey: .special
             )
         )
@@ -53,15 +96,9 @@ enum BrowserShortcutKey: Codable, Hashable, Sendable {
     }
 }
 
-struct BrowserShortcutModifiers: OptionSet, Codable, Hashable, Sendable {
-    let rawValue: Int
-
-    static let command = BrowserShortcutModifiers(rawValue: 1 << 0)
-    static let option = BrowserShortcutModifiers(rawValue: 1 << 1)
-    static let control = BrowserShortcutModifiers(rawValue: 1 << 2)
-    static let shift = BrowserShortcutModifiers(rawValue: 1 << 3)
-
-    static let supported: BrowserShortcutModifiers = [
+/// A modifier mask persists as its raw bits.
+extension ShortcutModifiers: Codable, Hashable {
+    static let supported: ShortcutModifiers = [
         .command,
         .option,
         .control,
@@ -69,64 +106,10 @@ struct BrowserShortcutModifiers: OptionSet, Codable, Hashable, Sendable {
     ]
 }
 
-enum BrowserShortcutOverride: Equatable, Sendable {
-    case custom(BrowserShortcut)
-    case unassigned
-}
-
 struct BrowserShortcutSearchDocument: Equatable, Sendable {
     let fields: [String]
 }
 
-enum BrowserShortcutSection: String, CaseIterable, Identifiable, Sendable {
-    case everyday
-    case tabs
-    case spaces
-    case page
-    case view
-
-    var id: Self { self }
-}
-
-enum BrowserShortcutSpecialKey:
-    String,
-    Codable,
-    CaseIterable,
-    Hashable,
-    Sendable
-{
-    case tab
-    case leftArrow
-    case rightArrow
-    case upArrow
-    case downArrow
-    case escape
-    case returnKey
-    case delete
-    case forwardDelete
-    case home
-    case end
-    case pageUp
-    case pageDown
-    case space
-    case f1
-    case f2
-    case f3
-    case f4
-    case f5
-    case f6
-    case f7
-    case f8
-    case f9
-    case f10
-    case f11
-    case f12
-    case f13
-    case f14
-    case f15
-    case f16
-    case f17
-    case f18
-    case f19
-    case f20
+extension ShortcutSection: Identifiable {
+    var id: String { name }
 }

@@ -6,11 +6,10 @@ import XCTest
 @MainActor
 final class BrowserCommandPaletteActionPolicyTests: XCTestCase {
     func testEmptySelectionActionsRejectChangedSelectionSpaceProfileAndLock() throws {
-        var source = makeSpace(index: 1)
+        let source = makeSpace(index: 1)
         let target = try assignment(for: source)
-        source.selectedTabID = nil
         let other = makeSpace(index: 2)
-        let browser = makeBrowser(spaces: [source, other], selected: source.id)
+        let browser = makeBrowser(spaces: [source, other], showing: source.id)
         var selectionCount = 0
         let actions = BrowserEmptySelectionPaletteActions(
             source: BrowserSpaceRuntimeAssignment(space: source), browser: browser,
@@ -18,33 +17,49 @@ final class BrowserCommandPaletteActionPolicyTests: XCTestCase {
         XCTAssertTrue(actions.isAvailable)
         XCTAssertFalse(actions.selectTab(try assignment(for: other)))
 
-        var selectedSource = source
-        selectedSource.selectedTabID = target.tabID
-        var lockedSource = source
-        lockedSource.accessPolicy = .deviceOwnerAuthentication
-        let unavailableSessions = [
-            BrowserSession(spaces: [selectedSource, other], selectedSpaceID: source.id),
-            BrowserSession(spaces: [source, other], selectedSpaceID: other.id),
-            BrowserSession(spaces: [replacingProfile(in: source), other], selectedSpaceID: source.id),
-            BrowserSession(spaces: [lockedSource, other], selectedSpaceID: source.id),
-            BrowserSession(spaces: [other], selectedSpaceID: other.id),
-        ]
-        for session in unavailableSessions {
-            browser.session = session
-            XCTAssertFalse(actions.isAvailable)
-            XCTAssertFalse(actions.selectTab(target))
-            XCTAssertFalse(actions.openURL(URL(string: "about:blank")!))
-            XCTAssertEqual(browser.session, session)
+        func assertUnavailable(line: UInt = #line) {
+            let session = browser.sessionSeed
+            let window = browser.window
+            XCTAssertFalse(actions.isAvailable, line: line)
+            XCTAssertFalse(actions.selectTab(target), line: line)
+            XCTAssertFalse(actions.openURL(URL(string: "about:blank")!), line: line)
+            XCTAssertEqual(browser.sessionSeed, session, line: line)
+            XCTAssertEqual(browser.window, window, line: line)
         }
+
+        // The window chose a tab in the source Space.
+        browser.activateSessionTab(target.tabID, in: source.id)
+        assertUnavailable()
+        browser.clearPresentedTabSelection(in: source.id)
+        XCTAssertTrue(actions.isAvailable)
+
+        // The window moved to another Space.
+        browser.selectPresentedSpace(other.id)
+        assertUnavailable()
+        browser.selectPresentedSpace(source.id)
+        browser.clearPresentedTabSelection(in: source.id)
+        XCTAssertTrue(actions.isAvailable)
+
+        // Its profile was replaced.
+        browser.replaceProfileForTesting(of: source.id, with: uuid(0xF0))
+        assertUnavailable()
+        // It has its profile back, but asks for authentication.
+        browser.replaceProfileForTesting(of: source.id, with: source.profileID)
+        browser.updateSpaceAccessPolicy(.deviceOwnerAuthentication, in: source.id)
+        assertUnavailable()
+        // It is gone.
+        browser.removeSpaceForTesting(source.id)
+        assertUnavailable()
         XCTAssertEqual(selectionCount, 0)
     }
 
     func testTargetRequiresCurrentSpaceAndRejectsReplacementOrLock() throws {
         let source = makeSpace(index: 1)
         let destination = makeSpace(index: 2)
-        let browser = makeBrowser(spaces: [source, destination], selected: source.id)
-        let access = BrowserSpaceAccessController()
         let sourceAssignment = try assignment(for: source)
+        let browser = makeBrowser(
+            spaces: [source, destination], showing: source.id, tabs: [source.id: sourceAssignment.tabID])
+        let access = BrowserSpaceAccessController()
         let destinationAssignment = try assignment(for: destination)
 
         XCTAssertTrue(
@@ -71,10 +86,7 @@ final class BrowserCommandPaletteActionPolicyTests: XCTestCase {
             )
         )
 
-        browser.session = BrowserSession(
-            spaces: [replacingProfile(in: source), destination],
-            selectedSpaceID: source.id
-        )
+        browser.replaceProfileForTesting(of: source.id, with: uuid(0xF0))
 
         XCTAssertFalse(
             BrowserCommandPaletteActionPolicy.isSourceAvailable(
@@ -92,12 +104,9 @@ final class BrowserCommandPaletteActionPolicyTests: XCTestCase {
             )
         )
 
-        var protectedSource = source
-        protectedSource.accessPolicy = .deviceOwnerAuthentication
-        browser.session = BrowserSession(
-            spaces: [protectedSource, destination],
-            selectedSpaceID: source.id
-        )
+        browser.replaceProfileForTesting(of: source.id, with: source.profileID)
+        browser.updateSpaceAccessPolicy(.deviceOwnerAuthentication, in: source.id)
+        let protectedSource = try XCTUnwrap(browser.spaceModel(source.id)).value.seed
         XCTAssertNil(
             BrowserCommandPaletteActionPolicy.target(
                 try assignment(for: protectedSource),
@@ -109,63 +118,38 @@ final class BrowserCommandPaletteActionPolicyTests: XCTestCase {
     }
 
     private func makeBrowser(
-        spaces: [BrowserSpace],
-        selected: SpaceID
+        spaces: [SpaceState.Seed],
+        showing spaceID: UUID,
+        tabs: [UUID: UUID] = [:]
     ) -> BrowserStore {
-        BrowserStore(
-            session: BrowserSession(spaces: spaces, selectedSpaceID: selected),
-            persistence: InMemoryBrowserSessionPersistence(),
-            browsingMode: .privateBrowsing
-        )
+        BrowserStore(seed: SessionState.Seed(spaces: spaces), showing: spaceID, tabs: tabs)
     }
 
-    private func makeSpace(index: UInt8) -> BrowserSpace {
-        let tab = BrowserTab(
-            id: TabID(rawValue: uuid(index &+ 1)),
+    private func makeSpace(index: UInt8) -> SpaceState.Seed {
+        let tab = TabState.Seed(
+            id: uuid(index &+ 1),
             title: "Tab \(index)",
             url: URL(fileURLWithPath: "/palette-\(index)"),
             placement: .current
         )
-        return BrowserSpace(
-            id: SpaceID(rawValue: uuid(index &+ 2)),
-            profile: BrowsingProfile(id: uuid(index &+ 3)),
+        return SpaceState.Seed(
+            id: uuid(index &+ 2),
+            profileID: uuid(index &+ 3),
             name: "Space \(index)",
             symbol: "circle",
             accent: .indigo,
             folders: [],
-            tabs: [tab],
-            selectedTabID: tab.id
+            tabs: [tab]
         )
     }
 
     private func assignment(
-        for space: BrowserSpace
+        for space: SpaceState.Seed
     ) throws -> BrowserTabRuntimeAssignment {
         BrowserTabRuntimeAssignment(
-            tabID: try XCTUnwrap(space.selectedTabID),
+            tabID: try XCTUnwrap(space.tabs.first?.id),
             spaceID: space.id,
-            profileID: space.profile.id
-        )
-    }
-
-    private func replacingProfile(in space: BrowserSpace) -> BrowserSpace {
-        BrowserSpace(
-            id: space.id,
-            profile: BrowsingProfile(id: uuid(0xF0)),
-            name: space.name,
-            symbol: space.symbol,
-            accent: space.accent,
-            branding: space.branding,
-            folders: space.folders,
-            tabs: space.tabs,
-            archivedTabs: space.archivedTabs,
-            history: space.history,
-            browsingPreferences: space.browsingPreferences,
-            credentialPreferences: space.credentialPreferences,
-            accessPolicy: space.accessPolicy,
-            isSavedTabsExpanded: space.isSavedTabsExpanded,
-            savedTabsExpansionModifiedAt: space.savedTabsExpansionModifiedAt,
-            selectedTabID: space.selectedTabID
+            profileID: space.profileID
         )
     }
 

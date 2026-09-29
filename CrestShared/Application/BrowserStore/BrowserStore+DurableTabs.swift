@@ -1,36 +1,21 @@
 import Foundation
 
 extension BrowserStore {
-    /// Records an explicit close without removing the durable tab or archiving it.
-    /// The page owner retires its runtime before publishing this session change.
+    /// Records an explicit close without removing the durable tab or archiving
+    /// it: the core puts its page away, back at its saved address when the
+    /// app's preferences say so. The page owner retires its runtime before
+    /// publishing this session change.
     @discardableResult
-    func closeDurableTab(
-        _ assignment: BrowserTabRuntimeAssignment,
-        returningToSavedURL: Bool
-    ) -> Bool {
+    func closeDurableTab(_ assignment: BrowserTabRuntimeAssignment) -> Bool {
         let spaceAssignment = BrowserSpaceRuntimeAssignment(
             spaceID: assignment.spaceID, profileID: assignment.profileID
         )
-        guard let space = space(matching: spaceAssignment),
-            let tab = space.tabs.first(where: { $0.id == assignment.tabID }),
-            tab.placement != .current
+        guard let space = spaceModel(matching: spaceAssignment),
+            let tab = space.tabs.model(assignment.tabID),
+            tab.placement.isDurable
         else { return false }
-        // Selecting another member would immediately present the just-closed
-        // card again. Leave that split intact for the next explicit selection.
-        let availableIDs = Set(
-            space.tabs.filter {
-                $0.id != tab.id && (tab.splitGroupID == nil || $0.splitGroupID != tab.splitGroupID)
-            }.map(\.id))
-        let fallbackID = tabSelectionHistory.fallbackTabID(
-            afterDismissing: tab.id, in: space.id, availableTabIDs: availableIDs
-        )
-        guard
-            session.closeDurableTab(
-                tab.id, in: space.id, fallbackTabID: fallbackID,
-                returningToSavedURL: returningToSavedURL
-            )
-        else { return false }
-        persist(scope: .core)
-        return true
+        // The core returns the window to the tab it showed before, skipping the
+        // closed tab's split, whose other members would present it again.
+        return closeSessionTab(tab.id, in: space.id)
     }
 }

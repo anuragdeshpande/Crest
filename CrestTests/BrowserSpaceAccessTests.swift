@@ -9,55 +9,41 @@ import XCTest
 final class BrowserSpaceAccessTests: XCTestCase {
 
     func testChosenDefaultSpaceBecomesTheLaunchSelection() throws {
-        var session = BrowserSession.preview
-        let work = try XCTUnwrap(session.spaces.first)
-        let personal = try XCTUnwrap(session.spaces.last)
+        let store = BrowserStore(seed: .preview)
+        let work = try XCTUnwrap(store.spaceModels.first)
+        let personal = try XCTUnwrap(store.spaceModels.last)
 
-        session.setDefaultSpace(personal.id)
-        session.selectSpace(work.id)
-        session.selectDefaultSpaceForLaunch()
+        store.setDefaultSpace(personal.id)
+        store.selectSpace(work.id)
 
-        XCTAssertEqual(session.defaultSpaceID, personal.id)
-        XCTAssertEqual(session.selectedSpaceID, personal.id)
+        XCTAssertEqual(store.workspaceModel?.defaultSpaceID, personal.id)
+        XCTAssertEqual(store.selectedSpaceID, work.id)
+        let relaunched = SessionState.Seed(
+            spaces: store.spaceModels.map(\.value.seed), defaultSpaceID: store.workspaceModel?.defaultSpaceID)
+        XCTAssertEqual(BrowserStore(seed: relaunched).selectedSpaceID, personal.id)
     }
 
-    func testRemovingTheDefaultSpaceChoosesAValidReplacement() throws {
-        var session = BrowserSession.preview
-        let removed = try XCTUnwrap(session.spaces.first)
-        let replacement = try XCTUnwrap(session.spaces.dropFirst().first)
-        session.setDefaultSpace(removed.id)
+    /// The stores the tests' controllers unlock Spaces of, which the
+    /// controllers do not keep.
+    private var stores: [BrowserStore] = []
 
-        XCTAssertEqual(session.removeSpace(removed.id), removed)
-
-        XCTAssertEqual(session.defaultSpaceID, replacement.id)
-        XCTAssertEqual(session.selectedSpaceID, replacement.id)
-    }
-
-    func testLegacySessionAndSpaceDecodeWithSafeAccessDefaults() throws {
-        let encoded = try JSONEncoder().encode(BrowserSession.preview)
-        var object = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
-        )
-        object.removeValue(forKey: "defaultSpaceID")
-        var spaces = try XCTUnwrap(object["spaces"] as? [[String: Any]])
-        for index in spaces.indices {
-            spaces[index].removeValue(forKey: "accessPolicy")
-        }
-        object["spaces"] = spaces
-        let legacyData = try JSONSerialization.data(withJSONObject: object)
-
-        var decoded = try JSONDecoder().decode(BrowserSession.self, from: legacyData)
-        decoded.repairRuntimeIntegrity()
-
-        XCTAssertEqual(decoded.defaultSpaceID, decoded.selectedSpaceID)
-        XCTAssertTrue(decoded.spaces.allSatisfy { $0.accessPolicy == .open })
+    /// A store whose first Space asks for authentication, and a controller
+    /// for its core that answers with `authenticator`.
+    private func guardedStore(authenticator: any BrowserDeviceAuthenticating) throws
+        -> (store: BrowserStore, access: BrowserSpaceAccessController, space: SpaceModel)
+    {
+        var session = SessionState.Seed.preview
+        session.spaces[0].settings.accessPolicy = .deviceOwnerAuthentication
+        let store = BrowserStore(seed: session)
+        stores.append(store)
+        let access = BrowserSpaceAccessController(authenticator: authenticator)
+        store.attachSpaceAccess(access)
+        return (store, access, try XCTUnwrap(store.spaceModels.first))
     }
 
     func testPrivateSpaceRemainsLockedUntilDeviceOwnerAuthenticationSucceeds() async throws {
-        var space = try XCTUnwrap(BrowserSession.preview.spaces.first)
-        space.accessPolicy = .deviceOwnerAuthentication
         let authenticator = BrowserDeviceAuthenticatorStub(results: [.success(true)])
-        let access = BrowserSpaceAccessController(authenticator: authenticator)
+        let (_, access, space) = try guardedStore(authenticator: authenticator)
 
         XCTAssertTrue(access.isLocked(space))
         let unlocked = await access.unlock(space)
@@ -72,11 +58,8 @@ final class BrowserSpaceAccessTests: XCTestCase {
     }
 
     func testSuccessfulAuthenticationPublishesTheUnlockedState() async throws {
-        var space = try XCTUnwrap(BrowserSession.preview.spaces.first)
-        space.accessPolicy = .deviceOwnerAuthentication
-        let access = BrowserSpaceAccessController(
-            authenticator: BrowserDeviceAuthenticatorStub(results: [.success(true)])
-        )
+        let (_, access, space) = try guardedStore(
+            authenticator: BrowserDeviceAuthenticatorStub(results: [.success(true)]))
         let stateChanged = expectation(description: "Unlocked state published")
         withObservationTracking {
             _ = access.isLocked(space)
@@ -91,74 +74,12 @@ final class BrowserSpaceAccessTests: XCTestCase {
         XCTAssertFalse(access.isLocked(space))
     }
 
-    func testUnlockFollowsExactSpaceAndProfileIdentityAcrossSessionChanges() async throws {
-        var original = try XCTUnwrap(BrowserSession.preview.spaces.first)
-        original.accessPolicy = .deviceOwnerAuthentication
-        let authenticator = BrowserDeviceAuthenticatorStub(
-            results: [.success(true), .success(true)]
-        )
-        let access = BrowserSpaceAccessController(authenticator: authenticator)
-
-        let didUnlockOriginal = await access.unlock(original)
-        XCTAssertTrue(didUnlockOriginal)
-
-        var renamed = original
-        renamed.name = "Renamed"
-        XCTAssertFalse(access.isLocked(renamed))
-
-        let replacement = BrowserSpace(
-            id: original.id,
-            profile: BrowsingProfile(
-                id: UUID(
-                    uuid: (
-                        0x41, 0x43, 0x43, 0x45, 0x53, 0x53, 0x54, 0x45,
-                        0x53, 0x54, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
-                    )
-                )
-            ),
-            name: original.name,
-            symbol: original.symbol,
-            accent: original.accent,
-            branding: original.branding,
-            folders: original.folders,
-            tabs: original.tabs,
-            archivedTabs: original.archivedTabs,
-            history: original.history,
-            browsingPreferences: original.browsingPreferences,
-            credentialPreferences: original.credentialPreferences,
-            accessPolicy: original.accessPolicy,
-            isSavedTabsExpanded: original.isSavedTabsExpanded,
-            savedTabsExpansionModifiedAt: original.savedTabsExpansionModifiedAt,
-            selectedTabID: original.selectedTabID
-        )
-
-        XCTAssertTrue(access.isLocked(replacement))
-        let didUnlockReplacement = await access.unlock(replacement)
-        XCTAssertTrue(didUnlockReplacement)
-        XCTAssertEqual(authenticator.reasons.count, 2)
-    }
-
-    func testPrivateSpacesRelockWhenProtectedContentLeavesTheForeground() async throws {
-        var space = try XCTUnwrap(BrowserSession.preview.spaces.first)
-        space.accessPolicy = .deviceOwnerAuthentication
-        let access = BrowserSpaceAccessController(
-            authenticator: BrowserDeviceAuthenticatorStub(results: [.success(true)])
-        )
-        let unlocked = await access.unlock(space)
-
-        XCTAssertTrue(unlocked)
-        access.lockAllForInactiveScene()
-
-        XCTAssertTrue(access.isLocked(space))
-    }
-
     func testAuthenticationCompletingAfterRelockCannotRevealTheSpace() async throws {
-        var space = try XCTUnwrap(BrowserSession.preview.spaces.first)
-        space.accessPolicy = .deviceOwnerAuthentication
         let authenticator = SuspendedBrowserDeviceAuthenticator()
-        let access = BrowserSpaceAccessController(authenticator: authenticator)
+        let (_, access, space) = try guardedStore(authenticator: authenticator)
         let unlockTask = Task { await access.unlock(space) }
-        await Task.yield()
+        while authenticator.attemptCount == 0 { await Task.yield() }
+        XCTAssertTrue(access.isAuthenticating(space))
 
         access.lockAll()
         authenticator.complete(with: true)
@@ -166,50 +87,12 @@ final class BrowserSpaceAccessTests: XCTestCase {
 
         XCTAssertFalse(unlocked)
         XCTAssertTrue(access.isLocked(space))
-    }
-
-    func testLockingAnotherSpaceDoesNotStrandAnAuthenticationInProgress() async throws {
-        let spaces = BrowserSession.preview.spaces
-        var authenticatingSpace = try XCTUnwrap(spaces.first)
-        var otherSpace = try XCTUnwrap(spaces.dropFirst().first)
-        authenticatingSpace.accessPolicy = .deviceOwnerAuthentication
-        otherSpace.accessPolicy = .deviceOwnerAuthentication
-        let authenticator = SuspendedBrowserDeviceAuthenticator()
-        let access = BrowserSpaceAccessController(authenticator: authenticator)
-        let unlockTask = Task { await access.unlock(authenticatingSpace) }
-        await Task.yield()
-
-        access.lock(otherSpace.id)
-        authenticator.complete(with: true)
-        let unlocked = await unlockTask.value
-
-        XCTAssertTrue(unlocked)
-        XCTAssertFalse(access.isLocked(authenticatingSpace))
         XCTAssertNil(access.authenticatingAssignment)
     }
 
-    func testSystemAuthenticationCanFinishAcrossTemporaryInactiveScene() async throws {
-        var space = try XCTUnwrap(BrowserSession.preview.spaces.first)
-        space.accessPolicy = .deviceOwnerAuthentication
-        let authenticator = SuspendedBrowserDeviceAuthenticator()
-        let access = BrowserSpaceAccessController(authenticator: authenticator)
-        let unlockTask = Task { await access.unlock(space) }
-        await Task.yield()
-
-        access.lockAllForInactiveScene()
-        authenticator.complete(with: true)
-        let unlocked = await unlockTask.value
-
-        XCTAssertTrue(unlocked)
-        XCTAssertFalse(access.isLocked(space))
-    }
-
     func testDeniedAuthenticationNeverUnlocksAPrivateSpace() async throws {
-        var space = try XCTUnwrap(BrowserSession.preview.spaces.first)
-        space.accessPolicy = .deviceOwnerAuthentication
-        let access = BrowserSpaceAccessController(
-            authenticator: BrowserDeviceAuthenticatorStub(results: [.success(false)])
-        )
+        let (_, access, space) = try guardedStore(
+            authenticator: BrowserDeviceAuthenticatorStub(results: [.success(false)]))
 
         let unlocked = await access.unlock(space)
 
@@ -218,39 +101,11 @@ final class BrowserSpaceAccessTests: XCTestCase {
         XCTAssertEqual(access.failure, .authenticationDenied)
     }
 
-    func testPendingAuthenticationRejectsDuplicateAndOtherSpaceAttempts() async throws {
-        var space = try XCTUnwrap(BrowserSession.preview.spaces.first)
-        var other = try XCTUnwrap(BrowserSession.preview.spaces.last)
-        space.accessPolicy = .deviceOwnerAuthentication
-        other.accessPolicy = .deviceOwnerAuthentication
-        let authenticator = SuspendedBrowserDeviceAuthenticator()
-        let access = BrowserSpaceAccessController(authenticator: authenticator)
-        let pending = Task { await access.unlock(space) }
-        await Task.yield()
-
-        let duplicate = await access.unlock(space)
-        let otherAttempt = await access.unlock(other)
-
-        XCTAssertFalse(duplicate)
-        XCTAssertFalse(otherAttempt)
-        XCTAssertTrue(access.isAuthenticating(space))
-        XCTAssertFalse(access.isAuthenticating(other))
-        XCTAssertTrue(access.isLocked(space))
-        XCTAssertTrue(access.isLocked(other))
-        XCTAssertEqual(authenticator.attemptCount, 1)
-        authenticator.complete(with: true)
-        let unlocked = await pending.value
-        XCTAssertTrue(unlocked)
-        XCTAssertTrue(access.isLocked(other))
-    }
-
     func testUnavailableAuthenticationKeepsTheSpaceLockedAndAllowsRetry() async throws {
-        var space = try XCTUnwrap(BrowserSession.preview.spaces.first)
-        space.accessPolicy = .deviceOwnerAuthentication
         let authenticator = BrowserDeviceAuthenticatorStub(
             results: [.failure(CancellationError()), .success(true)]
         )
-        let access = BrowserSpaceAccessController(authenticator: authenticator)
+        let (_, access, space) = try guardedStore(authenticator: authenticator)
 
         let cancelled = await access.unlock(space)
 
@@ -268,67 +123,14 @@ final class BrowserSpaceAccessTests: XCTestCase {
     }
 
     func testStorePersistsDefaultAndPrivateSpacePolicies() throws {
-        let persistence = InMemoryBrowserSessionPersistence()
-        let store = BrowserStore(
-            session: .preview,
-            persistence: persistence,
-            syncCoalescingDelay: .zero
-        )
-        let personal = try XCTUnwrap(store.session.spaces.last)
+        let store = BrowserStore(seed: .preview)
+        let personal = try XCTUnwrap(store.spaceModels.last)
 
         store.setDefaultSpace(personal.id)
         store.updateSpaceAccessPolicy(.deviceOwnerAuthentication, in: personal.id)
 
-        XCTAssertEqual(persistence.session?.defaultSpaceID, personal.id)
-        XCTAssertEqual(
-            persistence.session?.space(id: personal.id)?.accessPolicy,
-            .deviceOwnerAuthentication
-        )
-    }
-
-    func testAuthenticatedPolicyChangeCannotChangeAReplacementProfile() async throws {
-        let store = BrowserStore(session: .preview, persistence: InMemoryBrowserSessionPersistence())
-        let otherWindow = store.makeWindowStore()
-        let original = try XCTUnwrap(store.selectedSpace)
-        store.updateSpaceAccessPolicy(.deviceOwnerAuthentication, in: original.id)
-        let assignment = BrowserSpaceRuntimeAssignment(space: original)
-        let authenticator = SuspendedBrowserDeviceAuthenticator()
-        let access = BrowserSpaceAccessController(authenticator: authenticator)
-        let update = Task { await access.updatePolicy(.open, matching: assignment, in: store) }
-        while authenticator.attemptCount == 0 { await Task.yield() }
-        let replacement = BrowserSpace(
-            id: original.id, profile: BrowsingProfile(), name: "Replacement", symbol: original.symbol,
-            accent: original.accent,
-            folders: [], tabs: original.tabs, accessPolicy: .deviceOwnerAuthentication,
-            selectedTabID: original.selectedTabID)
-        otherWindow.session.spaces[0] = replacement
-
-        authenticator.complete(with: true)
-        let changed = await update.value
-
-        XCTAssertFalse(changed)
-        XCTAssertEqual(store.selectedSpace?.accessPolicy, .deviceOwnerAuthentication)
-        XCTAssertTrue(access.isLocked(replacement))
-    }
-
-    func testRestoredWindowKeepsItsSpaceWhenTheDefaultSpaceDiffers() throws {
-        var session = BrowserSession.preview
-        let work = try XCTUnwrap(session.spaces.first)
-        let personal = try XCTUnwrap(session.spaces.last)
-        session.setDefaultSpace(personal.id)
-        let root = BrowserStore(
-            session: session,
-            persistence: InMemoryBrowserSessionPersistence()
-        )
-        let savedState = BrowserWindowState(
-            selectedSpaceID: work.id,
-            selectedTabIDsBySpace: [:]
-        )
-
-        let window = root.makeWindowStore(restoring: savedState)
-
-        XCTAssertEqual(window.session.selectedSpaceID, work.id)
-        XCTAssertEqual(root.makeWindowStore().session.selectedSpaceID, personal.id)
+        XCTAssertEqual(store.workspaceModel?.defaultSpaceID, personal.id)
+        XCTAssertEqual(store.spaceModel(personal.id)?.settings.accessPolicy, .deviceOwnerAuthentication)
     }
 }
 

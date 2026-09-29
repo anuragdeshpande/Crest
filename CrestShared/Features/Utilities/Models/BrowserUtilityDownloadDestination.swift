@@ -29,10 +29,10 @@ enum BrowserUtilityDownloadDestination: CaseIterable, Hashable, Identifiable {
 
 enum BrowserUtilityDownloadPrimaryActionPolicy {
     static func destination(
-        for state: BrowserDownloadItemState,
+        for state: DownloadPhase,
         availableDestinations: [BrowserUtilityDownloadDestination]
     ) -> BrowserUtilityDownloadDestination? {
-        guard state == .finished,
+        guard state.isComplete,
             availableDestinations.contains(.revealInFinder)
         else { return nil }
         return .revealInFinder

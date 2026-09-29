@@ -4,14 +4,25 @@ import SwiftUI
 @Observable
 @MainActor
 final class BrowserChromeState {
-    var columnVisibility: NavigationSplitViewVisibility
-    private(set) var commandPaletteMode: BrowserCommandPaletteMode?
+    var columnVisibility: NavigationSplitViewVisibility {
+        get { observed(\.columnVisibilityStorage, as: \.columnVisibility) }
+        set { publish(newValue, into: \.columnVisibilityStorage, as: \.columnVisibility) }
+    }
+    @ObservationIgnored private var columnVisibilityStorage: NavigationSplitViewVisibility
+    private(set) var commandPaletteMode: BrowserCommandPaletteMode? {
+        get { observed(\.commandPaletteModeStorage, as: \.commandPaletteMode) }
+        set { publish(newValue, into: \.commandPaletteModeStorage, as: \.commandPaletteMode) }
+    }
+    @ObservationIgnored private var commandPaletteModeStorage: BrowserCommandPaletteMode?
     let utilityPresentation: BrowserUtilityPresentationState
     private(set) var addressFocusRequest = 0
     private(set) var startPageFocusRequest = 0
-    private(set) var urlCopyFeedbackRevision = 0
-    private(set) var pageZoomFeedbackLabel = "100%"
-    private(set) var pageZoomFeedbackRevision = 0
+    private(set) var notice: BrowserNotice?
+    private(set) var noticeRevision: Int {
+        get { observed(\.noticeRevisionStorage, as: \.noticeRevision) }
+        set { publish(newValue, into: \.noticeRevisionStorage, as: \.noticeRevision) }
+    }
+    @ObservationIgnored private var noticeRevisionStorage = 0
 
     var isCommandPalettePresented: Bool {
         commandPaletteMode != nil
@@ -22,7 +33,7 @@ final class BrowserChromeState {
         utilityPresentation: BrowserUtilityPresentationState =
             BrowserUtilityPresentationState()
     ) {
-        columnVisibility = sidebarIsPresented ? .all : .detailOnly
+        columnVisibilityStorage = sidebarIsPresented ? .all : .detailOnly
         self.utilityPresentation = utilityPresentation
     }
 
@@ -55,16 +66,24 @@ final class BrowserChromeState {
         commandPaletteMode = nil
     }
 
+    /// Shows `notice` at the top of this window, replacing any notice already
+    /// there.
+    func showNotice(_ notice: BrowserNotice) {
+        self.notice = notice
+        noticeRevision &+= 1
+    }
+
     func showURLCopiedFeedback() {
-        urlCopyFeedbackRevision &+= 1
+        showNotice(.urlCopied)
     }
 
     func showPageZoomFeedback(_ label: String) {
-        pageZoomFeedbackLabel = label
-        pageZoomFeedbackRevision &+= 1
+        showNotice(.pageZoom(label))
     }
 
     func presentHistory() {
         utilityPresentation.present(.history)
     }
 }
+
+extension BrowserChromeState: BrowserStoreFirstObservable {}

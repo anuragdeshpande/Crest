@@ -7,20 +7,16 @@ import Foundation
 /// without touching a page store, the filesystem, or the network — which is what
 /// lets a preview of the sidebar render the same way twice.
 enum BrowserSidebarPreviewFixture {
-    static let folderID = FolderID(rawValue: uuid(0x31))
-    static let spaceID = SpaceID(rawValue: uuid(0x21))
-    static let space = BrowserSpace(
+    static let folderID = uuid(0x31)
+    static let spaceID = uuid(0x21)
+    static let space = SpaceState.Seed(
         id: spaceID,
-        profile: BrowsingProfile(id: uuid(0x11)),
+        profileID: uuid(0x11),
         name: "Studio",
         symbol: "paintpalette.fill",
         accent: .indigo,
-        branding: .initial(
-            accent: .indigo,
-            symbol: "paintpalette.fill"
-        ),
         folders: [
-            BrowserFolder(
+            FolderState.Seed(
                 id: folderID,
                 title: "Design References",
                 symbol: "folder.fill"
@@ -49,22 +45,17 @@ enum BrowserSidebarPreviewFixture {
                 symbol: "note.text",
                 placement: .current
             ),
-            BrowserTab.startPage(
-                id: TabID(rawValue: uuid(0x44)),
+            TabState.Seed.startPage(
+                id: uuid(0x44),
                 lastActivatedAt: Date(timeIntervalSince1970: 0)
             ),
-        ],
-        selectedTabID: TabID(rawValue: uuid(0x43))
+        ]
     )
 
     @MainActor
     static func makeBrowser() -> BrowserStore {
         BrowserStore(
-            session: BrowserSession(
-                spaces: [space],
-                selectedSpaceID: spaceID
-            ),
-            persistence: InMemoryBrowserSessionPersistence(),
+            seed: SessionState.Seed(spaces: [space]),
             browsingMode: .privateBrowsing
         )
     }
@@ -135,7 +126,6 @@ enum BrowserSidebarPreviewFixture {
         BrowserSidebarChromeActions(
             presentSpaceSettings: { _ in },
             presentHistory: {},
-            presentExtensions: { _ in },
             presentPasswords: {},
             presentArchive: {},
             presentDownloads: {},
@@ -149,10 +139,10 @@ enum BrowserSidebarPreviewFixture {
         path: String,
         symbol: String,
         placement: TabPlacement,
-        folderID: FolderID? = nil
-    ) -> BrowserTab {
-        BrowserTab(
-            id: TabID(rawValue: uuid(idByte)),
+        folderID: UUID? = nil
+    ) -> TabState.Seed {
+        TabState.Seed(
+            id: uuid(idByte),
             title: title,
             url: URL(fileURLWithPath: path),
             symbol: symbol,

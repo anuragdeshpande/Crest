@@ -2,13 +2,13 @@ import SwiftUI
 
 struct BrowserWebPageFailureOverlay: View {
     let page: BrowserPage
-    let branding: BrowserSpaceBranding?
-    let pagePresentation: BrowserPagePresentation
+    let branding: SpaceBranding?
+    let pagePresentation: PagePresentation
 
     var body: some View {
         switch pagePresentation {
         case .navigationFailure:
-            if let failure = page.navigationFailure {
+            if let failure = page.live.failure {
                 BrowserNavigationFailureView(
                     failure: failure,
                     branding: branding,
@@ -22,7 +22,7 @@ struct BrowserWebPageFailureOverlay: View {
             }
         case .processFailure:
             BrowserNavigationFailureView(
-                failure: .webContentProcessStopped(url: page.displayURL),
+                failure: .webContentProcessStopped(url: page.live.displayURL),
                 branding: branding,
                 layout: .regular,
                 canGoBack: false,
@@ -31,7 +31,7 @@ struct BrowserWebPageFailureOverlay: View {
                 goBack: {},
                 proceed: {}
             )
-        case .noSelection, .startPage, .nativeContent, .livePage, .unloaded, .automaticRestore:
+        default:
             EmptyView()
         }
     }

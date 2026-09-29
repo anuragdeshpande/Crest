@@ -1,11 +1,11 @@
 import SwiftUI
 
 struct BrowserFolderDragSourceModifier: ViewModifier {
-    let folder: BrowserFolder
+    let folder: FolderStateModel
     let profileID: UUID
-    let spaceID: SpaceID
+    let spaceID: UUID
     let dragState: BrowserFolderDragState
-    var memberTabIDs: [TabID]? = nil
+    var memberTabIDs: [UUID]? = nil
     var reorder: BrowserSidebarReorderContext?
     let isEnabled: Bool
     var requiresSelectedSpace = false

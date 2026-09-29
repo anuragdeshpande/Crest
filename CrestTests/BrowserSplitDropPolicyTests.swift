@@ -39,11 +39,13 @@ final class BrowserSplitDropPolicyTests: XCTestCase {
                 accepting: Self.folderItem(in: assignment)
             )
         )
+        // A split joins the cards on show only when the core offers it.
         XCTAssertNil(
             BrowserSidebarReorderPolicy.zone(
                 at: point,
                 in: zones,
-                accepting: Self.groupItem(in: assignment)
+                accepting: Self.groupItem(in: assignment),
+                plan: Self.plan(splitRefusal: .alreadyInSplit(AlreadyInSplit(tabID: UUID())))
             )
         )
     }
@@ -64,7 +66,7 @@ final class BrowserSplitDropPolicyTests: XCTestCase {
                 in: zones,
                 accepting: Self.tabItem(
                     in: BrowserSpaceRuntimeAssignment(
-                        spaceID: SpaceID(),
+                        spaceID: UUID(),
                         profileID: UUID()
                     )
                 )
@@ -224,16 +226,18 @@ final class BrowserSplitDropPolicyTests: XCTestCase {
 
     // MARK: - Acceptance: what the presented cards refuse
 
-    /// A tab already on show has nothing to join. That covers the lone tab in an
-    /// unsplit window dropped onto itself as much as a member of a live split.
+    /// A tab already on show has nothing to join, and the core refuses the join.
+    /// That covers the lone tab in an unsplit window dropped onto itself as much
+    /// as a member of a live split.
     func testAPresentedTabIsRefusedByItsOwnContentArea() {
-        let presented = TabID()
+        let presented = UUID()
         let state = Self.stateWithCards(count: 2, firstTabID: presented)
 
         state.begin(
             item: Self.tabItem(in: Self.assignment, tabID: presented),
             section: .tabs(placement: .current, folderID: nil),
-            at: CGPoint(x: 100, y: 20)
+            at: CGPoint(x: 100, y: 20),
+            plan: Self.plan(splitRefusal: .alreadyInSplit(AlreadyInSplit(tabID: presented)))
         )
         state.update(pointer: CGPoint(x: 460, y: 300))
 
@@ -247,17 +251,19 @@ final class BrowserSplitDropPolicyTests: XCTestCase {
         state.cancel()
     }
 
-    /// A full group shows no insertion point, because the model would refuse the
-    /// join and the placeholder would be a promise nobody keeps.
+    /// A full group shows no insertion point, because the core refuses the join
+    /// and the placeholder would be a promise nobody keeps.
     func testAFullGroupOffersNoInsertionPoint() {
         let state = Self.stateWithCards(
-            count: BrowserSplitGroupPolicy.maximumMembers
+            count: CapacityLimits.current.splitMembers
         )
 
         state.begin(
             item: Self.tabItem(in: Self.assignment),
             section: .tabs(placement: .current, folderID: nil),
-            at: CGPoint(x: 100, y: 20)
+            at: CGPoint(x: 100, y: 20),
+            plan: Self.plan(
+                splitRefusal: .splitLimitReached(SplitLimitReached(limit: CapacityLimits.current.splitMembers)))
         )
         state.update(pointer: CGPoint(x: 460, y: 300))
 
@@ -279,7 +285,7 @@ final class BrowserSplitDropPolicyTests: XCTestCase {
         for frame in Self.presentedCardFrames(count: 2) {
             state.register(
                 splitCardFrame: frame,
-                for: TabID(),
+                for: UUID(),
                 in: Self.otherAssignment,
                 owner: UUID()
             )
@@ -304,7 +310,7 @@ final class BrowserSplitDropPolicyTests: XCTestCase {
     /// replacement's registration with it.
     func testAStaleCardRemovalCannotClearItsReplacement() {
         let state = BrowserSidebarReorderState()
-        let tabID = TabID()
+        let tabID = UUID()
         let departing = UUID()
         let arriving = UUID()
         let frame = CGRect(x: 0, y: 0, width: 900, height: 600)
@@ -355,14 +361,14 @@ final class BrowserSplitDropPolicyTests: XCTestCase {
     // MARK: - Fixtures
 
     private static let assignment = BrowserSpaceRuntimeAssignment(
-        spaceID: SpaceID(rawValue: uuid(1)),
+        spaceID: uuid(1),
         profileID: uuid(2)
     )
 
     /// A Space this window is not presenting: the one it switched away from, or
     /// the one it is switching to while the change animates.
     private static let otherAssignment = BrowserSpaceRuntimeAssignment(
-        spaceID: SpaceID(rawValue: uuid(3)),
+        spaceID: uuid(3),
         profileID: uuid(4)
     )
 
@@ -421,7 +427,7 @@ final class BrowserSplitDropPolicyTests: XCTestCase {
     /// of equal width inside it.
     private static func stateWithCards(
         count: Int,
-        firstTabID: TabID? = nil
+        firstTabID: UUID? = nil
     ) -> BrowserSidebarReorderState {
         let state = BrowserSidebarReorderState()
         state.register(
@@ -434,7 +440,7 @@ final class BrowserSplitDropPolicyTests: XCTestCase {
         for (index, frame) in presentedCardFrames(count: count).enumerated() {
             state.register(
                 splitCardFrame: frame,
-                for: index == 0 ? (firstTabID ?? TabID()) : TabID(),
+                for: index == 0 ? (firstTabID ?? UUID()) : UUID(),
                 in: assignment,
                 owner: UUID()
             )
@@ -442,9 +448,19 @@ final class BrowserSplitDropPolicyTests: XCTestCase {
         return state
     }
 
+    /// A lift the core lets into the current tabs, and into the cards on show
+    /// only as `splitRefusal` says.
+    private static func plan(splitRefusal: Rejection?) -> BrowserSidebarLiftPlan {
+        BrowserSidebarLiftPlan(
+            selection: TabSelection(tabIDs: [], folderIDs: [], memberTabIDs: []),
+            targets: DropTargetList(
+                refusal: nil, lists: [ListDropTarget(section: .current, folderID: nil)], spaceIDs: [],
+                split: SplitDropTarget(tabID: UUID(), refusal: splitRefusal), folderAroundTabIDs: []))
+    }
+
     private static func tabItem(
         in assignment: BrowserSpaceRuntimeAssignment,
-        tabID: TabID = TabID()
+        tabID: UUID = UUID()
     ) -> BrowserSidebarReorderItem {
         .tab(
             BrowserTabDragItem(
@@ -460,7 +476,7 @@ final class BrowserSplitDropPolicyTests: XCTestCase {
     ) -> BrowserSidebarReorderItem {
         .folder(
             BrowserFolderDragItem(
-                folderID: FolderID(),
+                folderID: UUID(),
                 spaceID: assignment.spaceID,
                 profileID: assignment.profileID
             )
@@ -472,10 +488,10 @@ final class BrowserSplitDropPolicyTests: XCTestCase {
     ) -> BrowserSidebarReorderItem {
         .splitGroup(
             BrowserSplitGroupDragItem(
-                groupID: SplitGroupID(),
+                groupID: UUID(),
                 spaceID: assignment.spaceID,
                 profileID: assignment.profileID,
-                memberTabIDs: [TabID(), TabID()]
+                memberTabIDs: [UUID(), UUID()]
             )
         )
     }

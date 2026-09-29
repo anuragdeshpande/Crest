@@ -4,6 +4,9 @@ struct BrowserQuickWindowWindowSurface: View {
     let model: BrowserQuickWindowModel
     let spaceAccess: BrowserSpaceAccessController
     let pagePoolRegistry: BrowserPagePoolRegistry?
+    /// Closes the window without asking its page. Every close the content
+    /// asks for is the window closing itself: its page closed, moved to a tab
+    /// or went to the archive.
     let dismiss: () -> Void
     let openBrowserWindow: () -> Void
 
@@ -36,7 +39,17 @@ struct BrowserQuickWindowWindowSurface: View {
     }
 
     private var selectedSpaceIsLocked: Bool {
-        guard let space = model.space else { return false }
+        guard let space = model.spaceModel else { return false }
         return spaceAccess.isLocked(space)
     }
+}
+
+#Preview("Quick Window") {
+    BrowserQuickWindowWindowSurface(
+        model: BrowserQuickWindowPreviewFixture.makeModel(),
+        spaceAccess: BrowserQuickWindowPreviewFixture.makeAccessController(), pagePoolRegistry: nil, dismiss: {},
+        openBrowserWindow: {}
+    )
+    .environment(BrowserWindowTransparencyPreviewFixture.makeStore())
+    .frame(width: BrowserQuickWindowLayout.defaultWidth, height: BrowserQuickWindowLayout.defaultHeight)
 }

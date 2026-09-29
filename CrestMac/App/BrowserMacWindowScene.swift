@@ -3,23 +3,21 @@ import SwiftUI
 
 struct BrowserMacWindowScene: View {
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.openWindow) private var openWindow
+    @Environment(\.browserMacWindows) private var windows
 
     let model: BrowserMacWindowModel
     let coordinator: BrowserMacWindowCoordinator
-    @State private var registered = false
     @State private var closed = false
-    var id: BrowserWindowID { model.id }
+    var id: UUID { model.id }
     var browser: BrowserStore { model.browser }
     var pages: BrowserPagePool { model.pages }
     var chrome: BrowserChromeState { model.chrome }
     var transientBrowsing: BrowserTransientBrowsingCoordinator { model.transientBrowsing }
     var windowState: BrowserWindowStateStore { model.windowState }
-    private let extensionControllerPool: BrowserExtensionControllerPool
     private let pagePoolRegistry: BrowserPagePoolRegistry
     private let spaceAccess: BrowserSpaceAccessController
     private let spaceSettingsPresentation: BrowserSpaceSettingsPresentationState
-    private let startupBehavior: BrowserStartupBehavior
+    private let startupBehavior: StartupBehavior
     private let shortcuts: BrowserShortcutStore?
     private let sidebarWidgets: BrowserSidebarWidgetRuntime
     private let softwareUpdates: BrowserSoftwareUpdateService
@@ -27,18 +25,16 @@ struct BrowserMacWindowScene: View {
     init(
         model: BrowserMacWindowModel,
         coordinator: BrowserMacWindowCoordinator,
-        extensionControllerPool: BrowserExtensionControllerPool,
         pagePoolRegistry: BrowserPagePoolRegistry,
         spaceAccess: BrowserSpaceAccessController,
         spaceSettingsPresentation: BrowserSpaceSettingsPresentationState,
-        startupBehavior: BrowserStartupBehavior,
+        startupBehavior: StartupBehavior,
         shortcuts: BrowserShortcutStore? = nil,
         sidebarWidgets: BrowserSidebarWidgetRuntime,
         softwareUpdates: BrowserSoftwareUpdateService
     ) {
         self.model = model
         self.coordinator = coordinator
-        self.extensionControllerPool = extensionControllerPool
         self.pagePoolRegistry = pagePoolRegistry
         self.spaceAccess = spaceAccess
         self.spaceSettingsPresentation = spaceSettingsPresentation
@@ -77,15 +73,6 @@ struct BrowserMacWindowScene: View {
             \.browserApplicationIcon,
             Image(nsImage: NSApplication.shared.applicationIconImage)
         )
-        .modifier(
-            BrowserExternalLinkHandler(
-                browser: browser,
-                pages: pages,
-                chrome: chrome,
-                spaceAccess: spaceAccess,
-                targetWindowID: id
-            )
-        )
         .environment(\.browserPagePresentationWindowID, id)
         .environment(
             \.browserSidebarWindowDrop,
@@ -100,11 +87,9 @@ struct BrowserMacWindowScene: View {
                     guard coordinator.attach(window, to: id) else { return }
                     activateWindow()
                     pages.setWindowFocused(window.isKeyWindow)
-                    extensionControllerPool.setHostWindowFocused(window.isKeyWindow, windowID: id)
                 },
                 focusChanged: { focused in
                     pages.setWindowFocused(focused)
-                    extensionControllerPool.setHostWindowFocused(focused, windowID: id)
                 },
                 close: closeWindowRuntime)
         )
@@ -126,16 +111,8 @@ struct BrowserMacWindowScene: View {
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             await browser.sweepExpiredBrowsingDataWhileSceneIsActive {
-                pages.downloadCenter.sweepExpiredRecords(using: browser.session)
+                pages.downloadCenter.sweepExpiredRecords(in: browser.spaceModels)
             }
-        }
-        .onChange(
-            of: BrowserWindowState(
-                id: id,
-                restoring: browser.session
-            )
-        ) {
-            windowState.captureSelection(from: browser.session)
         }
         .onChange(of: chrome.columnVisibility, initial: true) { _, visibility in
             windowState.captureSidebar(
@@ -145,17 +122,13 @@ struct BrowserMacWindowScene: View {
         .onChange(of: spaceSettingsPresentation.revision) {
             guard model.window?.isKeyWindow == true,
                 let assignment = spaceSettingsPresentation.requestedAssignment,
-                browser.space(matching: assignment) != nil
+                browser.spaceModel(matching: assignment) != nil
             else { return }
-            if let route = spaceSettingsPresentation.requestedExtensionCommand {
-                model.spaceSettingsPresentation.presentExtensionCommandSettings(route, assignment: assignment)
-            } else {
-                model.spaceSettingsPresentation.present(
-                    spaceSettingsPresentation.requestedDestination, assignment: assignment)
-            }
+            model.spaceSettingsPresentation.present(
+                spaceSettingsPresentation.requestedDestination, assignment: assignment)
             browser.selectSpace(assignment.spaceID)
             browser.openSettings()
-            pages.select(session: browser.session)
+            pages.select()
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active {
@@ -182,14 +155,6 @@ struct BrowserMacWindowScene: View {
             browser: browser,
             for: id
         )
-        if !registered {
-            registered = true
-            extensionControllerPool.registerWindow(
-                id: id, browser: browser, pageProvider: pages,
-                focus: { [weak model] in model?.window?.makeKeyAndOrderFront(nil) },
-                close: { [weak model] in model?.window?.performClose(nil) })
-        }
-        extensionControllerPool.reconcileExtensionState(in: browser.session)
     }
 
     private func closeWindowRuntime() {
@@ -197,7 +162,6 @@ struct BrowserMacWindowScene: View {
         closed = true
         (browser.interactionObserver as? BrowserSidebarInteractionState)?.cancel()
         sidebarWidgets.removeHost(id: id)
-        extensionControllerPool.unregisterWindow(id: id)
         pagePoolRegistry.unregister(pages, for: id)
         flushPendingPersistence()
         coordinator.closeWindow(id)
@@ -211,7 +175,7 @@ struct BrowserMacWindowScene: View {
             } ?? NSEvent.mouseLocation
         return BrowserMacWindowDropAction(
             coordinator: coordinator, sourceWindowID: id,
-            open: { openWindow(id: BrowserSceneID.blankWindow.rawValue, value: $0) }
+            open: { [windows] request in windows?.open(request, activation: .key) }
         ).perform(lift.item, at: point, grabFraction: lift.anchorFraction)
     }
 
@@ -222,7 +186,6 @@ struct BrowserMacWindowScene: View {
         pages.archiveResidentTabStates()
         Task {
             await browser.flushPendingSyncPersistence()
-            await windowState.flushPendingPersistence()
             await pages.flushPendingTabStateWrites()
         }
     }

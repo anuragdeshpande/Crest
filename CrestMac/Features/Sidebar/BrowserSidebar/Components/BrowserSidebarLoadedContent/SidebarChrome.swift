@@ -11,6 +11,7 @@ struct SidebarChrome: View {
     let activateAddress: () -> Void
     let submitAddress: () -> Void
     let commandSurfaceNamespace: Namespace.ID
+    let commandPaletteHandoff: BrowserCommandPaletteHandoff
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -25,22 +26,21 @@ struct SidebarChrome: View {
                 )
                 .contentTransition(.opacity)
                 .background {
-                    // Only the empty navigation-strip background starts a
-                    // window drag. Controls and tab gestures keep their input.
-                    Color.clear
-                        .contentShape(.rect)
-                        .gesture(WindowDragGesture())
-                        .allowsWindowActivationEvents()
+                    // Only the empty navigation-strip background acts as the
+                    // title bar. Controls and tab gestures keep their input.
+                    BrowserWindowTitleBarSurface()
                 }
                 .animation(
                     BrowserVisualAccessibilityPolicy.animation(
                         SpacePagerSettlement.standardAnimation, reduceMotion: reduceMotion),
-                    value: [pages.canGoBack, pages.canGoForward, pages.activePage?.isLoading == true]
+                    value: [pages.canGoBack, pages.canGoForward, pages.activePage?.live.isLoading == true]
                 )
 
                 if context.utilityPresentation.surface == nil {
                     SpaceSidebarAddressBand(
                         space: space,
+                        offersSiteControls: !context.browser.isDeleting(space.id),
+                        selectedTabID: context.browser.selectedTabID(in: space.id),
                         pages: pages,
                         capabilities: context.capabilities,
                         address: address,
@@ -49,7 +49,7 @@ struct SidebarChrome: View {
                         activateAddress: activateAddress,
                         submitAddress: submitAddress,
                         commandSurfaceNamespace: commandSurfaceNamespace,
-                        showExtensions: { context.chromeActions.presentExtensions?(space) },
+                        commandPaletteHandoff: commandPaletteHandoff,
                         siteControlPresentationChanged: {
                             context.utilityPresentation.setSiteControlPresented($0)
                         },
@@ -59,7 +59,10 @@ struct SidebarChrome: View {
                     )
                 }
             }
-            .environment(\.colorScheme, BrowserSpaceForegroundPolicy.colorScheme(for: space.branding))
+            .environment(
+                \.colorScheme,
+                BrowserSpaceForegroundPolicy.colorScheme(for: space.settings.look)
+            )
             .modifier(SpaceForegroundBlend(spaces: context.availableSpaces, selectedSpaceID: space.id))
             .blur(radius: isLocked ? BrowserSidebarMetrics.lockedSpaceBlurRadius : 0)
             .redacted(reason: isLocked ? .placeholder : [])
@@ -68,7 +71,8 @@ struct SidebarChrome: View {
         }
     }
 
-    private var selectedSpace: BrowserSpace? {
-        context.availableSpaces.first { $0.id == context.browser.session.selectedSpaceID }
+    /// The Space the window shows, unless it is being deleted.
+    private var selectedSpace: SpaceModel? {
+        context.browser.shownSpace
     }
 }

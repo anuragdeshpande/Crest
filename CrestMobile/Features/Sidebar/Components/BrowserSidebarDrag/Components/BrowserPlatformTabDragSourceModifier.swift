@@ -2,12 +2,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct BrowserPlatformTabDragSourceModifier: ViewModifier {
-    let tab: BrowserTab
+    let tab: TabStateModel
+    let favicons: FaviconAssets
     let profileID: UUID
-    let spaceID: SpaceID
+    let spaceID: UUID
     let dragState: BrowserTabDragState
     var reorder: BrowserSidebarReorderContext?
-    var parentSplitGroupID: SplitGroupID?
+    var parentSplitGroupID: UUID?
     var isEnabled = true
 
     @State private var sessionToken: BrowserDragSessionToken?
@@ -44,7 +45,8 @@ struct BrowserPlatformTabDragSourceModifier: ViewModifier {
                         section: .tabs(
                             placement: tab.placement,
                             folderID: tab.folderID
-                        )
+                        ),
+                        plan: reorder.plan(for: .tab(item))
                     )
                     let payload = (try? JSONEncoder().encode(item)) ?? Data()
                     let provider = NSItemProvider(
@@ -59,6 +61,7 @@ struct BrowserPlatformTabDragSourceModifier: ViewModifier {
                 } preview: { sourceWidth in
                     BrowserTabDragPreview(
                         tab: tab,
+                        favicons: favicons,
                         profileID: profileID,
                         targetShape: shape,
                         progress: shape == .row ? 0 : 1,
@@ -95,6 +98,7 @@ struct BrowserPlatformTabDragSourceModifier: ViewModifier {
             } preview: {
                 BrowserTabReactiveDragPreview(
                     tab: tab,
+                    favicons: favicons,
                     profileID: profileID,
                     dragState: dragState
                 )

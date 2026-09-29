@@ -1,13 +1,13 @@
-import Foundation
+import SwiftUI
 
 enum BrowserUtilityListItem: Identifiable, Sendable {
-    case archive(ArchivedTab)
-    case history(BrowserHistoryEntry)
-    case download(BrowserDownloadItem)
+    case archive(ArchivedTabState)
+    case history(HistoryEntryState)
+    case download(DownloadState)
 
     var id: BrowserUtilityListItemID {
         switch self {
-        case .archive(let item): .archive(item.id)
+        case .archive(let item): .archive(item.tab.id)
         case .history(let item): .history(item.id)
         case .download(let item): .download(item.id)
         }
@@ -23,7 +23,7 @@ enum BrowserUtilityListItem: Identifiable, Sendable {
 }
 
 enum BrowserUtilityListItemID: Hashable, Sendable {
-    case archive(TabID)
+    case archive(UUID)
     case history(UUID)
     case download(UUID)
 }
@@ -33,4 +33,10 @@ struct BrowserUtilityListSection: Identifiable, Sendable {
     let items: [BrowserUtilityListItem]
 
     var id: String { timeframe.id }
+}
+
+extension EnvironmentValues {
+    /// The images the tabs a utility list shows wear, which the list's host
+    /// reads from the core's read model.
+    @Entry var browserFavicons: FaviconAssets? = nil
 }

@@ -1,15 +1,17 @@
 import SwiftUI
 
 struct BrowserCrestImportPreview: View {
-    let space: BrowserSpace?
+    let space: SpaceModel?
+    /// The images the Space's tabs would wear.
+    let favicons: FaviconAssets
     let sourceName: String
     var isSpaceIncluded = true
-    var matchedTabIDs: Set<TabID> = []
+    var matchedTabIDs: Set<UUID> = []
 
     var body: some View {
         if !isSpaceIncluded {
             BrowserImportSidebarFrame(
-                branding: .neutralImport(symbol: "rectangle.stack.badge.minus")
+                branding: .neutral
             ) {
                 ContentUnavailableView(
                     "Space Skipped",
@@ -19,17 +21,18 @@ struct BrowserCrestImportPreview: View {
             }
             .accessibilityLabel("Space skipped")
         } else if let space {
-            BrowserImportSidebarFrame(branding: space.branding) {
+            BrowserImportSidebarFrame(branding: space.settings.look) {
                 BrowserCrestImportContent(
                     space: space,
+                    favicons: favicons,
                     matchedTabIDs: matchedTabIDs
                 )
             }
             .accessibilityElement(children: .contain)
-            .accessibilityLabel("Crest \(space.name) sidebar after import")
+            .accessibilityLabel("Crest \(space.settings.name) sidebar after import")
         } else {
             BrowserImportSidebarFrame(
-                branding: .neutralImport(symbol: "square.grid.2x2")
+                branding: .neutral
             ) {
                 ContentUnavailableView(
                     "Preview Unavailable",

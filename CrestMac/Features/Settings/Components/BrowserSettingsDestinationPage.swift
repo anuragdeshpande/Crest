@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct BrowserSettingsDestinationPage: View {
-    @Environment(\.openWindow) private var openWindow
+    @Environment(\.browserMacWindows) private var windows
 
     let destination: BrowserSettingsDestination
     var tabAssignment: BrowserTabRuntimeAssignment? = nil
@@ -11,7 +11,6 @@ struct BrowserSettingsDestinationPage: View {
     let spaceAccess: BrowserSpaceAccessController
     let dataDeleter: any BrowserSpaceDataDeleting
     let shortcuts: BrowserShortcutStore
-    let onboardingCoordinator: BrowserOnboardingCoordinator
     let spaceSettingsPresentation: BrowserSpaceSettingsPresentationState
     @Binding var searchText: String
 
@@ -30,12 +29,10 @@ struct BrowserSettingsDestinationPage: View {
                 setupActions: setupActions,
                 passwordLayout: .macOSPage,
                 passwordSearchText: $searchText,
-                extensionControllerPool: pages.extensionControllerPool,
                 shortcuts: shortcuts,
                 requestedSpaceID: requestedSpaceID,
-                requestedExtensionCommand:
-                    acceptsExternalRoute ? spaceSettingsPresentation.requestedExtensionCommand : nil,
-                requestRevision: acceptsExternalRoute ? spaceSettingsPresentation.revision : 0
+                requestRevision: acceptsExternalRoute ? spaceSettingsPresentation.revision : 0,
+                featureFlagsSpace: featureFlagsSpace
             )
         }
     }
@@ -47,8 +44,23 @@ struct BrowserSettingsDestinationPage: View {
                 spaceID: tabAssignment.spaceID, profileID: tabAssignment.profileID)
     }
 
-    private var requestedSpaceID: SpaceID? {
+    private var requestedSpaceID: UUID? {
         acceptsExternalRoute ? spaceSettingsPresentation.requestedSpaceID(in: browser) : nil
+    }
+
+    private var featureFlagsSpace: SpaceModel? {
+        let space: SpaceModel?
+        if let tabAssignment {
+            space = browser.spaceModel(
+                matching: BrowserSpaceRuntimeAssignment(
+                    spaceID: tabAssignment.spaceID, profileID: tabAssignment.profileID))
+        } else {
+            space = browser.shownSpace
+        }
+        guard let space,
+            !spaceAccess.isLocked(space)
+        else { return nil }
+        return space
     }
 
     private var setupActions: [BrowserAdvancedSetupAction] {
@@ -81,8 +93,6 @@ struct BrowserSettingsDestinationPage: View {
     }
 
     private func presentSetup(_ request: BrowserOnboardingRequest) {
-        onboardingCoordinator.request = request
-        openWindow(id: BrowserOnboardingCoordinator.sceneID)
-        BrowserOnboardingWindowActivation.bringForward()
+        windows?.openOnboardingWindow(request)
     }
 }

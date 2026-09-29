@@ -12,7 +12,7 @@ final class MobileBrowserSidebarUtilityCoordinatorTests: XCTestCase {
     /// rather than opened as a second tab in place.
     func testHistoryIsRoutedThroughTheShellInsteadOfOpeningATab() throws {
         let context = makeContext()
-        var selectedTabs: [TabID] = []
+        var selectedTabs: [UUID] = []
         var openedURLs: [URL] = []
         let coordinator = makeCoordinator(
             context,
@@ -20,16 +20,17 @@ final class MobileBrowserSidebarUtilityCoordinatorTests: XCTestCase {
             openURL: { openedURLs.append($0) }
         )
         let assignment = BrowserSpaceRuntimeAssignment(space: context.source)
+        let entry = try XCTUnwrap(context.browser.spaceModel(context.source.id)?.history.entries.first)
 
         coordinator.actions.restoreArchivedTab(context.archived.id, assignment)
-        coordinator.actions.openHistoryEntry(context.history, assignment)
+        coordinator.actions.openHistoryEntry(entry, assignment)
 
         XCTAssertEqual(selectedTabs, [context.archived.id])
-        XCTAssertEqual(openedURLs, [context.history.url])
+        XCTAssertEqual(openedURLs, [context.historyURL])
         XCTAssertFalse(
             try XCTUnwrap(
-                context.browser.session.space(id: context.source.id)
-            ).tabs.contains(where: { $0.url == context.history.url })
+                context.browser.spaceModel(context.source.id)
+            ).tabs.models.contains(where: { $0.address == context.historyURL })
         )
     }
 
@@ -56,6 +57,8 @@ final class MobileBrowserSidebarUtilityCoordinatorTests: XCTestCase {
             openURL: { _ in }
         )
         let assignment = BrowserSpaceRuntimeAssignment(space: context.source)
+        // Only a download that ended can be cleared.
+        context.pages.downloadCenter.cancel(context.downloadItemID)
 
         coordinator.actions.performDownloadAction(
             .clear(context.downloadItemID),
@@ -67,7 +70,7 @@ final class MobileBrowserSidebarUtilityCoordinatorTests: XCTestCase {
 
     private func makeCoordinator(
         _ context: Context,
-        selectTab: @escaping (TabID) -> Void,
+        selectTab: @escaping (UUID) -> Void,
         openURL: @escaping (URL) -> Void
     ) -> BrowserSidebarUtilityCoordinator {
         BrowserSidebarUtilityCoordinator(
@@ -80,80 +83,71 @@ final class MobileBrowserSidebarUtilityCoordinatorTests: XCTestCase {
     }
 
     private func makeContext() -> Context {
-        let selectedTab = BrowserTab(
-            id: TabID(rawValue: Self.uuid(1)),
+        let selectedTab = TabState.Seed(
+            id: Self.uuid(1),
             title: "Selected",
             url: URL(string: "about:blank"),
             placement: .current,
             lastActivatedAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
-        let archivedTab = BrowserTab(
-            id: TabID(rawValue: Self.uuid(2)),
+        let archivedTab = TabState.Seed(
+            id: Self.uuid(2),
             title: "Archived",
             url: URL(string: "about:blank#archived"),
             placement: .current,
             lastActivatedAt: Date(timeIntervalSince1970: 1_700_000_001)
         )
-        let archived = ArchivedTab(
+        let archived = ArchivedTabState.Seed(
             tab: archivedTab,
             archivedAt: Date(timeIntervalSince1970: 1_700_000_002),
             reason: .closed
         )
-        let history = BrowserHistoryEntry(
-            url: URL(fileURLWithPath: "/crest-mobile-sidebar-history"),
+        let historyURL = URL(fileURLWithPath: "/crest-mobile-sidebar-history")
+        let history = HistoryEntryState(
+            url: historyURL,
             title: "History",
             firstVisitedAt: Date(timeIntervalSince1970: 1_700_000_003),
             lastVisitedAt: Date(timeIntervalSince1970: 1_700_000_003)
         )
-        let source = BrowserSpace(
-            id: SpaceID(rawValue: Self.uuid(3)),
-            profile: BrowsingProfile(id: Self.uuid(4)),
+        let source = SpaceState.Seed(
+            id: Self.uuid(3),
+            profileID: Self.uuid(4),
             name: "Source",
             symbol: "sidebar.left",
             accent: .indigo,
-            folders: [],
             tabs: [selectedTab],
             archivedTabs: [archived],
-            history: [history],
-            selectedTabID: selectedTab.id
+            history: [history]
         )
-        let destination = BrowserSpace(
-            id: SpaceID(rawValue: Self.uuid(5)),
-            profile: BrowsingProfile(id: Self.uuid(6)),
+        let destination = SpaceState.Seed(
+            id: Self.uuid(5),
+            profileID: Self.uuid(6),
             name: "Destination",
             symbol: "square.grid.2x2",
             accent: .rose,
-            folders: [],
-            tabs: [],
-            selectedTabID: nil
+            tabs: []
         )
-        let browser = BrowserStore(
-            session: BrowserSession(
-                spaces: [source, destination],
-                selectedSpaceID: source.id
-            ),
-            persistence: InMemoryBrowserSessionPersistence(),
+        let browser = BrowserStore.hostingPages(
+            SessionState.Seed(spaces: [source, destination]),
+            showing: source.id, tabs: [source.id: selectedTab.id],
             browsingMode: .privateBrowsing
         )
-        var ledger = BrowserDownloadLedger()
-        let downloadItemID = ledger.begin(
-            profileID: source.profile.id,
+        let pages = MobileBrowserPageStore(browser: browser, usesEphemeralWebsiteDataStores: true)
+        let downloadItemID = pages.downloadCenter.begin(
+            profileID: source.profileID,
             filename: "Crest.ipa",
             createdAt: Date(timeIntervalSince1970: 1_700_000_004)
         )
         return Context(
             browser: browser,
-            pages: MobileBrowserPageStore(
-                usesEphemeralWebsiteDataStores: true,
-                downloadLedger: ledger
-            ),
+            pages: pages,
             downloadItemID: downloadItemID,
             access: BrowserSpaceAccessController(
                 authenticator: AcceptingAuthenticator()
             ),
             source: source,
             archived: archived,
-            history: history
+            historyURL: historyURL
         )
     }
 
@@ -170,9 +164,9 @@ final class MobileBrowserSidebarUtilityCoordinatorTests: XCTestCase {
         let pages: MobileBrowserPageStore
         let downloadItemID: UUID
         let access: BrowserSpaceAccessController
-        let source: BrowserSpace
-        let archived: ArchivedTab
-        let history: BrowserHistoryEntry
+        let source: SpaceState.Seed
+        let archived: ArchivedTabState.Seed
+        let historyURL: URL
     }
 
     private final class AcceptingAuthenticator: BrowserDeviceAuthenticating {

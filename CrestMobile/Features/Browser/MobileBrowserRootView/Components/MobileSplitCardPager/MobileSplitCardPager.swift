@@ -13,27 +13,27 @@ import SwiftUI
 /// from the sidebar, a hardware keyboard, and sync as well as from the swipe,
 /// and every one of those routes has to bring the carousel with it.
 struct MobileSplitCardPager: View {
-    let members: [BrowserTab]
-    let space: BrowserSpace
-    let focusedTabID: TabID
+    let members: [TabStateModel]
+    let space: SpaceModel
+    let focusedTabID: UUID
     let pages: MobileBrowserPageStore
     let viewport: MobileBrowserPageViewport
-    let selectTab: (TabID) -> Void
-    let prepareMember: (TabID) -> Void
+    let selectTab: (UUID) -> Void
+    let prepareMember: (UUID) -> Void
     let handleInteraction: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var visibleTabID: TabID?
+    @State private var visibleTabID: UUID?
     @State private var recenterRevision: UInt = 0
 
     init(
-        members: [BrowserTab],
-        space: BrowserSpace,
-        focusedTabID: TabID,
+        members: [TabStateModel],
+        space: SpaceModel,
+        focusedTabID: UUID,
         pages: MobileBrowserPageStore,
         viewport: MobileBrowserPageViewport,
-        selectTab: @escaping (TabID) -> Void,
-        prepareMember: @escaping (TabID) -> Void,
+        selectTab: @escaping (UUID) -> Void,
+        prepareMember: @escaping (UUID) -> Void,
         handleInteraction: @escaping () -> Void
     ) {
         self.members = members

@@ -5,29 +5,24 @@ struct BrowserGeneralSettingsPane: View {
     let browser: BrowserStore
     let spaceAccess: BrowserSpaceAccessController
 
-    @Bindable private var linkPreferences: BrowserLinkPreferenceStore
     @Environment(\.browserSidebarWidgetRuntime) private var sidebarWidgets
     @State private var defaultBrowser = BrowserDefaultBrowserController()
     @State private var isCheckingDefaultBrowser = true
-    @AppStorage(BrowserStartupPreference.key) private var startupBehaviorRawValue =
-        BrowserStartupBehavior.defaultBehavior.rawValue
+    @Bindable private var appPreferences = BrowserAppPreferenceStore.shared
 
-    init(
-        browser: BrowserStore,
-        spaceAccess: BrowserSpaceAccessController,
-        linkPreferences: BrowserLinkPreferenceStore = .shared
-    ) {
+    init(browser: BrowserStore, spaceAccess: BrowserSpaceAccessController) {
         self.browser = browser
         self.spaceAccess = spaceAccess
-        _linkPreferences = Bindable(wrappedValue: linkPreferences)
     }
+
+    private var linkPreferences: BrowserLinkPreferenceStore { browser.linkPreferences }
 
     var body: some View {
         BrowserSettingsPane(.general) {
             Section("Startup", systemImage: "power") {
                 #if os(macOS)
-                    Picker("When Crest opens", selection: startupBehavior) {
-                        ForEach(BrowserStartupBehavior.allCases) { behavior in
+                    Picker("When Crest opens", selection: $appPreferences.startupBehavior) {
+                        ForEach(StartupBehavior.settingsOrder, id: \.self) { behavior in
                             Text(behavior.title).tag(behavior)
                         }
                     }
@@ -36,7 +31,7 @@ struct BrowserGeneralSettingsPane: View {
                 CrestSpaceMenuPicker(
                     "Default Space",
                     selection: browser.defaultSpaceBinding(),
-                    spaces: CrestSpaceIdentity.list(browser.session.spaces),
+                    spaces: CrestSpaceIdentity.list(browser.spaceModels),
                     accessibilityIdentifier: "default-space-picker"
                 )
 
@@ -47,7 +42,7 @@ struct BrowserGeneralSettingsPane: View {
 
             BrowserNewTabSettingsSection(preferences: linkPreferences)
 
-            BrowserDurableTabSettingsSection(preferences: .shared)
+            BrowserDurableTabSettingsSection(preferences: appPreferences)
 
             if let sidebarWidgets {
                 BrowserSidebarWidgetSettingsSection(runtime: sidebarWidgets)
@@ -56,15 +51,22 @@ struct BrowserGeneralSettingsPane: View {
             #if os(macOS)
                 BrowserSplitFocusSettingsSection()
                 Section("Link dragging", systemImage: "cursorarrow.motionlines") {
-                    Toggle("Drag links to Peek", isOn: $linkPreferences.dragsLinksToPeek)
-                        .accessibilityIdentifier("drag-links-to-peek-toggle")
+                    Toggle(
+                        "Drag links to Peek",
+                        isOn: linkPreferences.binding(.dragsLinksToPeek, reading: \.dragsLinksToPeek)
+                    )
+                    .accessibilityIdentifier("drag-links-to-peek-toggle")
                     CrestFormFootnote(
                         "Drag a link to pull out Peek. Hold Option to drag the link normally. Turn off to reverse these gestures."
                     )
                 }
             #endif
 
-            BrowserTranslationSettingsSection()
+            // Whole-page translation preferences, which reach only the pages of
+            // an engine with page translation.
+            if browser.core.state.offers(.translation) {
+                BrowserTranslationSettingsSection()
+            }
 
             #if os(macOS)
                 BrowserSystemPermissionSettingsSection(browser: browser, spaceAccess: spaceAccess)
@@ -183,17 +185,6 @@ struct BrowserGeneralSettingsPane: View {
         default: AnyShapeStyle(.secondary)
         }
     }
-
-    // MARK: - Startup
-
-    private var startupBehavior: Binding<BrowserStartupBehavior> {
-        Binding {
-            BrowserStartupBehavior(rawValue: startupBehaviorRawValue)
-                ?? .defaultBehavior
-        } set: { behavior in
-            startupBehaviorRawValue = behavior.rawValue
-        }
-    }
 }
 
 struct BrowserSidebarWidgetSettingsSection: View {
@@ -235,13 +226,13 @@ struct BrowserNewTabSettingsSection: View {
     static let controlIdentifier =
         "focus-new-tabs-opened-from-links-toggle"
 
-    @Bindable var preferences: BrowserLinkPreferenceStore
+    let preferences: BrowserLinkPreferenceStore
 
     var body: some View {
         Section("Tabs", systemImage: "square.stack") {
             Toggle(
                 "Focus new tabs opened from links",
-                isOn: $preferences.focusesNewTabsOpenedFromLinks
+                isOn: preferences.binding(.focusesNewTabs, reading: \.focusesNewTabs)
             )
             .accessibilityIdentifier(Self.controlIdentifier)
 
@@ -251,7 +242,7 @@ struct BrowserNewTabSettingsSection: View {
 
             Toggle(
                 "Follow tabs moved to another Space",
-                isOn: $preferences.followsTabsMovedToAnotherSpace
+                isOn: preferences.binding(.followsMovedTabs, reading: \.followsMovedTabs)
             )
             .accessibilityIdentifier("follow-tabs-moved-to-another-space-toggle")
 
@@ -267,15 +258,23 @@ struct BrowserNewTabSettingsSection: View {
     struct BrowserSpellCheckingSettingsSection: View {
         static let controlIdentifier = "continuous-spell-checking-toggle"
 
-        @AppStorage(BrowserMacWebTextAssistancePolicy.spellCheckingKey)
-        private var isEnabled =
-            BrowserMacWebTextAssistancePolicy.defaultIsSpellCheckingEnabled
+        private let preferences = BrowserAppPreferenceStore.shared
+
+        /// Read while the body evaluates, so the section follows the core's value.
+        private var isEnabled: Binding<Bool> {
+            let isEnabled = preferences.checksSpelling
+            return Binding {
+                isEnabled
+            } set: {
+                preferences.setChecksSpellingForWebKit($0)
+            }
+        }
 
         var body: some View {
             Section("Typing", systemImage: "keyboard") {
                 Toggle(
                     "Check spelling on webpages",
-                    isOn: $isEnabled
+                    isOn: isEnabled
                 )
                 .accessibilityIdentifier(Self.controlIdentifier)
 

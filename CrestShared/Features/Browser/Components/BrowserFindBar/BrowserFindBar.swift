@@ -1,5 +1,11 @@
 import SwiftUI
 
+// MARK: - Types
+
+enum BrowserFindBarField: Hashable {
+    case query
+}
+
 /// Find in page, on every shell.
 ///
 /// Everything the bar needs from the page arrives through `BrowserFindPort`,
@@ -28,7 +34,7 @@ struct BrowserFindBar: View {
         HStack(spacing: metrics.itemSpacing) {
             queryField
 
-            BrowserFindMatchStatus(state: port.matchState(), metrics: metrics)
+            BrowserFindMatchStatus(state: port.matchState(), matches: port.matches(), metrics: metrics)
 
             control(
                 "Previous Match",

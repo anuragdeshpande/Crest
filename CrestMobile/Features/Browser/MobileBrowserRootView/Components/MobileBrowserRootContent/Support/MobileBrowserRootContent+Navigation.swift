@@ -1,7 +1,7 @@
 import SwiftUI
 
 extension MobileBrowserRootContent {
-    func selectTab(_ id: TabID) {
+    func selectTab(_ id: UUID) {
         dismissAddressFocus()
         let dismissesFloatingPhoneSidebar =
             MobileSidebarTabSelectionPolicy.dismissesSidebar(
@@ -30,7 +30,7 @@ extension MobileBrowserRootContent {
             addressFocusRequest &+= 1
         } else {
             switch MobileStartPageSearchPolicy.destination(
-                isStartPage: browser.selectedTab?.isStartPage != false,
+                isStartPage: showsStartPage,
                 presentation: presentation
             ) {
             case .embeddedStartPage:
@@ -56,7 +56,7 @@ extension MobileBrowserRootContent {
 
         showRegularSidebar()
         switch MobileStartPageSearchPolicy.destination(
-            isStartPage: browser.selectedTab?.isStartPage != false,
+            isStartPage: showsStartPage,
             presentation: presentation
         ) {
         case .embeddedStartPage:
@@ -135,15 +135,12 @@ extension MobileBrowserRootContent {
 
     /// The carousel's own selection commits: an accessibility adjustment, or a
     /// programmatic page that settled somewhere the selection did not expect.
-    func selectSplitCard(_ tabID: TabID) {
+    func selectSplitCard(_ tabID: UUID) {
         model.focusSplitCard(tabID)
     }
 
     var isSelectedTabInSplitGroup: Bool {
-        guard let space = browser.selectedSpace,
-            let selectedTabID = space.selectedTabID
-        else { return false }
-        return space.splitGroup(containing: selectedTabID) != nil
+        model.presentedSplitGroupID != nil
     }
 
     func toggleSidebarFromCommand() {

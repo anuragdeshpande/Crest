@@ -51,7 +51,7 @@ final class BrowserSidebarPinByDragWindowTests: XCTestCase {
         pump(0.4)
 
         let space = try XCTUnwrap(
-            fixture.model.browser.session.space(id: fixture.assignment.spaceID)
+            fixture.model.browser.spaceModel(fixture.assignment.spaceID)
         )
         XCTAssertTrue(
             space.pinnedTabs.contains { $0.title == "Joiner" },
@@ -68,9 +68,9 @@ final class BrowserSidebarPinByDragWindowTests: XCTestCase {
         let input: BrowserNativeMouseInput
         let model: BrowserRootModel
         let assignment: BrowserSpaceRuntimeAssignment
-        let pinned: BrowserTab
-        let presented: BrowserTab
-        let joiner: BrowserTab
+        let pinned: TabState.Seed
+        let presented: TabState.Seed
+        let joiner: TabState.Seed
 
         /// Presses inside `origin` and pulls to `destination`, leaving the
         /// button down so the resolved target can be read mid-drag.
@@ -100,9 +100,9 @@ final class BrowserSidebarPinByDragWindowTests: XCTestCase {
             _ byte: UInt8,
             _ title: String,
             _ placement: Crest.TabPlacement
-        ) -> BrowserTab {
-            BrowserTab(
-                id: TabID(rawValue: Self.uuid(byte)),
+        ) -> TabState.Seed {
+            TabState.Seed(
+                id: Self.uuid(byte),
                 title: title,
                 url: URL(string: "about:blank"),
                 symbol: "globe",
@@ -114,24 +114,24 @@ final class BrowserSidebarPinByDragWindowTests: XCTestCase {
         let saved = makeTab(0x02, "Saved", .saved)
         let presented = makeTab(0x03, "Presented", .current)
         let joiner = makeTab(0x04, "Joiner", .current)
-        let space = BrowserSpace(
-            id: SpaceID(rawValue: Self.uuid(0x05)),
-            profile: BrowsingProfile(id: Self.uuid(0x06)),
+        let space = SpaceState.Seed(
+            id: Self.uuid(0x05),
+            profileID: Self.uuid(0x06),
             name: "Pin By Drag",
             symbol: "books.vertical.fill",
             accent: .indigo,
-            branding: .initial(accent: .indigo, symbol: "books.vertical.fill"),
+            branding: SpaceAccent.indigo.house,
             folders: [],
-            tabs: [pinned, saved, presented, joiner],
-            selectedTabID: presented.id
+            tabs: [pinned, saved, presented, joiner]
         )
-        let browser = BrowserStore(
-            session: BrowserSession(spaces: [space], selectedSpaceID: space.id),
-            persistence: InMemoryBrowserSessionPersistence()
+        let browser = BrowserStore.hostingPages(
+            SessionState.Seed(spaces: [space]),
+            showing: space.id, tabs: [space.id: presented.id]
         )
         let model = BrowserRootModel(
             browser: browser,
             pages: BrowserPagePool(
+                browser: browser,
                 browsingMode: .privateBrowsing,
                 usesEphemeralWebsiteDataStores: true
             ),

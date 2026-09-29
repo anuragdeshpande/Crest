@@ -14,9 +14,10 @@ import UniformTypeIdentifiers
 struct BrowserPlatformSplitGroupDragSourceModifier: ViewModifier {
     let item: BrowserSplitGroupDragItem
     /// The run this row stands for, used only to draw the lift preview.
-    let members: [BrowserTab]
+    let members: [TabStateModel]
+    let favicons: FaviconAssets?
     let placement: TabPlacement
-    let folderID: FolderID?
+    let folderID: UUID?
     let reorder: BrowserSidebarReorderContext
     var isEnabled = true
 
@@ -42,7 +43,8 @@ struct BrowserPlatformSplitGroupDragSourceModifier: ViewModifier {
                 registersContainer: false
             )
             .browserMobileDraggable {
-                reorder.state.stage(item: .splitGroup(item), section: section)
+                reorder.state.stage(
+                    item: .splitGroup(item), section: section, plan: reorder.plan(for: .splitGroup(item)))
                 let payload = (try? JSONEncoder().encode(item)) ?? Data()
                 let provider = NSItemProvider(
                     item: payload as NSData,
@@ -54,10 +56,13 @@ struct BrowserPlatformSplitGroupDragSourceModifier: ViewModifier {
                     reorder.state.cancel(session: token)
                 }
             } preview: { _ in
-                BrowserSplitGroupDragPreview(
-                    members: members,
-                    profileID: item.profileID
-                )
+                if let favicons {
+                    BrowserSplitGroupDragPreview(
+                        members: members,
+                        favicons: favicons,
+                        profileID: item.profileID
+                    )
+                }
             }
     }
 }

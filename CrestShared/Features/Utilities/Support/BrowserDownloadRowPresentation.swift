@@ -12,28 +12,24 @@ struct BrowserDownloadRowPresentation: Sendable {
     let showsStatusAlongsideMetrics: Bool
 
     static func resolve(
-        item: BrowserDownloadItem
+        item: DownloadState
     ) -> BrowserDownloadRowPresentation {
         let telemetry = item.telemetry
         let isActivelyDownloading =
-            item.state == .downloading
+            item.phase.isTransferring
             && !telemetry.isPaused
-        let statusText: BrowserUtilityText
-        if item.state == .downloading, telemetry.isPaused {
-            statusText = .localized("Paused")
-        } else if item.state == .finished {
-            statusText = .localized("Completed")
-        } else {
-            statusText = item.state.utilityStatusText
-        }
+        let statusText: BrowserUtilityText =
+            item.phase.isTransferring && telemetry.isPaused
+            ? .localized("Paused")
+            : status(of: item)
         let showsTransferMetrics =
             telemetry.bytesReceived > 0
-            || telemetry.hasKnownTotal
-            || item.state == .finished
+            || telemetry.totalBytes != nil
+            || item.phase.isComplete
         return BrowserDownloadRowPresentation(
             bytesReceived: telemetry.bytesReceived,
             totalBytes: telemetry.totalBytes,
-            progress: BrowserDownloadProgressPolicy.normalized(item.progress),
+            progress: item.progress,
             bytesPerSecond: isActivelyDownloading
                 ? telemetry.bytesPerSecond
                 : nil,
@@ -41,11 +37,20 @@ struct BrowserDownloadRowPresentation: Sendable {
                 ? telemetry.estimatedTimeRemaining
                 : nil,
             statusText: statusText,
-            statusNeedsAttention: item.state.needsAttention,
+            statusNeedsAttention: item.phase.needsAttention,
             showsTransferMetrics: showsTransferMetrics,
             showsStatusAlongsideMetrics: showsTransferMetrics
                 && !isActivelyDownloading
         )
+    }
+
+    /// The phase's title, or for a phase without one, why the record stopped
+    /// in its localized words, else its own message. Search matches it
+    /// without waiting for transfer telemetry.
+    static func status(of item: DownloadState) -> BrowserUtilityText {
+        if let title = item.phase.title { return .localized(title) }
+        if let failure = item.failure { return .localized(failure.message) }
+        return .verbatim(item.message ?? "")
     }
 
     var hasSecondaryTransferMetrics: Bool {

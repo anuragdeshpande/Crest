@@ -1,27 +1,27 @@
 import SwiftUI
 
 struct BrowserSitePermissionRow: View {
-    let permission: BrowserSitePermission
-    let origin: BrowserSiteOrigin
-    let spaceID: SpaceID
+    let permission: SitePermission
+    let origin: SiteOrigin
+    let spaceID: UUID
     let permissionCenter: BrowserSitePermissionCenter
-    var didChange: ((BrowserSitePermission) -> Void)?
 
     var body: some View {
         HStack(spacing: CrestSpacing.small) {
-            Label(permission.settingsLabel, systemImage: permission.symbol)
+            Label(permission.title, systemImage: permission.symbol)
                 .font(.caption)
             Spacer(minLength: CrestSpacing.small)
-            Menu(permission.settingsLabel(for: currentDecision)) {
+            Menu(permission.title(for: currentDecision)) {
                 Group {
-                    Button(
-                        permission.defaultDecisionLabel,
-                        systemImage: "questionmark.circle"
-                    ) {
+                    Button(permission.askChoiceTitle, systemImage: "questionmark.circle") {
                         setDecision(.ask)
                     }
-                    Button("Allow", systemImage: "checkmark.circle") {
-                        setDecision(.grantPersistently)
+                    // The system asks each time for some capabilities, so
+                    // nothing allows a site ahead of that question.
+                    if !permission.isAskedBySystem {
+                        Button("Allow", systemImage: "checkmark.circle") {
+                            setDecision(.grantPersistently)
+                        }
                     }
                     Button("Block", systemImage: "nosign") {
                         setDecision(.denyPersistently)
@@ -35,7 +35,7 @@ struct BrowserSitePermissionRow: View {
         }
     }
 
-    private var currentDecision: BrowserSitePermissionDecision {
+    private var currentDecision: SitePermissionDecision {
         permissionCenter.decision(
             for: permission,
             origin: origin,
@@ -43,13 +43,12 @@ struct BrowserSitePermissionRow: View {
         )
     }
 
-    private func setDecision(_ decision: BrowserSitePermissionDecision) {
+    private func setDecision(_ decision: SitePermissionDecision) {
         permissionCenter.setDecision(
             decision,
             for: permission,
             origin: origin,
             in: spaceID
         )
-        didChange?(permission)
     }
 }

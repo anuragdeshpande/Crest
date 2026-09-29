@@ -3,7 +3,7 @@ import SwiftUI
 struct BrowserDataRetentionSettingsSection: View {
     let browser: BrowserStore
     let downloadCenter: BrowserDownloadCenter
-    let spaceID: SpaceID
+    let spaceID: UUID
 
     @State private var pendingChange: BrowserDataRetentionChange?
 
@@ -12,7 +12,7 @@ struct BrowserDataRetentionSettingsSection: View {
             ForEach(BrowserDataRetentionCategory.allCases) { category in
                 LabeledContent(category.title) {
                     Picker(category.title, selection: binding(for: category)) {
-                        ForEach(BrowserDataRetentionDuration.allCases) { duration in
+                        ForEach(DataRetention.all, id: \.self) { duration in
                             Text(duration.title).tag(duration)
                         }
                     }
@@ -32,7 +32,7 @@ struct BrowserDataRetentionSettingsSection: View {
             titleVisibility: .visible
         ) {
             if let pendingChange {
-                Button("Use \(pendingChange.proposed.title)", role: .destructive) {
+                Button("Use \(String(localized: pendingChange.proposed.title))", role: .destructive) {
                     apply(pendingChange)
                 }
             }
@@ -42,7 +42,7 @@ struct BrowserDataRetentionSettingsSection: View {
         } message: {
             if let pendingChange {
                 Text(
-                    "This immediately and permanently deletes \(pendingChange.category.cleanupDescription) older than \(pendingChange.proposed.title.lowercased()) in this Space, including synced copies. Downloaded files stay on disk."
+                    "This immediately and permanently deletes \(pendingChange.category.cleanupDescription) older than \(String(localized: pendingChange.proposed.title).lowercased()) in this Space, including synced copies. Downloaded files stay on disk."
                 )
             }
         }
@@ -61,7 +61,7 @@ struct BrowserDataRetentionSettingsSection: View {
 
     private func binding(
         for category: BrowserDataRetentionCategory
-    ) -> Binding<BrowserDataRetentionDuration> {
+    ) -> Binding<DataRetention> {
         Binding(
             get: { policy(for: category) },
             set: { proposed in
@@ -82,11 +82,8 @@ struct BrowserDataRetentionSettingsSection: View {
 
     private func policy(
         for category: BrowserDataRetentionCategory
-    ) -> BrowserDataRetentionDuration {
-        guard
-            let retention = browser.session.space(id: spaceID)?
-                .browsingPreferences.dataRetention
-        else {
+    ) -> DataRetention {
+        guard let retention = browser.spaceModel(spaceID)?.settings.browsingPreferences.dataRetention else {
             return .forever
         }
         return switch category {
@@ -97,10 +94,7 @@ struct BrowserDataRetentionSettingsSection: View {
     }
 
     private func apply(_ change: BrowserDataRetentionChange) {
-        guard
-            var retention = browser.session.space(id: spaceID)?
-                .browsingPreferences.dataRetention
-        else {
+        guard var retention = browser.spaceModel(spaceID)?.settings.browsingPreferences.dataRetention else {
             pendingChange = nil
             return
         }
@@ -110,9 +104,9 @@ struct BrowserDataRetentionSettingsSection: View {
         case .downloads: retention.downloads = change.proposed
         }
         let now = BrowserDataRetentionClock.now()
-        browser.updateDataRetentionPreferences(retention, in: spaceID, now: now)
+        browser.updateDataRetentionPreferences(retention, in: spaceID)
         downloadCenter.sweepExpiredRecords(
-            using: browser.session,
+            in: browser.spaceModels,
             now: now,
             force: true
         )

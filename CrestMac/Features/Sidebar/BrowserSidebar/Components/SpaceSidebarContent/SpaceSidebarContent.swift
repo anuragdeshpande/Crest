@@ -2,14 +2,13 @@ import SwiftUI
 
 struct SpaceSidebarContent: View {
     @Environment(BrowserSidebarInteractionState.self) private var sidebarInteraction
-    let space: BrowserSpace
+    let space: SpaceModel
     let browser: BrowserStore
     let pages: BrowserPagePool
     let spaceAccess: BrowserSpaceAccessController
     let capabilities: BrowserInteractionCapabilities
     let openNewTab: () -> Void
     let showHistory: () -> Void
-    let showExtensions: () -> Void
     let commandSurfaceNamespace: Namespace.ID
     let tabPromotionNamespace: Namespace.ID
     let editSpace: () -> Void
@@ -17,20 +16,22 @@ struct SpaceSidebarContent: View {
     let utilitySurface: BrowserUtilitySurface?
     @Binding var utilitySearchText: String
     @Binding var utilityFilter: BrowserUtilityListFilter
-    let utilityDownloads: [BrowserDownloadItem]
+    let utilityDownloads: [DownloadState]
     let utilityActions: BrowserUtilityListActions
     let dismissUtilityOnBlankSpace: () -> Void
     let clearHistory: () -> Void
 
-    @State private var editingFolderRequest: BrowserFolderRuntimeAssignment?
-
     var body: some View {
         VStack(spacing: 0) {
+            if utilitySurface == nil, !browser.isDeleting(space.id) {
+                BrowserEngineSidebarAccessory(space: space, browser: browser, pages: pages)
+            }
             Group {
                 if let utilitySurface {
                     SpaceSidebarUtilityContent(
                         surface: utilitySurface,
                         space: space,
+                        favicons: browser.core.state.favicons,
                         searchText: $utilitySearchText,
                         filter: $utilityFilter,
                         commandSurfaceNamespace: commandSurfaceNamespace,
@@ -42,7 +43,6 @@ struct SpaceSidebarContent: View {
                 } else {
                     SpaceSidebarBrowsingContent(
                         space: space,
-                        tabSections: space.tabSections,
                         browser: browser,
                         pages: pages,
                         spaceAccess: spaceAccess,
@@ -52,8 +52,6 @@ struct SpaceSidebarContent: View {
                         openNewTab: openNewTab,
                         beginCreatingFolder: beginCreatingFolder,
                         showHistory: showHistory,
-                        showExtensions: showExtensions,
-                        editingFolderRequest: $editingFolderRequest,
                         tabPromotionNamespace: tabPromotionNamespace,
                         editSpace: editSpace,
                         createSpace: createSpace
@@ -72,7 +70,7 @@ struct SpaceSidebarContent: View {
             let folderID = browser.addFolder(matching: assignment)
         else { return }
         browser.setSavedTabsExpanded(true, matching: assignment)
-        editingFolderRequest = BrowserFolderRuntimeAssignment(
+        sidebarInteraction.editingFolderRequest = BrowserFolderRuntimeAssignment(
             folderID: folderID,
             spaceID: assignment.spaceID,
             profileID: assignment.profileID
@@ -81,7 +79,7 @@ struct SpaceSidebarContent: View {
 
     private var savedTabsExpansionBinding: Binding<Bool> {
         Binding {
-            space.isSavedTabsExpanded
+            space.settings.isSavedTabsExpanded
         } set: { isExpanded in
             guard isCurrentAndUnlocked else { return }
             browser.setSavedTabsExpanded(isExpanded, matching: assignment)
@@ -93,7 +91,7 @@ struct SpaceSidebarContent: View {
             let liveSpace = BrowserSidebarAccessPolicy.selectedUnlockedSpace(
                 matching: assignment, in: browser, accessController: spaceAccess)
         else { return }
-        browser.setSavedTabsExpanded(!liveSpace.isSavedTabsExpanded, matching: assignment)
+        browser.setSavedTabsExpanded(!liveSpace.settings.isSavedTabsExpanded, matching: assignment)
     }
 
     private var assignment: BrowserSpaceRuntimeAssignment {

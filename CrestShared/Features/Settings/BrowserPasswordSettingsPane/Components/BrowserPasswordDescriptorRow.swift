@@ -10,7 +10,7 @@ import SwiftUI
 /// simply missing on touch and is here now.
 struct BrowserPasswordDescriptorRow: View {
     let descriptor: CredentialDescriptor
-    let space: BrowserSpace?
+    let space: BrowserSpaceIdentity?
     var isDeleting = false
     var isSelectionActive = false
     var isSelected = false
@@ -107,13 +107,13 @@ struct BrowserPasswordDescriptorRow: View {
                 .font(.title3)
                 .foregroundStyle(
                     isSelected
-                        ? (space?.accent.color ?? CrestBrandTheme.accent)
+                        ? (space?.accent.tint.color ?? CrestBrandTheme.accent)
                         : .secondary
                 )
                 .accessibilityHidden(true)
         } else {
             Image(systemName: "key.fill")
-                .foregroundStyle(space?.accent.color ?? CrestBrandTheme.accent)
+                .foregroundStyle(space?.accent.tint.color ?? CrestBrandTheme.accent)
                 .frame(width: 22)
                 .accessibilityHidden(true)
         }
@@ -165,7 +165,7 @@ struct BrowserPasswordDescriptorRow: View {
     #Preview("Saved account") {
         BrowserPasswordDescriptorRow(
             descriptor: BrowserCredentialDetailPreviewFixture.descriptor,
-            space: BrowserSpaceBrandingPreviewFixture.simpleSpace, showDetails: {}, requestDeletion: {}
+            space: BrowserSpaceBrandingPreviewFixture.simpleSpace.identity, showDetails: {}, requestDeletion: {}
         )
         .padding().frame(width: 400)
     }

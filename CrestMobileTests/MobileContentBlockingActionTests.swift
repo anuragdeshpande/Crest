@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 
 @testable import CrestMobile
@@ -8,9 +9,10 @@ final class MobileContentBlockingActionTests: XCTestCase {
         let fixture = makeFixture()
         let browser = fixture.browser
         let pages = MobileBrowserPageStore(
+            browser: browser,
             usesEphemeralWebsiteDataStores: true
         )
-        pages.select(session: browser.session)
+        pages.select()
         let pageActions = try XCTUnwrap(
             MobileSelectedPageActionPort(browser: browser, pages: pages, spaceAccess: BrowserSpaceAccessController())
         )
@@ -19,11 +21,11 @@ final class MobileContentBlockingActionTests: XCTestCase {
             pages: pageActions
         )
         let firstPolicy = try XCTUnwrap(
-            browser.session.space(id: fixture.firstSpaceID)
-        ).browsingPreferences.contentBlockingPolicy
+            browser.spaceModel(fixture.firstSpaceID)
+        ).settings.browsingPreferences.contentBlocking
         let secondPolicy = try XCTUnwrap(
-            browser.session.space(id: fixture.secondSpaceID)
-        ).browsingPreferences.contentBlockingPolicy
+            browser.spaceModel(fixture.secondSpaceID)
+        ).settings.browsingPreferences.contentBlocking
 
         browser.selectSpace(fixture.secondSpaceID)
 
@@ -31,18 +33,18 @@ final class MobileContentBlockingActionTests: XCTestCase {
 
         XCTAssertFalse(performed)
         XCTAssertEqual(
-            browser.session.space(id: fixture.firstSpaceID)?
-                .browsingPreferences.contentBlockingPolicy,
+            browser.spaceModel(fixture.firstSpaceID)?
+                .settings.browsingPreferences.contentBlocking,
             firstPolicy
         )
         XCTAssertEqual(
-            browser.session.space(id: fixture.secondSpaceID)?
-                .browsingPreferences.contentBlockingPolicy,
+            browser.spaceModel(fixture.secondSpaceID)?
+                .settings.browsingPreferences.contentBlocking,
             secondPolicy
         )
     }
 
-    func testValidatedActionReconcilesTheCommittedSnapshotAfterSelectionChanges() async throws {
+    func testValidatedActionReconcilesAfterSelectionChanges() async throws {
         let fixture = makeFixture()
         let browser = fixture.browser
         let pageActions = RecordingMobilePageActions(
@@ -59,83 +61,66 @@ final class MobileContentBlockingActionTests: XCTestCase {
         let performed = await action.perform()
 
         XCTAssertTrue(performed)
-        XCTAssertEqual(browser.session.selectedSpaceID, fixture.secondSpaceID)
-        let reconciledSession = try XCTUnwrap(
-            pageActions.reconciledSessions.first
-        )
-        XCTAssertEqual(reconciledSession.selectedSpaceID, fixture.firstSpaceID)
+        XCTAssertEqual(browser.selectedSpaceID, fixture.secondSpaceID)
+        XCTAssertEqual(pageActions.reconciliationCount, 1)
         XCTAssertEqual(
-            reconciledSession.space(id: fixture.firstSpaceID)?
-                .browsingPreferences.contentBlockingPolicy,
-            .off
-        )
-        XCTAssertEqual(
-            browser.session.space(id: fixture.firstSpaceID)?
-                .browsingPreferences.contentBlockingPolicy,
+            browser.spaceModel(fixture.firstSpaceID)?
+                .settings.browsingPreferences.contentBlocking,
             .off
         )
     }
 
     private func makeFixture() -> ContentBlockingFixture {
-        let firstTab = BrowserTab(
+        let firstTab = TabState.Seed(
             title: "First",
             url: URL(string: "about:blank"),
             placement: .current
         )
-        let secondTab = BrowserTab(
+        let secondTab = TabState.Seed(
             title: "Second",
             url: URL(string: "about:blank"),
             placement: .current
         )
-        let firstSpace = BrowserSpace(
-            id: SpaceID(rawValue: UUID()),
-            profile: BrowsingProfile(),
+        let firstSpace = SpaceState.Seed(
             name: "First Space",
             symbol: "1.circle",
             accent: .indigo,
             folders: [],
-            tabs: [firstTab],
-            selectedTabID: firstTab.id
+            tabs: [firstTab]
         )
-        let secondSpace = BrowserSpace(
-            id: SpaceID(rawValue: UUID()),
-            profile: BrowsingProfile(),
+        let secondSpace = SpaceState.Seed(
             name: "Second Space",
             symbol: "2.circle",
             accent: .teal,
             folders: [],
-            tabs: [secondTab],
-            selectedTabID: secondTab.id
+            tabs: [secondTab]
         )
         return ContentBlockingFixture(
-            browser: BrowserStore(
-                session: BrowserSession(
-                    spaces: [firstSpace, secondSpace],
-                    selectedSpaceID: firstSpace.id
-                ),
-                persistence: InMemoryBrowserSessionPersistence()
+            browser: BrowserStore.hostingPages(
+                SessionState.Seed(spaces: [firstSpace, secondSpace]),
+                showing: firstSpace.id, tabs: [firstSpace.id: firstTab.id, secondSpace.id: secondTab.id]
             ),
             firstSpaceID: firstSpace.id,
             secondSpaceID: secondSpace.id,
             firstAssignment: BrowserTabRuntimeAssignment(
                 tabID: firstTab.id,
                 spaceID: firstSpace.id,
-                profileID: firstSpace.profile.id
+                profileID: firstSpace.profileID
             )
         )
     }
 
     private struct ContentBlockingFixture {
         let browser: BrowserStore
-        let firstSpaceID: SpaceID
-        let secondSpaceID: SpaceID
+        let firstSpaceID: UUID
+        let secondSpaceID: UUID
         let firstAssignment: BrowserTabRuntimeAssignment
     }
 
     private final class RecordingMobilePageActions: MobilePageActions {
         var pageAssignment: BrowserTabRuntimeAssignment?
         var beforeRecordingReconciliation: () -> Void = {}
-        private(set) var reconciledSessions: [BrowserSession] = []
+        private(set) var reconciliationCount = 0
 
         init(pageAssignment: BrowserTabRuntimeAssignment?) {
             self.pageAssignment = pageAssignment
@@ -178,9 +163,9 @@ final class MobileContentBlockingActionTests: XCTestCase {
         func exportPDF(to destination: MobileBrowserFileExportDestination) {}
         func exportWebArchive(to destination: MobileBrowserFileExportDestination) {}
 
-        func reconcileContentBlocking(in session: BrowserSession) async {
+        func reconcileContentBlocking() async {
             beforeRecordingReconciliation()
-            reconciledSessions.append(session)
+            reconciliationCount += 1
         }
     }
 }

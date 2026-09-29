@@ -2,7 +2,7 @@ import SwiftUI
 
 struct MobileCompactNewTabPrompt: View {
     let namespace: Namespace.ID
-    let geometryID: SpaceID
+    let geometryID: UUID
     let transitionEnded: (CGSize) -> Void
     let openNewTab: () -> Void
 
@@ -43,7 +43,7 @@ struct MobileCompactNewTabPrompt: View {
     #Preview("New tab prompt") {
         @Previewable @Namespace var namespace
         MobileCompactNewTabPrompt(
-            namespace: namespace, geometryID: BrowserSession.preview.selectedSpaceID, transitionEnded: { _ in },
+            namespace: namespace, geometryID: SessionState.Seed.preview.spaces[0].id, transitionEnded: { _ in },
             openNewTab: {}
         )
         .padding().frame(width: 340)

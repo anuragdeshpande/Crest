@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct BrowserQuickWindowBackdrop: View {
-    let space: BrowserSpace?
+    let space: SpaceModel?
     let opacity: Double
     let reduceMotion: Bool
 
@@ -11,6 +11,9 @@ struct BrowserQuickWindowBackdrop: View {
             BrowserWindowAtmosphere(space: space)
                 .opacity(opacity)
         }
+        // The window's background, wherever no page or control covers it, is
+        // chrome, the toolbar strip under the title bar included.
+        .overlay { BrowserWindowTitleBarSurface() }
         .ignoresSafeArea()
         .animation(
             BrowserVisualAccessibilityPolicy.animation(
@@ -25,7 +28,7 @@ struct BrowserQuickWindowBackdrop: View {
 #if DEBUG
     #Preview("Component") {
         BrowserQuickWindowBackdrop(
-            space: BrowserSpaceBrandingPreviewFixture.simpleSpace, opacity: 0.8, reduceMotion: true
+            space: BrowserCommandPalettePreviewFixture.space, opacity: 0.8, reduceMotion: true
         ).frame(width: 540, height: 360)
     }
 #endif

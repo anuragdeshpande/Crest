@@ -7,10 +7,28 @@ import SwiftUI
 final class BrowserUtilityPresentationState {
     static let selectedSurfaceDefaultsKey = "browser.utility.selected-surface"
 
-    private(set) var surface: BrowserUtilitySurface?
-    private(set) var isSwitcherExpanded = false
-    private(set) var isSiteControlPresented = false
-    private(set) var isSiteControlContextMenuPresented = false
+    private(set) var surface: BrowserUtilitySurface? {
+        get { observed(\.surfaceStorage, as: \.surface) }
+        set { publish(newValue, into: \.surfaceStorage, as: \.surface) }
+    }
+    @ObservationIgnored private var surfaceStorage: BrowserUtilitySurface?
+    private(set) var isSwitcherExpanded: Bool {
+        get { observed(\.isSwitcherExpandedStorage, as: \.isSwitcherExpanded) }
+        set { publish(newValue, into: \.isSwitcherExpandedStorage, as: \.isSwitcherExpanded) }
+    }
+    @ObservationIgnored private var isSwitcherExpandedStorage = false
+    private(set) var isSiteControlPresented: Bool {
+        get { observed(\.isSiteControlPresentedStorage, as: \.isSiteControlPresented) }
+        set { publish(newValue, into: \.isSiteControlPresentedStorage, as: \.isSiteControlPresented) }
+    }
+    @ObservationIgnored private var isSiteControlPresentedStorage = false
+    private(set) var isSiteControlContextMenuPresented: Bool {
+        get { observed(\.isSiteControlContextMenuPresentedStorage, as: \.isSiteControlContextMenuPresented) }
+        set {
+            publish(newValue, into: \.isSiteControlContextMenuPresentedStorage, as: \.isSiteControlContextMenuPresented)
+        }
+    }
+    @ObservationIgnored private var isSiteControlContextMenuPresentedStorage = false
     private(set) var triggerFrameInGlobal: CGRect?
     @ObservationIgnored private let defaults: UserDefaults?
     @ObservationIgnored private let persistenceKey: String
@@ -23,7 +41,7 @@ final class BrowserUtilityPresentationState {
         self.defaults = defaults
         self.persistenceKey = persistenceKey
         if let rawValue = defaults?.string(forKey: persistenceKey),
-            let persistedSurface = BrowserUtilitySurface(rawValue: rawValue)
+            let persistedSurface = BrowserUtilitySurface.named(rawValue)
         {
             lastSelectedSurface = persistedSurface
         }
@@ -55,7 +73,7 @@ final class BrowserUtilityPresentationState {
     func present(_ surface: BrowserUtilitySurface) {
         self.surface = surface
         lastSelectedSurface = surface
-        defaults?.set(surface.rawValue, forKey: persistenceKey)
+        defaults?.set(surface.name, forKey: persistenceKey)
         isSwitcherExpanded = true
     }
 
@@ -94,10 +112,4 @@ enum BrowserUtilityInteractionSurface: Equatable, Sendable {
     case control
 }
 
-enum BrowserUtilitySurface: String, CaseIterable, Equatable, Hashable, Identifiable, Sendable {
-    case archive
-    case history
-    case downloads
-
-    var id: Self { self }
-}
+extension BrowserUtilityPresentationState: BrowserStoreFirstObservable {}

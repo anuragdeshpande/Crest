@@ -1,8 +1,9 @@
 import SwiftUI
 
 struct MobileArchiveList: View {
-    let space: BrowserSpace?
-    let restoreArchivedTab: (TabID) -> Void
+    let space: SpaceModel?
+    let favicons: FaviconAssets
+    let restoreArchivedTab: (UUID) -> Void
 
     var body: some View {
         Group {
@@ -17,7 +18,8 @@ struct MobileArchiveList: View {
                         restoreArchivedTab: { tabID, _ in
                             restoreArchivedTab(tabID)
                         }
-                    )
+                    ),
+                    favicons: favicons
                 )
             } else {
                 ContentUnavailableView(

@@ -1,12 +1,13 @@
 import SwiftUI
 
 struct BrowserPlatformTabDragSourceModifier: ViewModifier {
-    let tab: BrowserTab
+    let tab: TabStateModel
+    let favicons: FaviconAssets
     let profileID: UUID
-    let spaceID: SpaceID
+    let spaceID: UUID
     let dragState: BrowserTabDragState
     var reorder: BrowserSidebarReorderContext?
-    var parentSplitGroupID: SplitGroupID?
+    var parentSplitGroupID: UUID?
     var isEnabled = true
 
     private var item: BrowserTabDragItem {

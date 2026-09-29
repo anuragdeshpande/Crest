@@ -3,13 +3,13 @@ import SwiftUI
 /// Shared selection and accessibility contract; each input platform owns the
 /// viewport motion without publishing a browsing-state change for every frame.
 struct BrowserSpacePager<Content: View>: View {
-    let spaces: [BrowserSpace]
-    let selectedSpaceID: SpaceID
+    let spaces: [SpaceModel]
+    let selectedSpaceID: UUID
     var isInteractionLocked = false
     /// Returns the actual selection so a refused request cannot leave native
     /// presentation waiting for a state change that will never arrive.
-    let selectSpace: (SpaceID) -> SpaceID
-    @ViewBuilder let content: (BrowserSpace, Bool) -> Content
+    let selectSpace: (UUID) -> UUID
+    @ViewBuilder let content: (SpaceModel, Bool) -> Content
 
     var body: some View {
         PlatformSpacePager(

@@ -2,8 +2,9 @@ import AppKit
 import Observation
 import WebKit
 
-/// Normal windows share page ownership while their pools retain independent
-/// selection. A temporary workspace receives its own store.
+/// Normal windows share one page host while their pools keep independent
+/// selection; this store decides which window presents each tab's page. A
+/// temporary workspace receives its own store.
 @Observable
 @MainActor
 final class BrowserPageRuntimeStore {
@@ -11,41 +12,50 @@ final class BrowserPageRuntimeStore {
         weak var value: BrowserPagePool?
     }
 
-    @ObservationIgnored var spacesReleasingData: Set<SpaceID> = []
-    @ObservationIgnored var spacesDeletingData: Set<SpaceID> = []
-    @ObservationIgnored var blockedSpaces: Set<SpaceID> = []
-    @ObservationIgnored var runtimes: [TabID: BrowserTabRuntime] = [:]
-    @ObservationIgnored var inactiveSinceByTabID: [TabID: Date] = [:]
-    @ObservationIgnored var memoryPressureTask: Task<Void, Never>?
-    @ObservationIgnored var memoryPressureCoalescer = BrowserMemoryPressureCoalescer()
-    @ObservationIgnored private var pools: [BrowserWindowID: WeakPool] = [:]
-    @ObservationIgnored private var presentations: [BrowserWindowID: [TabID]] = [:]
-    @ObservationIgnored private var focusOrder: [BrowserWindowID: Int] = [:]
+    /// The pages every window over the workspace shares.
+    let host: BrowserPageHost
+    @ObservationIgnored private var pools: [UUID: WeakPool] = [:]
+    @ObservationIgnored private var presentations: [UUID: [UUID]] = [:]
+    @ObservationIgnored private var focusOrder: [UUID: Int] = [:]
     @ObservationIgnored private var focusSequence = 0
-    let tabState: BrowserTabStateCoordinator
-    let nativeTabs = BrowserNativeTabStore()
-    var revision = 0
     var publishesPageMetadataCentrally = false
 
+    var runtimes: [UUID: BrowserTabRuntime] {
+        get { host.runtimes }
+        set { host.runtimes = newValue }
+    }
+    var revision: Int {
+        get { host.revision }
+        set { host.revision = newValue }
+    }
+    var tabState: BrowserTabStateCoordinator { host.tabState }
+    var nativeTabs: BrowserNativeTabStore { host.nativeTabs }
+
     init(archive: (any BrowserTabStateArchiving)? = nil) {
-        tabState = BrowserTabStateCoordinator(archive: archive)
+        host = BrowserPageHost(archive: archive)
+        host.dropPresentation = { [weak self] in self?.removePresentation(of: $0) }
     }
 
     var registeredPools: [BrowserPagePool] { pools.values.compactMap(\.value) }
 
-    var presentedTabIDs: Set<TabID> {
+    var presentedTabIDs: Set<UUID> {
         Set(presentations.values.joined())
     }
 
-    func isPresented(_ tabID: TabID, outside windowID: BrowserWindowID) -> Bool {
+    func isPresented(_ tabID: UUID, outside windowID: UUID) -> Bool {
         presentations.contains { $0.key != windowID && $0.value.contains(tabID) }
     }
 
+    /// Registers `pool` as its window's, while that window is open. A pool
+    /// that outlived its window never takes the place of the pool of the
+    /// window reopened under its identity.
     func register(_ pool: BrowserPagePool) {
+        guard pool.isWindowOpen else { return }
         pools[pool.windowID] = WeakPool(value: pool)
     }
 
     func updatePresentation(of pool: BrowserPagePool) {
+        guard pool.isWindowOpen else { return }
         register(pool)
         presentations[pool.windowID] = pool.presentedTabIDs
         for tabID in pool.presentedTabIDs {
@@ -54,7 +64,6 @@ final class BrowserPageRuntimeStore {
             {
                 claim(tabID, for: pool)
             }
-            inactiveSinceByTabID[tabID] = nil
         }
         for (tabID, runtime) in runtimes
         where runtime.presentationWindowID == pool.windowID && !pool.presentedTabIDs.contains(tabID) {
@@ -63,6 +72,7 @@ final class BrowserPageRuntimeStore {
     }
 
     func focus(_ pool: BrowserPagePool) {
+        guard pool.isWindowOpen else { return }
         for other in registeredPools where other !== pool {
             other.setWindowFocused(false)
         }
@@ -71,8 +81,8 @@ final class BrowserPageRuntimeStore {
         updatePresentation(of: pool)
     }
 
-    func claim(_ tabID: TabID, for pool: BrowserPagePool) {
-        guard pool.presentedTabIDs.contains(tabID), let runtime = runtimes[tabID] else { return }
+    func claim(_ tabID: UUID, for pool: BrowserPagePool) {
+        guard pool.isWindowOpen, pool.presentedTabIDs.contains(tabID), let runtime = runtimes[tabID] else { return }
         guard runtime.presentationWindowID != pool.windowID else {
             pool.bindRuntimeRouting(runtime, tabID: tabID)
             return
@@ -82,15 +92,16 @@ final class BrowserPageRuntimeStore {
             runtime.page.focusRestoration.captureBeforeDeparture()
             runtime.page.focusRestoration.requestRestoration()
         }
-        inactiveSinceByTabID[tabID] = nil
         runtime.presentationWindowID = pool.windowID
         runtime.routingWindowID = pool.windowID
         pool.bindRuntimeRouting(runtime, tabID: tabID)
-        pool.extensionControllerPool.setExtensionTabOwner(tabID, in: runtime.page.spaceID, windowID: pool.windowID)
         revision &+= 1
     }
 
+    /// Unregisters `pool`, when it is the pool registered for its window,
+    /// and hands the pages it routed to the window focused most recently.
     func unregister(_ pool: BrowserPagePool) {
+        guard pools[pool.windowID]?.value === pool else { return }
         presentations.removeValue(forKey: pool.windowID)
         pools.removeValue(forKey: pool.windowID)
         focusOrder.removeValue(forKey: pool.windowID)
@@ -100,49 +111,27 @@ final class BrowserPageRuntimeStore {
                 if runtime.presentationWindowID == nil {
                     runtime.routingWindowID = fallback.windowID
                     fallback.bindRuntimeRouting(runtime, tabID: tabID)
-                    fallback.extensionControllerPool.setExtensionTabOwner(
-                        tabID, in: runtime.page.spaceID, windowID: fallback.windowID)
                 }
             }
         }
         revision &+= 1
     }
 
-    func install(_ runtime: BrowserTabRuntime, for tabID: TabID, from pool: BrowserPagePool) {
+    func install(_ runtime: BrowserTabRuntime, for tabID: UUID, from pool: BrowserPagePool) {
         runtimes[tabID] = runtime
         runtime.store = self
-        runtime.tabID = tabID
         runtime.routingWindowID = pool.windowID
         pool.bindRuntimeRouting(runtime, tabID: tabID)
-        runtime.observeCurrentPage()
         updatePresentation(of: pool)
     }
 
-    func removePresentation(of tabID: TabID) {
+    func removePresentation(of tabID: UUID) {
         for pool in registeredPools {
             pool.removeTransferredPresentation(tabID)
         }
     }
 
-    func pageDidChange(
-        _ runtime: BrowserTabRuntime, previous: BrowserBackgroundPageSnapshot?, current: BrowserBackgroundPageSnapshot,
-        currentPageChanged: Bool = false
-    ) {
-        guard let tabID = runtime.tabID, runtimes[tabID] === runtime else { return }
-        if current.completedNavigationCount > 0 || current.hasNavigationFailure
-            || (previous?.isLoading == true && !current.isLoading)
-        {
-            if !presentedTabIDs.contains(tabID), inactiveSinceByTabID[tabID] == nil {
-                inactiveSinceByTabID[tabID] = .now
-            }
-        }
-        guard publishesPageMetadataCentrally, previous != current || currentPageChanged,
-            let owner = runtime.routingWindowID.flatMap({ pools[$0]?.value }) ?? mostRecentPool(among: Set(pools.keys))
-        else { return }
-        owner.publishRuntimePageUpdate(runtime, tabID: tabID, previous: previous, current: current)
-    }
-
-    private func reassignPresentation(_ tabID: TabID, excluding windowID: BrowserWindowID) {
+    private func reassignPresentation(_ tabID: UUID, excluding windowID: UUID) {
         guard let runtime = runtimes[tabID] else { return }
         let candidates = Set(
             presentations.compactMap { id, tabs in
@@ -152,12 +141,11 @@ final class BrowserPageRuntimeStore {
             claim(tabID, for: next)
         } else {
             runtime.presentationWindowID = nil
-            inactiveSinceByTabID[tabID] = inactiveSinceByTabID[tabID] ?? .now
             revision &+= 1
         }
     }
 
-    private func mostRecentPool(among ids: Set<BrowserWindowID>) -> BrowserPagePool? {
+    private func mostRecentPool(among ids: Set<UUID>) -> BrowserPagePool? {
         ids.compactMap { pools[$0]?.value }.max {
             (focusOrder[$0.windowID] ?? 0) < (focusOrder[$1.windowID] ?? 0)
         }
@@ -166,9 +154,7 @@ final class BrowserPageRuntimeStore {
     private func captureSnapshot(of runtime: BrowserTabRuntime) {
         runtime.snapshotGeneration &+= 1
         let generation = runtime.snapshotGeneration
-        let configuration = WKSnapshotConfiguration()
-        configuration.afterScreenUpdates = false
-        runtime.page.webView.takeSnapshot(with: configuration) { [weak self, weak runtime] image, _ in
+        runtime.page.captureViewport { [weak self, weak runtime] image in
             MainActor.assumeIsolated {
                 guard let self, let runtime, runtime.store === self, runtime.snapshotGeneration == generation else {
                     return
@@ -185,11 +171,4 @@ final class BrowserPageWindowRouting {
     weak var pool: BrowserPagePool?
 
     init(pool: BrowserPagePool) { self.pool = pool }
-}
-
-@MainActor
-final class BrowserPageProfileDataStores {
-    let serverTrustOverrides = BrowserServerTrustOverrideStore()
-    var blockedSpaces: Set<SpaceID> = []
-    var ephemeral: [UUID: WKWebsiteDataStore] = [:]
 }

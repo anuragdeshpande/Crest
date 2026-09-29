@@ -12,7 +12,7 @@ final class MobileBrowserPageStoreRegistry: BrowserSpaceDataDeleting {
 
     private let primary: MobileBrowserPageStore
     private var stores: [ObjectIdentifier: WeakStore] = [:]
-    private var spacesDeletingData: Set<SpaceID> = []
+    private var spacesDeletingData: Set<UUID> = []
 
     init(primary: MobileBrowserPageStore) {
         self.primary = primary
@@ -26,9 +26,9 @@ final class MobileBrowserPageStoreRegistry: BrowserSpaceDataDeleting {
         stores.removeValue(forKey: ObjectIdentifier(store))
     }
 
-    func deleteData(for space: BrowserSpace) async throws {
-        guard spacesDeletingData.insert(space.id).inserted else { return }
-        defer { spacesDeletingData.remove(space.id) }
+    func deleteData(for space: BrowserSpaceRuntimeAssignment) async throws {
+        guard spacesDeletingData.insert(space.spaceID).inserted else { return }
+        defer { spacesDeletingData.remove(space.spaceID) }
 
         stores = stores.filter { $0.value.value != nil }
         let liveStores = stores.values.compactMap(\.value)

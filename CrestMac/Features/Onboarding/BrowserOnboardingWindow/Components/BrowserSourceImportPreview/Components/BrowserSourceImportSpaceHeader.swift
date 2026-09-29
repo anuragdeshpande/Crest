@@ -1,14 +1,14 @@
 import SwiftUI
 
 struct BrowserSourceImportSpaceHeader: View {
-    let application: BrowserImportApplication?
-    let space: BrowserSpace
+    let application: ImportSource?
+    let space: SpaceModel
 
     @ViewBuilder
     var body: some View {
-        if application?.sourceSpaceHeaderStyle == .sectionLabel {
+        if application?.spaceHeaderStyle == .sectionLabel {
             HStack {
-                Text(space.name)
+                Text(space.settings.name)
                     .font(.callout.weight(.semibold))
                 Spacer()
             }
@@ -18,9 +18,9 @@ struct BrowserSourceImportSpaceHeader: View {
             HStack(spacing: 8) {
                 BrowserSpaceIdentityIcon(space: space, size: 22)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(space.name)
+                    Text(space.settings.name)
                         .font(.callout.weight(.semibold))
-                    Text(application?.name ?? "Browser")
+                    Text(application?.title ?? "Browser")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }

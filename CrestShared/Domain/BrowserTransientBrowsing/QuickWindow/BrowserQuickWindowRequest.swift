@@ -1,6 +1,6 @@
 import Foundation
 
-struct BrowserQuickWindowRequest: Codable, Hashable, Identifiable, Sendable {
+struct BrowserQuickWindowRequest: Hashable, Identifiable, Sendable {
     private static let emptyLookupURL: URL = {
         var components = URLComponents()
         components.scheme = "crest"
@@ -11,10 +11,14 @@ struct BrowserQuickWindowRequest: Codable, Hashable, Identifiable, Sendable {
     let id: UUID
     var url: URL
     let spaceAssignment: BrowserSpaceRuntimeAssignment
-    let targetWindowID: BrowserWindowID?
+    let targetWindowID: UUID?
     let sourcePresentation: BrowserPeekSourcePresentation?
+    /// The page the core already opened for the window, a popup window a
+    /// page asked for, which its target window hosts until the Quick Window
+    /// takes it. A window a relaunch restores has none and loads `url`.
+    let openedPageID: UUID?
 
-    var spaceID: SpaceID { spaceAssignment.spaceID }
+    var spaceID: UUID { spaceAssignment.spaceID }
 
     var assignment: BrowserSpaceRuntimeAssignment {
         spaceAssignment
@@ -24,20 +28,22 @@ struct BrowserQuickWindowRequest: Codable, Hashable, Identifiable, Sendable {
         id: UUID = UUID(),
         url: URL,
         spaceAssignment: BrowserSpaceRuntimeAssignment,
-        targetWindowID: BrowserWindowID? = nil,
-        sourcePresentation: BrowserPeekSourcePresentation? = nil
+        targetWindowID: UUID? = nil,
+        sourcePresentation: BrowserPeekSourcePresentation? = nil,
+        openedPageID: UUID? = nil
     ) {
         self.id = id
         self.url = url
         self.spaceAssignment = spaceAssignment
         self.targetWindowID = targetWindowID
         self.sourcePresentation = sourcePresentation
+        self.openedPageID = openedPageID
     }
 
     static func empty(
         id: UUID = UUID(),
         spaceAssignment: BrowserSpaceRuntimeAssignment,
-        targetWindowID: BrowserWindowID? = nil
+        targetWindowID: UUID? = nil
     ) -> BrowserQuickWindowRequest {
         BrowserQuickWindowRequest(
             id: id,
@@ -51,8 +57,12 @@ struct BrowserQuickWindowRequest: Codable, Hashable, Identifiable, Sendable {
         url == Self.emptyLookupURL ? nil : url
     }
 
+    /// Two requests for the same address in the same Space ask for the same
+    /// window, except a popup window's: every window a page asks for is one
+    /// of its own.
     static func == (lhs: Self, rhs: Self) -> Bool {
-        switch (lhs.initialURL, rhs.initialURL) {
+        guard lhs.openedPageID == nil, rhs.openedPageID == nil else { return lhs.id == rhs.id }
+        return switch (lhs.initialURL, rhs.initialURL) {
         case (.some(let lhsURL), .some(let rhsURL)):
             lhs.assignment == rhs.assignment && lhsURL == rhsURL
         case (.none, .none):
@@ -63,7 +73,7 @@ struct BrowserQuickWindowRequest: Codable, Hashable, Identifiable, Sendable {
     }
 
     func hash(into hasher: inout Hasher) {
-        if let initialURL {
+        if openedPageID == nil, let initialURL {
             hasher.combine(assignment)
             hasher.combine(initialURL)
         } else {

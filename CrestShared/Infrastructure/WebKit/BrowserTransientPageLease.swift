@@ -6,10 +6,8 @@ import WebKit
 @MainActor
 final class BrowserTransientPageLease {
     let id = UUID()
-    /// The identity this lease's page is announced under, so extensions can
-    /// address the page the person is actually reading.
-    let extensionTabID: TabID
-    let spaceID: SpaceID
+    /// The Space and profile that own this transient page.
+    let spaceID: UUID
     let profileID: UUID
     var assignment: BrowserSpaceRuntimeAssignment {
         BrowserSpaceRuntimeAssignment(
@@ -18,8 +16,11 @@ final class BrowserTransientPageLease {
         )
     }
     private(set) var page: BrowserPlatformPage?
+    /// The core page the lease last held, which stays named after memory
+    /// pressure takes the page back.
+    private(set) var pageID: UUID
     private(set) var wasReleasedForMemoryPressure = false
-    var recoverableURL: URL { page?.url ?? reloadURL }
+    var recoverableURL: URL { page?.live.documentURL ?? reloadURL }
     var canBeReused: Bool { page != nil || wasReleasedForMemoryPressure }
 
     @ObservationIgnored private(set) var isActive = true
@@ -27,28 +28,27 @@ final class BrowserTransientPageLease {
     @ObservationIgnored private let rebuild: () -> BrowserPlatformPage?
     @ObservationIgnored private let userActivity: () -> Void
     @ObservationIgnored private let onDownloadOnlyNavigation: (() -> Void)?
-    /// Reports the page now standing behind `extensionTabID`, or its absence.
-    ///
-    /// Called before a rebuilt page is navigated, because the announcement has
-    /// to precede the load that injects content scripts into it.
-    @ObservationIgnored private let extensionPageDidChange: (BrowserPlatformPage?) -> Void
-    @ObservationIgnored private var contentBlockingPolicy: BrowserContentBlockingPolicy
+    @ObservationIgnored private var contentBlockingPolicy: ContentBlockingPolicy
     @ObservationIgnored private var balancedContentRuleLists: [WKContentRuleList]
     @ObservationIgnored private var isInvalidated = false
+    /// The core page memory pressure unloaded, which the core remembers until
+    /// the lease brings the page back or lets it go and releases it for good.
+    @ObservationIgnored private var unloaded: CorePage?
 
+    /// A lease on `page`, which loads `url` unless the page is already
+    /// heading somewhere of its own, as a popup window's page is.
     init(
-        extensionTabID: TabID = TabID(),
         page: BrowserPlatformPage,
         url: URL,
-        contentBlockingPolicy: BrowserContentBlockingPolicy,
+        contentBlockingPolicy: ContentBlockingPolicy,
         balancedContentRuleLists: [WKContentRuleList],
         rebuild: @escaping () -> BrowserPlatformPage?,
         userActivity: @escaping () -> Void,
         onDownloadOnlyNavigation: (() -> Void)? = nil,
-        extensionPageDidChange: @escaping (BrowserPlatformPage?) -> Void = { _ in }
+        loadsURL: Bool = true
     ) {
-        self.extensionTabID = extensionTabID
         self.page = page
+        pageID = page.corePage.id
         spaceID = page.spaceID
         profileID = page.profileID
         reloadURL = url
@@ -57,12 +57,8 @@ final class BrowserTransientPageLease {
         self.rebuild = rebuild
         self.userActivity = userActivity
         self.onDownloadOnlyNavigation = onDownloadOnlyNavigation
-        self.extensionPageDidChange = extensionPageDidChange
         page.monitorUserActivity(userActivity)
-        // The page is announced before this point, by whoever built it: this
-        // load is what injects content scripts, and they cannot be answered
-        // for a page extensions have not been told about.
-        page.load(url)
+        if loadsURL { page.corePage.navigate(to: url.absoluteString) }
     }
 
     func setActive(_ isActive: Bool) {
@@ -76,26 +72,53 @@ final class BrowserTransientPageLease {
             balancedRuleLists: balancedContentRuleLists
         )
         page.monitorUserActivity(userActivity)
-        extensionPageDidChange(page)
-        page.load(reloadURL)
+        page.corePage.navigate(to: reloadURL.absoluteString)
         self.page = page
+        pageID = page.corePage.id
         wasReleasedForMemoryPressure = false
+        unloaded?.release(keepingState: false)
+        unloaded = nil
     }
 
+    /// Unloads the page, keeping what the lease needs to bring it back, so the
+    /// core still knows what it showed when its window keeps or archives it.
+    /// A page the core knows runs media, such as a video playing or paused
+    /// in Picture in Picture, a sound playing or a screen being shared, stays.
     func releaseForMemoryPressure() {
         guard let page else { return }
-        reloadURL = page.url ?? reloadURL
-        page.prepareForSpaceDeletion()
+        guard page.corePage.live.media.isEmpty else {
+            DiagnosticLog.pages.notice("Memory pressure keeps page \(pageID), which runs media")
+            return
+        }
+        DiagnosticLog.pages.notice("Memory pressure releases page \(pageID)")
+        reloadURL = page.live.documentURL ?? reloadURL
+        unloaded = page.corePage
+        page.release(keepingState: true)
         self.page = nil
         wasReleasedForMemoryPressure = true
-        extensionPageDidChange(nil)
     }
 
     func release() {
         isInvalidated = true
-        page?.prepareForSpaceDeletion()
+        page?.release(keepingState: false)
         page = nil
-        extensionPageDidChange(nil)
+        unloaded?.release(keepingState: false)
+        unloaded = nil
+    }
+
+    /// Lets the page go for good as far as this lease goes, but unloads it
+    /// with its state kept, so the core still knows what it showed, and hands
+    /// its owner the core page to release for good once nothing will keep or
+    /// archive it.
+    func unload() -> CorePage? {
+        isInvalidated = true
+        if let page {
+            unloaded = page.corePage
+            page.release(keepingState: true)
+            self.page = nil
+        }
+        defer { unloaded = nil }
+        return unloaded
     }
 
     @discardableResult
@@ -107,7 +130,7 @@ final class BrowserTransientPageLease {
     }
 
     func applyContentBlocking(
-        policy: BrowserContentBlockingPolicy,
+        policy: ContentBlockingPolicy,
         balancedRuleLists: [WKContentRuleList]
     ) {
         contentBlockingPolicy = policy
@@ -127,9 +150,6 @@ final class BrowserTransientPageLease {
         isInvalidated = true
         page.stopMonitoringUserActivity()
         self.page = nil
-        // The page is becoming a real tab, which announces itself. Holding the
-        // transient announcement open would describe one web view twice.
-        extensionPageDidChange(nil)
         return page
     }
 }

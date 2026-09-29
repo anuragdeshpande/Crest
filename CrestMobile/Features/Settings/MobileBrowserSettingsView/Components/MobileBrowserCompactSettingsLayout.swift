@@ -17,7 +17,7 @@ struct MobileBrowserCompactSettingsLayout: View {
                 NavigationLink(value: destination) {
                     MobileSettingsDestinationRow(destination: destination)
                 }
-                .accessibilityIdentifier("settings-\(destination.rawValue)")
+                .accessibilityIdentifier("settings-\(destination.name)")
             }
             .navigationTitle("Settings")
             .toolbar { MobileBrowserSettingsToolbar(dismiss: dismiss) }
@@ -41,7 +41,8 @@ struct MobileBrowserCompactSettingsLayout: View {
     private var filteredDestinations: [BrowserSettingsDestination] {
         MobileSettingsDestinationFilter.destinations(
             matching: searchText,
-            locale: locale
+            locale: locale,
+            in: browser.core.state
         )
     }
 }

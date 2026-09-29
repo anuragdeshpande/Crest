@@ -4,6 +4,7 @@ struct BrowserSpacePageSurface: NSViewRepresentable {
     let model: BrowserRootModel
     let transientBrowsing: BrowserTransientBrowsingCoordinator
     let tabPromotionNamespace: Namespace.ID
+    let shortcuts: BrowserShortcutStore?
     var appearance = BrowserChromeAppearance()
 
     @AppStorage(SpacePageMotionPreference.key)
@@ -16,7 +17,7 @@ struct BrowserSpacePageSurface: NSViewRepresentable {
     func updateNSView(_ view: SpaceContentPagerView<BrowserRootPageSurface>, context: Context) {
         view.update(
             spaces: BrowserSidebarAccessPolicy.availableSpaces(in: model.browser),
-            selectedSpaceID: model.browser.session.selectedSpaceID,
+            selectedSpaceID: model.browser.selectedSpaceID,
             lockedSpaceIDs: model.lockedSpaceIDs,
             layoutDirection: context.environment.layoutDirection,
             presentation: animatesSpacePages && !context.environment.accessibilityReduceMotion
@@ -27,6 +28,7 @@ struct BrowserSpacePageSurface: NSViewRepresentable {
                     model: model, space: space, isSelectedSpace: isSelected,
                     transientBrowsing: transientBrowsing,
                     tabPromotionNamespace: tabPromotionNamespace,
+                    shortcuts: shortcuts,
                     appearance: appearance,
                     layoutDirection: context.environment.layoutDirection),
                 assignment: BrowserSpaceRuntimeAssignment(space: space))

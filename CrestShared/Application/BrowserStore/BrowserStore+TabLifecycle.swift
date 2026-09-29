@@ -4,14 +4,8 @@ import Foundation
 
 extension BrowserStore {
     @discardableResult
-    func openNewTab() -> TabID? {
-        guard let result = selectOrCreateStartPageDraft() else { return nil }
-        if result.wasCreated {
-            persist(scope: .core)
-        } else {
-            persist(syncUrgency: .coalesced, scope: .core)
-        }
-        return result.tabID
+    func openNewTab() -> UUID? {
+        showStartPage(outsideSplits: false)
     }
 
     /// Presents the Start Page before the person chooses a restored tab.
@@ -20,89 +14,48 @@ extension BrowserStore {
     /// keeps its restored selection, so merely opening and closing Crest does
     /// not turn the Start Page draft into the next "last active tab."
     @discardableResult
-    func presentStartPageForLaunch() -> TabID? {
-        selectOrCreateStartPageDraft()?.tabID
+    func presentStartPageForLaunch() -> UUID? {
+        showStartPage(outsideSplits: false)
     }
 
     /// Like launch presentation, entering an unloaded Space keeps the
     /// remembered tab intact and does not persist a replacement selection.
     @discardableResult
-    func presentStartPageForSpaceEntry() -> TabID? {
-        selectOrCreateStartPageDraft(excludingSplitGroups: true)?.tabID
+    func presentStartPageForSpaceEntry() -> UUID? {
+        showStartPage(outsideSplits: true)
     }
 
-    private func selectOrCreateStartPageDraft(excludingSplitGroups: Bool = false) -> (
-        tabID: TabID,
-        wasCreated: Bool
-    )? {
-        guard let space = selectedSpace else { return nil }
-        if let draft = space.currentTabs.first(where: {
-            $0.isStartPage && (!excludingSplitGroups || space.splitGroup(containing: $0.id) == nil)
-        }) {
-            session.selectTab(draft.id)
-            return (draft.id, false)
-        }
-        guard
-            let tabID = session.openTab(
-                title: BrowserTab.startPageTitle,
-                url: nil,
-                symbol: BrowserTab.startPageSymbol,
-                in: space.id,
-                requestedIndex: BrowserTabInsertionPolicy.requestedIndex(
-                    after: space.selectedTabID,
-                    in: space
-                )
-            )
-        else { return nil }
-        return (tabID, true)
+    /// Shows a Start Page in the Space this window shows, which the core
+    /// chooses or opens, and answers it.
+    private func showStartPage(outsideSplits: Bool) -> UUID? {
+        guard let space = shownSpace else { return nil }
+        let opening = ShowStartPage(
+            workspaceID: family.workspaceID, windowID: windowID, spaceID: space.id, tabID: UUID(),
+            outsideSplits: outsideSplits)
+        guard family.perform(opening, from: self) != nil else { return nil }
+        return selectedTabID(in: space.id)
     }
 
     @discardableResult
-    func openNewTab(url: URL) -> TabID? {
-        guard let space = selectedSpace else { return nil }
-        let tabID = session.openTab(
-            title: url.host() ?? url.absoluteString,
-            url: url,
-            in: space.id,
-            requestedIndex: BrowserTabInsertionPolicy.requestedIndex(
-                after: space.selectedTabID,
-                in: space
-            )
-        )
-        persist(scope: .core)
-        return tabID
+    func openNewTab(url: URL) -> UUID? {
+        guard let space = shownSpace else { return nil }
+        return openSessionTab(.page(url), in: space.id, insertingAfter: selectedTabID(in: space.id))
     }
 
     @discardableResult
-    func openNewTab(url: URL, in spaceID: SpaceID) -> TabID? {
+    func openNewTab(url: URL, in spaceID: UUID) -> UUID? {
         openNewTab(url: url, in: spaceID, selecting: true)
     }
 
     @discardableResult
     func openNewTab(
         url: URL,
-        in spaceID: SpaceID,
+        in spaceID: UUID,
         selecting: Bool
-    ) -> TabID? {
-        guard !deletingSpaceIDs.contains(spaceID),
-            let space = session.space(id: spaceID)
-        else { return nil }
-        let requestedIndex = BrowserTabInsertionPolicy.requestedIndex(
-            after: space.selectedTabID,
-            in: space
-        )
-        if selecting {
-            session.selectSpace(spaceID)
-        }
-        let tabID = session.openTab(
-            title: url.host() ?? url.absoluteString,
-            url: url,
-            in: spaceID,
-            requestedIndex: requestedIndex,
-            shouldSelect: selecting
-        )
-        persist(scope: .core)
-        return tabID
+    ) -> UUID? {
+        guard !isDeleting(spaceID), spaceModel(spaceID) != nil else { return nil }
+        return openSessionTab(
+            .page(url), in: spaceID, insertingAfter: selectedTabID(in: spaceID), shouldSelect: selecting)
     }
 
     @discardableResult
@@ -110,8 +63,8 @@ extension BrowserStore {
         url: URL,
         matching assignment: BrowserSpaceRuntimeAssignment,
         selecting: Bool = true
-    ) -> TabID? {
-        guard space(matching: assignment) != nil else { return nil }
+    ) -> UUID? {
+        guard spaceModel(matching: assignment) != nil else { return nil }
         return openNewTab(
             url: url,
             in: assignment.spaceID,
@@ -119,178 +72,47 @@ extension BrowserStore {
         )
     }
 
-    /// Registers the tab that hosts a web-content popup. WebKit is still inside
-    /// `createWebViewWith`, so this has to answer synchronously with both the tab
-    /// and its Space: the page pool builds the adopting page from them without
-    /// consulting session state itself. `window.open()` without a destination
-    /// arrives as a nil URL and becomes an `about:blank` tab, because a tab
-    /// without a URL is a start page rather than a web page.
-    func openPopupTab(url: URL?, in spaceID: SpaceID, selecting: Bool = true) -> BrowserPopupTabRegistration? {
-        guard !deletingSpaceIDs.contains(spaceID),
-            let space = session.space(id: spaceID),
-            let destinationURL = url ?? URL(string: "about:blank")
+    /// Opens `url` in a new tab of Space `spaceID` for a modified link,
+    /// selected when `selecting`, and answers the tab with its Space.
+    func openModifiedLink(_ url: URL, in spaceID: UUID, selecting: Bool) -> BrowserModifiedLinkRegistration? {
+        guard let tabID = openNewTab(url: url, in: spaceID, selecting: selecting),
+            let space = spaceModel(spaceID),
+            let tab = space.tabs.model(tabID)
         else { return nil }
-        let requestedIndex = BrowserTabInsertionPolicy.requestedIndex(
-            after: space.selectedTabID,
-            in: space
-        )
-        if selecting { session.selectSpace(spaceID) }
-        guard
-            let tabID = session.openTab(
-                title: destinationURL.host() ?? destinationURL.absoluteString,
-                url: destinationURL,
-                in: spaceID,
-                requestedIndex: requestedIndex,
-                shouldSelect: selecting
-            ),
-            let updatedSpace = session.space(id: spaceID),
-            let tab = updatedSpace.tabs.first(where: { $0.id == tabID })
-        else { return nil }
-        persist(scope: .core)
-        return BrowserPopupTabRegistration(tab: tab, space: updatedSpace)
+        return BrowserModifiedLinkRegistration(tab: tab, space: space)
     }
 
-    /// Tab-level popup operations for a page pool. `window.close()` reaches
-    /// `closeTab` and archives the popup's tab exactly like the close control in
-    /// the tab list does.
-    var popupTabHost: BrowserPopupTabHost {
-        BrowserPopupTabHost(
-            openTab: { [weak self] url, spaceID, selecting in
-                self?.openPopupTab(url: url, in: spaceID, selecting: selecting)
-            },
-            closeTab: { [weak self] tabID, spaceID in
-                _ = self?.closeTab(tabID, in: spaceID)
-            }
-        )
-    }
-
+    /// Closes an open tab once its page agrees to go, which the core archives.
+    /// A saved or pinned tab's page is put away by `BrowserDurableTabCloseAction`,
+    /// which retires the page first, so this path leaves it alone.
     @discardableResult
-    func openExtensionTab(
-        url: URL?,
-        in spaceID: SpaceID,
-        pinned: Bool,
-        requestedIndex: Int?,
-        shouldSelect: Bool
-    ) -> TabID? {
-        let title = url?.host() ?? url?.absoluteString ?? BrowserTab.startPageTitle
-        guard
-            let tabID = session.openTab(
-                title: title,
-                url: url,
-                symbol: url == nil ? BrowserTab.startPageSymbol : "globe",
-                in: spaceID,
-                placement: pinned ? .pinned : .current,
-                requestedIndex: requestedIndex,
-                shouldSelect: shouldSelect
-            )
-        else {
-            return nil
-        }
-        persist(scope: .core)
-        return tabID
-    }
-
-    func moveExtensionTabs(_ ids: [TabID], in spaceID: SpaceID, to index: Int, among windowTabs: Set<TabID>? = nil)
-        -> Bool
-    {
-        let before = session
-        guard session.moveExtensionTabs(ids, in: spaceID, to: index, among: windowTabs) else { return false }
-        if session != before { persist(scope: .core) }
-        return true
-    }
-
-    @discardableResult
-    func activateExtensionTab(_ id: TabID, in spaceID: SpaceID) -> Bool {
-        guard session.activateTab(id, in: spaceID) else { return false }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
-    }
-
-    @discardableResult
-    func closeExtensionTab(_ id: TabID, in spaceID: SpaceID) -> Bool {
-        closeTab(id, in: spaceID)
-    }
-
-    @discardableResult
-    func closeTab(_ id: TabID, in spaceID: SpaceID) -> Bool {
-        guard let space = session.space(id: spaceID),
-            space.tabs.contains(where: { $0.id == id })
+    func closeTab(_ id: UUID, in spaceID: UUID) -> Bool {
+        guard let space = spaceModel(spaceID), let tab = space.tabs.model(id), !tab.placement.isDurable
         else { return false }
-        let fallbackID =
-            space.selectedTabID == id
-            ? dismissalFallbackTabID(afterDismissing: id, in: space)
-            : nil
-        guard
-            session.closeExtensionTab(
-                id,
-                in: spaceID,
-                fallbackTabID: fallbackID
-            )
-        else { return false }
-        persist(deletionReason: .superseded, scope: .core)
-        return true
-    }
-
-    @discardableResult
-    func loadExtensionURL(_ url: URL, in tabID: TabID, spaceID: SpaceID) -> Bool {
-        guard session.updateExtensionTab(tabID, in: spaceID, url: url) else {
-            return false
+        let assignment = BrowserTabRuntimeAssignment(tabID: id, spaceID: spaceID, profileID: space.profileID)
+        // The core asks the tab's page whether it may go before it closes the tab.
+        return performPageDismissal(of: [assignment]) { [weak self] in
+            guard let self, self.spaceModel(spaceID) != nil else { return false }
+            return self.closeSessionTab(id, in: spaceID)
         }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
     }
 
-    @discardableResult
-    func setExtensionTabPinned(
-        _ pinned: Bool,
-        tabID: TabID,
-        in spaceID: SpaceID
-    ) -> Bool {
-        guard
-            session.setExtensionTabPinned(
-                pinned,
-                tabID: tabID,
-                in: spaceID
-            )
-        else {
-            return false
-        }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
-    }
-
-    @discardableResult
-    func duplicateExtensionTab(
-        _ id: TabID,
-        in spaceID: SpaceID,
-        pinned: Bool,
-        requestedIndex: Int?,
-        shouldSelect: Bool
-    ) -> TabID? {
-        guard
-            let duplicateID = session.duplicateTab(
-                id,
-                in: spaceID,
-                placement: pinned ? .pinned : .current,
-                requestedIndex: requestedIndex,
-                shouldSelect: shouldSelect
-            )
-        else {
-            return nil
-        }
-        persist(scope: .favicon(for: duplicateID))
-        return duplicateID
-    }
-
+    /// Opens an address another app handed Crest in the Space this window
+    /// shows, as `openAddress` does.
     @discardableResult
     func openExternalURL(_ url: URL) -> Bool {
-        guard BrowserExternalURLPolicy.accepts(url) else { return false }
-        if selectedTab?.isStartPage == true {
-            navigateSelectedTab(to: url)
-        } else {
-            openNewTab(url: url)
-        }
-        return true
+        guard BrowserCorePolicy.acceptsExternalURL(url), let space = shownSpace else { return false }
+        return openAddress(url, in: space.id)
+    }
+
+    /// Opens `url` in a Space this window shows: the Start Page on show there
+    /// takes it, or a new tab opens it, which the core decides.
+    @discardableResult
+    func openAddress(_ url: URL, in spaceID: UUID) -> Bool {
+        let opening = OpenAddress(
+            workspaceID: family.workspaceID, windowID: windowID, spaceID: spaceID, tabID: UUID(),
+            address: url.absoluteString)
+        return family.perform(opening, from: self) != nil
     }
 
 }
@@ -298,31 +120,28 @@ extension BrowserStore {
 // MARK: - Metadata
 
 extension BrowserStore {
-    func closeTab(_ id: TabID) {
-        guard let space = selectedSpace,
-            space.currentTabs.contains(where: { $0.id == id })
-        else { return }
-        let fallbackID =
-            space.selectedTabID == id
-            ? dismissalFallbackTabID(afterDismissing: id, in: space)
-            : nil
-        session.closeTab(id, fallbackTabID: fallbackID)
-        persist(deletionReason: .superseded, scope: .core)
+    /// The open tabs of `space`, which clearing puts away.
+    private static func currentTabIDs(of space: SpaceModel) -> Set<UUID> {
+        Set(space.tabs.models.filter { $0.placement == .current }.map(\.id))
     }
 
-    func deleteTab(_ id: TabID, in spaceID: SpaceID) {
-        guard session.deleteTab(id, in: spaceID) else { return }
-        persist(deletionReason: .explicitDelete, scope: .core)
+    @discardableResult
+    func closeTab(_ id: UUID) -> Bool {
+        guard let space = shownSpace, space.tabs.model(id)?.placement == .current else { return false }
+        return closeTab(id, in: space.id)
+    }
+
+    func deleteTab(_ id: UUID, in spaceID: UUID) {
+        guard let space = spaceModel(spaceID) else { return }
+        _ = deleteTab(id, matching: BrowserSpaceRuntimeAssignment(space: space))
     }
 
     @discardableResult
     func closeTab(
-        _ id: TabID,
+        _ id: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            space.tabs.contains(where: { $0.id == id })
-        else { return false }
+        guard spaceModel(matching: assignment)?.tabs.model(id) != nil else { return false }
         return closeTab(id, in: assignment.spaceID)
     }
 
@@ -330,306 +149,146 @@ extension BrowserStore {
     func clearCurrentTabs(
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard space(matching: assignment) != nil,
-            session.clearCurrentTabs(in: assignment.spaceID)
-        else { return false }
-        persist(deletionReason: .superseded, scope: .core)
-        return true
+        guard let space = spaceModel(matching: assignment) else { return false }
+        let ids = Self.currentTabIDs(of: space)
+        let tabs = ids.map { BrowserTabRuntimeAssignment(tabID: $0, spaceID: space.id, profileID: space.profileID) }
+        return performPageDismissal(of: tabs) { [weak self] in
+            guard let self, let current = self.spaceModel(matching: assignment), Self.currentTabIDs(of: current) == ids,
+                self.clearSessionTabs(in: assignment.spaceID)
+            else { return false }
+            return true
+        }
     }
 
     @discardableResult
     func deleteTab(
-        _ id: TabID,
+        _ id: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            space.tabs.contains(where: { $0.id == id }),
-            session.deleteTab(id, in: assignment.spaceID)
-        else { return false }
-        persist(deletionReason: .explicitDelete, scope: .core)
-        return true
+        let tab = BrowserTabRuntimeAssignment(tabID: id, spaceID: assignment.spaceID, profileID: assignment.profileID)
+        return performPageDismissal(of: [tab]) { [weak self] in
+            guard let self, self.deleteSessionTab(id, in: assignment.spaceID) else { return false }
+            return true
+        }
     }
 
     @discardableResult
     func setTabCustomTitle(
         _ title: String?,
-        for id: TabID,
-        in spaceID: SpaceID
+        for id: UUID,
+        in spaceID: UUID
     ) -> Bool {
-        guard session.setTabCustomTitle(title, tabID: id, in: spaceID) else {
+        guard renameSessionTab(title, tabID: id, in: spaceID) else {
             return false
         }
-        persist(syncUrgency: .coalesced, scope: .core)
         return true
     }
 
     @discardableResult
     func setTabCustomTitle(
         _ title: String?,
-        for id: TabID,
+        for id: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            space.tabs.contains(where: { $0.id == id })
-        else { return false }
+        guard spaceModel(matching: assignment)?.tabs.model(id) != nil else { return false }
         return setTabCustomTitle(title, for: id, in: assignment.spaceID)
     }
 
-    func setTabEmojiIcon(_ emoji: String, for id: TabID, in spaceID: SpaceID) {
-        guard session.setTabEmojiIcon(emoji, tabID: id, in: spaceID) else { return }
-        persist(syncUrgency: .coalesced, scope: .favicon(for: id))
+    /// Gives the tab `emoji` as its icon, which the core refuses when its
+    /// first character does not present as an emoji.
+    func setTabEmojiIcon(_ emoji: String, for id: UUID, in spaceID: UUID) {
+        setSessionTabIcon(.emoji, emoji: emoji, tabID: id, in: spaceID)
     }
 
     @discardableResult
     func setTabEmojiIcon(
         _ emoji: String,
-        for id: TabID,
+        for id: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            space.tabs.contains(where: { $0.id == id }),
-            session.setTabEmojiIcon(
-                emoji,
-                tabID: id,
-                in: assignment.spaceID
-            )
-        else { return false }
-        persist(syncUrgency: .coalesced, scope: .favicon(for: id))
-        return true
+        guard spaceModel(matching: assignment)?.tabs.model(id) != nil else { return false }
+        return setSessionTabIcon(.emoji, emoji: emoji, tabID: id, in: assignment.spaceID)
     }
 
     func setTabFavicon(
         _ faviconData: Data,
         iconAccent: BrowserTabIconAccent?,
-        for id: TabID,
-        in spaceID: SpaceID
+        for id: UUID,
+        in spaceID: UUID
     ) {
         guard
-            session.setTabFavicon(
-                faviconData,
-                iconAccent: iconAccent,
-                tabID: id,
-                in: spaceID
-            )
+            setSessionTabIcon(
+                .pulled, faviconData: faviconData,
+                iconAccent: iconAccent, tabID: id, in: spaceID)
         else { return }
-        persist(syncUrgency: .coalesced, scope: .favicon(for: id))
     }
 
     @discardableResult
     func setTabFavicon(
         _ faviconData: Data,
         iconAccent: BrowserTabIconAccent?,
-        for id: TabID,
+        for id: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            space.tabs.contains(where: { $0.id == id }),
-            session.setTabFavicon(
-                faviconData,
-                iconAccent: iconAccent,
-                tabID: id,
-                in: assignment.spaceID
-            )
-        else { return false }
-        persist(syncUrgency: .coalesced, scope: .favicon(for: id))
-        return true
+        guard spaceModel(matching: assignment)?.tabs.model(id) != nil else { return false }
+        return setSessionTabIcon(
+            .pulled, faviconData: faviconData, iconAccent: iconAccent, tabID: id, in: assignment.spaceID)
     }
 
-    func cacheAutomaticTabFavicon(
-        _ faviconData: Data,
-        iconAccent: BrowserTabIconAccent?,
-        url: URL,
-        for id: TabID,
-        in spaceID: SpaceID
-    ) {
-        guard
-            session.cacheAutomaticTabFavicon(
-                faviconData,
-                iconAccent: iconAccent,
-                url: url,
-                tabID: id,
-                in: spaceID
-            )
-        else { return }
-        persist(syncUrgency: .coalesced, scope: .favicon(for: id))
-    }
-
-    func clearTabIcon(for id: TabID, in spaceID: SpaceID) {
-        guard session.clearTabIcon(tabID: id, in: spaceID) else { return }
-        persist(syncUrgency: .coalesced, scope: .favicon(for: id))
+    func clearTabIcon(for id: UUID, in spaceID: UUID) {
+        guard setSessionTabIcon(.automatic, tabID: id, in: spaceID) else { return }
     }
 
     @discardableResult
     func clearTabIcon(
-        for id: TabID,
+        for id: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            space.tabs.contains(where: { $0.id == id }),
-            session.clearTabIcon(tabID: id, in: assignment.spaceID)
-        else { return false }
-        persist(syncUrgency: .coalesced, scope: .favicon(for: id))
-        return true
+        guard spaceModel(matching: assignment)?.tabs.model(id) != nil else { return false }
+        return setSessionTabIcon(.automatic, tabID: id, in: assignment.spaceID)
     }
 
     @discardableResult
     func replaceTabSavedLocationWithCurrent(
-        _ id: TabID,
-        in spaceID: SpaceID
+        _ id: UUID,
+        in spaceID: UUID
     ) -> Bool {
-        guard
-            session.replaceTabSavedLocationWithCurrent(
-                tabID: id,
-                in: spaceID
-            )
-        else { return false }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
+        replaceSessionSavedAddress(tabID: id, in: spaceID)
     }
 
     @discardableResult
     func restoreTabSavedLocation(
-        _ id: TabID,
-        in spaceID: SpaceID
+        _ id: UUID,
+        in spaceID: UUID
     ) -> URL? {
-        guard
-            let url = session.restoreTabSavedLocation(
-                tabID: id,
-                in: spaceID
-            )
-        else { return nil }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return url
+        guard returnSessionTabToSavedAddress(tabID: id, in: spaceID) else { return nil }
+        return spaceModel(spaceID)?.tabs.model(id)?.address
     }
 
+    /// Archives the tab this window shows, where the core allows it.
     @discardableResult
-    func archiveSelectedTab() -> TabID? {
-        guard let tab = selectedTab,
-            tab.placement == .current,
-            !tab.isStartPage
-        else { return nil }
-        closeTab(tab.id)
+    func archiveSelectedTab() -> UUID? {
+        guard allows(.archiveTab), let space = shownSpace, let tab = shownTab, closeTab(tab.id, in: space.id) else {
+            return nil
+        }
         return tab.id
     }
 
-    func navigateSelectedTab(to url: URL) {
-        session.updateSelectedTab(
-            url: url,
-            title: url.host() ?? url.absoluteString,
-            faviconData: nil,
-            iconAccent: nil
-        )
-        persist(syncUrgency: .coalesced, scope: .core)
-    }
-
-    func updateSelectedTabFromPage(
-        url observedURL: URL?,
-        title: String?,
-        faviconData: Data? = nil,
-        iconAccent: BrowserTabIconAccent? = nil
-    ) {
-        guard
-            let change = pageMetadataChange(
-                url: observedURL, title: title, faviconData: faviconData,
-                iconAccent: iconAccent, for: selectedTab
-            )
-        else { return }
-        session.updateSelectedTab(
-            url: change.url,
-            title: title,
-            faviconData: faviconData,
-            iconAccent: iconAccent
-        )
-        persist(syncUrgency: .coalesced, scope: change.scope)
-    }
-
-    /// The per-tab twin of ``updateSelectedTabFromPage(url:title:faviconData:iconAccent:)``.
-    ///
-    /// A Split View card presents a live page for a tab that may not be the
-    /// selected one, and that page reports the same url, title, and favicon the
-    /// focused card's page does. Without this, an unfocused card would browse
-    /// with a sidebar row frozen at whatever it said when the card appeared.
-    ///
-    /// Everything the selected-tab path decides is decided the same way here —
-    /// the change gate, the automatic-icon identity rules, and the save scope
-    /// that keeps a title rewrite off the favicon store. The one addition is the
-    /// Space assignment: a card binds a tab it did not select, so the write is
-    /// confirmed against the Space and profile the caller is drawing before it
-    /// touches the session. A stale card mid-Space-switch writes nothing.
-    /// A completed navigation records its visit in the same publication. The
-    /// return value reports whether the page metadata changed.
+    /// Gives the selected tab `url` to load when it shows a native view or the
+    /// Start Page, so a page can open for it. An existing web page stays at its
+    /// accepted location until its engine reports the new navigation, which
+    /// the core records.
+    /// Gives the selected tab, while it shows a native view or the Start
+    /// Page, the address `input` names by its Space's rules, so a page can
+    /// open for it. False when it changed nothing: the tab shows a web page,
+    /// the input was blank, or a rule refused it.
     @discardableResult
-    func updateTabFromPage(
-        url observedURL: URL?,
-        title: String?,
-        faviconData: Data? = nil,
-        iconAccent: BrowserTabIconAccent? = nil,
-        for tabID: TabID,
-        matching assignment: BrowserSpaceRuntimeAssignment,
-        completedNavigationURL: URL? = nil
-    ) -> Bool {
-        guard let space = space(matching: assignment) else { return false }
-        var draft = session
-        var scope: BrowserSessionSaveScope?
-        if let tab = space.tabs.first(where: { $0.id == tabID }),
-            let change = pageMetadataChange(
-                url: observedURL, title: title, faviconData: faviconData,
-                iconAccent: iconAccent, for: tab
-            ),
-            draft.updateTab(
-                url: change.url,
-                title: title,
-                faviconData: faviconData,
-                iconAccent: iconAccent,
-                tabID: tabID,
-                in: assignment.spaceID
-            )
-        {
-            scope = change.scope
-        }
-        let changedMetadata = scope != nil
-        if let url = completedNavigationURL {
-            draft.recordVisit(url: url, title: title, in: assignment.spaceID)
-            scope = scope ?? .history(in: assignment.spaceID)
-            scope?.history = .only([assignment.spaceID])
-        }
-        guard let scope else { return false }
-        session = draft
-        persist(syncUrgency: .coalesced, scope: scope)
-        return changedMetadata
-    }
-
-    func updateBackgroundPage(_ update: BrowserBackgroundPageUpdate) {
-        updateTabFromPage(
-            url: update.url, title: update.title, faviconData: update.faviconData,
-            iconAccent: update.iconAccent, for: update.tabID, matching: update.assignment,
-            completedNavigationURL: update.completedNavigationURL
-        )
-    }
-
-    private func pageMetadataChange(
-        url observedURL: URL?,
-        title: String?,
-        faviconData: Data?,
-        iconAccent: BrowserTabIconAccent?,
-        for tab: BrowserTab?
-    ) -> (url: URL?, scope: BrowserSessionSaveScope)? {
-        let resolvedURL = observedURL ?? tab?.url
-        let updatesAutomaticIcon =
-            tab?.iconMode == .automatic
-            && (faviconData != tab?.faviconData || iconAccent != tab?.iconAccent)
-        guard
-            resolvedURL != tab?.url
-                || title?.nilIfEmpty != tab?.title.nilIfEmpty
-                || updatesAutomaticIcon
-        else { return nil }
-        // A title rewrite touches only the core; automatic icon changes also
-        // reconcile that tab's favicon bytes.
-        let iconTabID = updatesAutomaticIcon ? tab?.id : nil
-        return (
-            resolvedURL,
-            iconTabID.map(BrowserSessionSaveScope.favicon(for:)) ?? .core
-        )
+    func navigateSelectedTab(to input: String) -> Bool {
+        guard let space = shownSpace, let tab = shownTab, !tab.surface.showsPage else { return false }
+        return family.send(
+            NavigateTab(
+                workspaceID: family.workspaceID, spaceID: space.id, tabID: tab.id, input: input),
+            from: self, failure: "Core navigation failed")
     }
 
 }
@@ -640,29 +299,26 @@ extension BrowserStore {
     @discardableResult
     func setTabKeepsPageLoaded(
         _ keepsPageLoaded: Bool,
-        for id: TabID,
-        in spaceID: SpaceID
+        for id: UUID,
+        in spaceID: UUID
     ) -> Bool {
         guard
-            session.setTabKeepsPageLoaded(
+            setSessionTabResidency(
                 keepsPageLoaded,
                 tabID: id,
                 in: spaceID
             )
         else { return false }
-        persist(syncUrgency: .coalesced, scope: .core)
         return true
     }
 
     @discardableResult
     func setTabKeepsPageLoaded(
         _ keepsPageLoaded: Bool,
-        for id: TabID,
+        for id: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            space.tabs.contains(where: { $0.id == id })
-        else { return false }
+        guard spaceModel(matching: assignment)?.tabs.model(id) != nil else { return false }
         return setTabKeepsPageLoaded(
             keepsPageLoaded,
             for: id,

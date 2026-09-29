@@ -3,7 +3,8 @@ import SwiftUI
 /// The same title and favicon in the list and in the travelling component.
 /// Keeping the native Label layout also preserves its baseline and icon gap.
 struct BrowserSidebarTabLabelContent: View {
-    let tab: BrowserTab
+    let tab: TabStateModel
+    let favicons: FaviconAssets
     let profileID: UUID
     let isSelected: Bool
     let isLoaded: Bool
@@ -13,13 +14,12 @@ struct BrowserSidebarTabLabelContent: View {
     var faviconPrimaryClick: (() -> Void)?
     var titleOpacity = 1.0
     var iconOffset: CGFloat = 0
-    var sidePanelSpaceID: SpaceID?
     @Environment(\.browserInteractionCapabilities) private var capabilities
     let textScale: Double
 
     var body: some View {
         Label {
-            Text(tab.displayTitle)
+            Text(tab.shownTitle)
                 .modifier(BrowserSidebarDensityFont(scale: textScale, supportsTouch: capabilities.supportsTouch))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
@@ -28,8 +28,8 @@ struct BrowserSidebarTabLabelContent: View {
         } icon: {
             HStack(spacing: 3) {
                 BrowserSidebarTabFaviconContent(
-                    tab: tab, profileID: profileID, metrics: metrics,
-                    isProminent: isSelected, isLoaded: isLoaded, sidePanelSpaceID: sidePanelSpaceID,
+                    tab: tab, favicons: favicons, profileID: profileID, metrics: metrics,
+                    isProminent: isSelected, isLoaded: isLoaded,
                     iconScale: textScale
                 )
                 #if os(macOS)
@@ -38,7 +38,7 @@ struct BrowserSidebarTabLabelContent: View {
                         including: faviconPrimaryClick == nil ? .none : .all
                     )
                 #endif
-                if tab.placement == .saved, tab.isAwayFromSavedLocation, let restoreSavedLocation {
+                if tab.placement == .saved, tab.isAwayFromSavedAddress, let restoreSavedLocation {
                     BrowserTabSavedLocationIndicator(restore: restoreSavedLocation)
                         .browserTabResidency(isLoaded: isLoaded)
                 }
@@ -50,17 +50,3 @@ struct BrowserSidebarTabLabelContent: View {
         .contentShape(.rect)
     }
 }
-
-#if DEBUG
-    #Preview("Selected and unloaded") {
-        let configuration = BrowserSidebarTabRowPreviewFixture.configuration()
-        VStack(spacing: 16) {
-            BrowserSidebarTabLabelContent(
-                tab: configuration.tab, profileID: configuration.profileID, isSelected: true, isLoaded: true,
-                metrics: configuration.metrics, textScale: 1)
-            BrowserSidebarTabLabelContent(
-                tab: configuration.tab, profileID: configuration.profileID, isSelected: false, isLoaded: false,
-                metrics: configuration.metrics, textScale: 1)
-        }.padding().frame(width: 300)
-    }
-#endif

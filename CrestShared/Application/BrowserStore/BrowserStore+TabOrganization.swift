@@ -3,158 +3,112 @@ import Foundation
 // MARK: - Organization
 
 extension BrowserStore {
-    func pinSelectedTab() {
-        guard selectedSpace != nil else { return }
-        session.moveSelectedTab(to: .pinned)
-        persist(scope: .core)
+    /// Pins a tab of the Space this window shows, or returns a pinned one to
+    /// the open tabs, as the core places each. False when the core refused it.
+    @discardableResult
+    func togglePin(_ id: UUID) -> Bool {
+        guard let space = shownSpace else { return false }
+        return family.send(TogglePin(workspaceID: family.workspaceID, spaceID: space.id, tabID: id), from: self)
     }
 
-    func pinTab(_ id: TabID) {
-        guard selectedSpace?.tabs.first(where: { $0.id == id })?.placement != .pinned else { return }
-        moveTab(id, to: .pinned)
+    func pinTab(_ id: UUID) {
+        guard let tab = shownSpace?.tabs.model(id), tab.placement != .pinned else { return }
+        togglePin(id)
     }
 
-    func saveSelectedTab() {
-        guard selectedSpace != nil else { return }
-        let folderID = selectedSpace?.folders.first { $0.location == .saved }?.id
-        session.moveSelectedTab(to: .saved, folderID: folderID)
-        persist(scope: .core)
-    }
-
-    func saveTab(_ id: TabID) {
-        let folderID = selectedSpace?.folders.first { $0.location == .saved }?.id
-        guard let tab = selectedSpace?.tabs.first(where: { $0.id == id }),
-            tab.placement != .saved || tab.folderID != folderID
-        else { return }
+    func saveTab(_ id: UUID) {
+        let folderID = shownSpace?.folders.models.first { $0.location == .saved }?.id
+        guard let tab = shownSpace?.tabs.model(id), tab.placement != .saved || tab.folderID != folderID else { return }
         moveTab(id, to: .saved, folderID: folderID)
     }
 
     @discardableResult
     func moveTab(
-        _ id: TabID,
-        from sourceSpaceID: SpaceID? = nil,
+        _ id: UUID,
+        from sourceSpaceID: UUID? = nil,
         to placement: TabPlacement,
-        folderID: FolderID? = nil,
-        before destinationTabID: TabID? = nil
+        folderID: UUID? = nil,
+        before destinationTabID: UUID? = nil
     ) -> Bool {
-        guard let actualSourceSpaceID = session.spaceID(containing: id),
-            let actualSourceSpace = session.space(id: actualSourceSpaceID),
-            !deletingSpaceIDs.contains(actualSourceSpaceID),
-            !deletingSpaceIDs.contains(session.selectedSpaceID),
-            sourceSpaceID == nil
-                || sourceSpaceID == actualSourceSpaceID
+        guard let actualSourceSpace = spaceModels.first(where: { $0.tabs.model(id) != nil }),
+            !isDeleting(actualSourceSpace.id), !isDeleting(selectedSpaceID),
+            sourceSpaceID == nil || sourceSpaceID == actualSourceSpace.id
         else {
             return false
         }
+        let actualSourceSpaceID = actualSourceSpace.id
 
         let moved: Bool
-        if actualSourceSpaceID == session.selectedSpaceID {
-            moved = session.moveTab(
-                id,
-                to: placement,
-                folderID: folderID,
-                before: destinationTabID
-            )
+        if actualSourceSpaceID == selectedSpaceID {
+            // The core takes a tab out of its split for a section that keeps none.
+            moved = moveSessionTab(
+                id, in: actualSourceSpaceID, to: placement, folderID: folderID, before: destinationTabID)
         } else {
             moved = moveTabBetweenSpaces(
                 id,
                 from: actualSourceSpaceID,
-                into: session.selectedSpaceID,
+                into: selectedSpaceID,
                 to: placement,
                 folderID: folderID,
                 before: destinationTabID
             )
         }
         guard moved else { return false }
-        if actualSourceSpaceID != session.selectedSpaceID {
-            guard let destinationSpace = session.selectedSpace else { return false }
+        if actualSourceSpaceID != selectedSpaceID {
+            guard let destinationSpace = shownSpace else { return false }
             interactionObserver?.browserDidMoveTab(
                 from: BrowserTabRuntimeAssignment(
-                    tabID: id, spaceID: actualSourceSpace.id, profileID: actualSourceSpace.profile.id),
+                    tabID: id, spaceID: actualSourceSpace.id, profileID: actualSourceSpace.profileID),
                 to: BrowserSpaceRuntimeAssignment(space: destinationSpace)
             )
         }
-        // A drag can cross several rows before it settles. Keep the local session
-        // immediately responsive while coalescing the durable sync journal write.
-        persist(syncUrgency: .coalesced, scope: .core)
         return true
     }
 
     @discardableResult
     func moveTab(
-        _ id: TabID,
+        _ id: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment,
         to placement: TabPlacement,
-        folderID: FolderID? = nil,
-        before destinationTabID: TabID? = nil
+        folderID: UUID? = nil,
+        before destinationTabID: UUID? = nil
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            session.selectedSpaceID == assignment.spaceID,
-            space.tabs.contains(where: { $0.id == id })
+        guard let space = spaceModel(matching: assignment), selectedSpaceID == assignment.spaceID,
+            space.tabs.model(id) != nil
         else { return false }
-        guard
-            session.moveTab(
-                id,
-                to: placement,
-                folderID: folderID,
-                before: destinationTabID
-            )
-        else { return false }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
+        return moveSessionTab(id, in: assignment.spaceID, to: placement, folderID: folderID, before: destinationTabID)
     }
 
     @discardableResult
     func moveTab(
         _ item: BrowserTabDragItem,
         to placement: TabPlacement,
-        folderID: FolderID? = nil,
-        before destinationTabID: TabID? = nil
+        folderID: UUID? = nil,
+        before destinationTabID: UUID? = nil
     ) -> Bool {
-        guard let destination = selectedSpace
-        else { return false }
+        guard let destination = shownSpace else { return false }
         return moveTab(
-            item,
-            to: placement,
-            folderID: folderID,
-            before: destinationTabID,
-            matching: BrowserSpaceRuntimeAssignment(space: destination)
-        )
+            item, to: placement, folderID: folderID, before: destinationTabID,
+            matching: BrowserSpaceRuntimeAssignment(space: destination))
     }
 
     @discardableResult
     func moveTab(
         _ item: BrowserTabDragItem,
         to placement: TabPlacement,
-        folderID: FolderID? = nil,
-        before destinationTabID: TabID? = nil,
-        matching destinationAssignment: BrowserSpaceRuntimeAssignment,
-        detachesFromSplit: Bool = false
+        folderID: UUID? = nil,
+        before destinationTabID: UUID? = nil,
+        matching destinationAssignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
         let sourceAssignment = item.spaceAssignment
-        guard let source = space(matching: sourceAssignment),
-            source.tabs.contains(where: { $0.id == item.tabID }),
-            let destination = space(matching: destinationAssignment),
-            folderID == nil
-                || destination.folders.contains(where: { $0.id == folderID }),
-            destinationTabID == nil
-                || destination.tabs.contains(where: {
-                    $0.id == destinationTabID
-                        && $0.placement == placement
-                        && $0.folderID == folderID
-                }),
-            session.selectedSpaceID == destinationAssignment.spaceID
+        guard let source = spaceModel(matching: sourceAssignment), source.tabs.model(item.tabID) != nil,
+            spaceModel(matching: destinationAssignment) != nil, selectedSpaceID == destinationAssignment.spaceID
         else { return false }
 
         let moved: Bool
         if sourceAssignment == destinationAssignment {
-            moved = session.moveTab(
-                item.tabID,
-                to: placement,
-                folderID: folderID,
-                before: destinationTabID,
-                detachesFromSplit: detachesFromSplit
-            )
+            moved = moveSessionTab(
+                item.tabID, in: sourceAssignment.spaceID, to: placement, folderID: folderID, before: destinationTabID)
         } else {
             moved = moveTabBetweenSpaces(
                 item.tabID,
@@ -169,31 +123,28 @@ extension BrowserStore {
         if sourceAssignment != destinationAssignment {
             interactionObserver?.browserDidMoveTab(from: item.runtimeAssignment, to: destinationAssignment)
         }
-        persist(syncUrgency: .coalesced, scope: .core)
         return true
     }
 
-    func canMoveTab(_ id: TabID, from sourceSpaceID: SpaceID, into destinationSpaceID: SpaceID) -> Bool {
-        guard !deletingSpaceIDs.contains(sourceSpaceID),
-            !deletingSpaceIDs.contains(destinationSpaceID)
-        else {
-            return false
-        }
-        return session.canMoveTab(
-            id,
-            from: sourceSpaceID,
-            into: destinationSpaceID
-        )
+    func canMoveTab(_ id: UUID, from sourceSpaceID: UUID, into destinationSpaceID: UUID) -> Bool {
+        guard !isDeleting(sourceSpaceID), !isDeleting(destinationSpaceID), sourceSpaceID != destinationSpaceID,
+            spaceModel(sourceSpaceID)?.tabs.contains(id) == true, spaceModel(destinationSpaceID) != nil
+        else { return false }
+        return family.canSend(
+            MoveTabToSpace(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: sourceSpaceID,
+                tabID: id, destinationSpaceID: destinationSpaceID, placement: nil, folderID: nil,
+                beforeTabID: nil, follows: false),
+            from: self)
     }
 
     func canMoveTab(
-        _ id: TabID,
+        _ id: UUID,
         matching sourceAssignment: BrowserSpaceRuntimeAssignment,
         into destinationAssignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard let source = space(matching: sourceAssignment),
-            source.tabs.contains(where: { $0.id == id }),
-            space(matching: destinationAssignment) != nil
+        guard let source = spaceModel(matching: sourceAssignment), source.tabs.model(id) != nil,
+            spaceModel(matching: destinationAssignment) != nil
         else { return false }
         return canMoveTab(
             id,
@@ -204,30 +155,18 @@ extension BrowserStore {
 
     @discardableResult
     func moveTab(
-        _ id: TabID,
-        from sourceSpaceID: SpaceID,
-        into destinationSpaceID: SpaceID
+        _ id: UUID,
+        from sourceSpaceID: UUID,
+        into destinationSpaceID: UUID
     ) -> Bool {
-        guard !deletingSpaceIDs.contains(sourceSpaceID),
-            !deletingSpaceIDs.contains(destinationSpaceID),
-            let sourceSpace = session.space(id: sourceSpaceID),
-            sourceSpace.contains(id),
-            moveTabBetweenSpaces(
-                id,
-                from: sourceSpaceID,
-                into: destinationSpaceID
-            )
-        else {
-            return false
-        }
-        guard let destinationSpace = session.space(id: destinationSpaceID) else {
-            return false
-        }
-        interactionObserver?.browserDidMoveTab(
-            from: BrowserTabRuntimeAssignment(tabID: id, spaceID: sourceSpace.id, profileID: sourceSpace.profile.id),
-            to: BrowserSpaceRuntimeAssignment(space: destinationSpace)
-        )
-        persist(syncUrgency: .coalesced, scope: .core)
+        guard !isDeleting(sourceSpaceID), !isDeleting(destinationSpaceID),
+            let sourceSpace = spaceModel(sourceSpaceID), sourceSpace.tabs.contains(id)
+        else { return false }
+        let source = BrowserTabRuntimeAssignment(tabID: id, spaceID: sourceSpaceID, profileID: sourceSpace.profileID)
+        guard moveTabBetweenSpaces(id, from: sourceSpaceID, into: destinationSpaceID),
+            let destinationSpace = spaceModel(destinationSpaceID)
+        else { return false }
+        interactionObserver?.browserDidMoveTab(from: source, to: BrowserSpaceRuntimeAssignment(space: destinationSpace))
         return true
     }
 
@@ -237,51 +176,40 @@ extension BrowserStore {
     func consumeMovedTabActivation() -> Bool {
         guard let activation = pendingMovedTabActivation else { return false }
         pendingMovedTabActivation = nil
-        return selectedSpace?.id == activation.spaceID
-            && selectedSpace?.profile.id == activation.profileID
-            && selectedTab?.id == activation.tabID
+        return shownTabAssignment == activation
     }
 
     private func moveTabBetweenSpaces(
-        _ id: TabID,
-        from sourceSpaceID: SpaceID,
-        into destinationSpaceID: SpaceID,
+        _ id: UUID,
+        from sourceSpaceID: UUID,
+        into destinationSpaceID: UUID,
         to placement: TabPlacement? = nil,
-        folderID: FolderID? = nil,
-        before destinationTabID: TabID? = nil
+        folderID: UUID? = nil,
+        before destinationTabID: UUID? = nil
     ) -> Bool {
-        guard let source = session.space(id: sourceSpaceID) else { return false }
-        var history = tabSelectionHistory
-        let fallbackID =
-            source.selectedTabID == id
-            ? history.fallbackTabID(
-                afterDismissing: id, in: sourceSpaceID,
-                availableTabIDs: Set(source.tabs.map(\.id)))
-            : nil
-        var draft = session
-        guard
-            draft.moveTab(
-                id, from: sourceSpaceID, into: destinationSpaceID,
-                to: placement, folderID: folderID, before: destinationTabID,
-                sourceFallbackTabID: fallbackID
-            )
-        else { return false }
-        if linkPreferences.followsTabsMovedToAnotherSpace,
-            let destination = draft.space(id: destinationSpaceID)
-        {
-            draft.selectSpace(destinationSpaceID)
-            draft.selectTab(id)
-            pendingMovedTabActivation = BrowserTabRuntimeAssignment(
-                tabID: id, spaceID: destination.id, profileID: destination.profile.id)
+        guard spaceModel(sourceSpaceID) != nil, let destination = spaceModel(destinationSpaceID) else { return false }
+        let follows = linkPreferences.preferences.followsMovedTabs
+        do {
+            try family.commit(
+                MoveTabToSpace(
+                    workspaceID: family.workspaceID, windowID: windowID, spaceID: sourceSpaceID,
+                    tabID: id, destinationSpaceID: destinationSpaceID, placement: placement,
+                    folderID: folderID, beforeTabID: destinationTabID, follows: follows),
+                from: self)
+        } catch {
+            localSyncErrorDescription = "Core tab move failed: \(error)"
+            return false
         }
-        tabSelectionHistory = history
-        session = draft
+        if follows {
+            pendingMovedTabActivation = BrowserTabRuntimeAssignment(
+                tabID: id, spaceID: destinationSpaceID, profileID: destination.profileID)
+        }
         return true
     }
 
     @discardableResult
     func moveTab(
-        _ id: TabID,
+        _ id: UUID,
         matching sourceAssignment: BrowserSpaceRuntimeAssignment,
         into destinationAssignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
@@ -314,31 +242,30 @@ extension BrowserStore {
         )
     }
 
+    /// Copies a tab among the open tabs, under an identity the core gives it,
+    /// and shows the copy. Answers the copy, or nil when the core refused it.
     @discardableResult
-    func duplicateTab(_ id: TabID, in spaceID: SpaceID) -> TabID? {
-        guard let duplicateID = session.duplicateTab(id, in: spaceID) else { return nil }
-        persist(scope: .favicon(for: duplicateID))
-        return duplicateID
+    func duplicateTab(_ id: UUID, in spaceID: UUID) -> UUID? {
+        sendCopying(
+            DuplicateTab(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: spaceID, tabID: id, placement: nil,
+                shows: true),
+            in: spaceID)?.first?.copyTabID
     }
 
     @discardableResult
     func duplicateTab(
-        _ id: TabID,
+        _ id: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
-    ) -> TabID? {
-        guard let space = space(matching: assignment),
-            space.tabs.contains(where: { $0.id == id })
-        else { return nil }
+    ) -> UUID? {
+        guard spaceModel(matching: assignment)?.tabs.model(id) != nil else { return nil }
         return duplicateTab(id, in: assignment.spaceID)
     }
 
     @discardableResult
-    func duplicateSelectedTab() -> TabID? {
-        guard let spaceID = selectedSpace?.id,
-            let tab = selectedTab,
-            !tab.isStartPage
-        else { return nil }
-        return duplicateTab(tab.id, in: spaceID)
+    func duplicateSelectedTab() -> UUID? {
+        guard let space = shownSpace, let tab = shownTab else { return nil }
+        return duplicateTab(tab.id, in: space.id)
     }
 
 }
@@ -354,63 +281,29 @@ extension BrowserStore {
     @discardableResult
     func addTabToSplit(
         _ item: BrowserTabDragItem,
-        joining targetTabID: TabID,
+        joining targetTabID: UUID,
         at memberIndex: Int?
     ) -> Bool {
-        guard !deletingSpaceIDs.contains(item.spaceID),
-            item.spaceID == session.selectedSpaceID,
-            let space = space(matching: item.spaceAssignment),
-            space.tabs.contains(where: { $0.id == item.tabID }),
-            space.tabs.contains(where: { $0.id == targetTabID })
-        else { return false }
-        var draft = session
-        guard
-            let copies = draft.addTabToSplitPreservingDurableTabs(
-                item.tabID,
-                joining: targetTabID,
-                at: memberIndex,
-                in: item.spaceID
-            )
-        else { return false }
-        commitSplitCopies(copies, in: space, session: draft)
-        return true
-    }
-
-    private func commitSplitCopies(
-        _ copies: [(source: TabID, copy: TabID)],
-        in space: BrowserSpace,
-        session draftSession: BrowserSession
-    ) {
-        var draft = draftSession
-        guard let spaceIndex = draft.spaces.firstIndex(where: { $0.id == space.id }) else { return }
-        for pair in copies {
-            guard let source = space.tabs.first(where: { $0.id == pair.source }),
-                let copyIndex = draft.spaces[spaceIndex].tabs.firstIndex(where: { $0.id == pair.copy })
-            else { continue }
-            tabCopying?.prepareTabCopy(from: source, to: &draft.spaces[spaceIndex].tabs[copyIndex], in: space)
+        guard item.spaceID == selectedSpaceID, let space = spaceModel(matching: item.spaceAssignment) else {
+            return false
         }
-        session = draft
-        persist(
-            syncUrgency: .coalesced,
-            scope: BrowserSessionSaveScope(
-                writesCore: true, history: .nothing, favicons: .only(Set(copies.map(\.copy))))
-        )
+        return sendCopying(
+            JoinSplit(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: space.id,
+                tabID: item.tabID, targetTabID: targetTabID, index: memberIndex),
+            in: space.id) != nil
     }
 
     /// Removal relocates the departing tab past its run, so it goes through the
     /// same selected-Space requirement every other placement move has.
     @discardableResult
     func removeTabFromSplit(
-        _ tabID: TabID,
+        _ tabID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            session.selectedSpaceID == assignment.spaceID,
-            space.tabs.contains(where: { $0.id == tabID }),
-            session.removeTabFromSplit(tabID, in: assignment.spaceID)
-        else { return false }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
+        guard spaceModel(matching: assignment) != nil, selectedSpaceID == assignment.spaceID else { return false }
+        return family.send(
+            LeaveSplit(workspaceID: family.workspaceID, spaceID: assignment.spaceID, tabID: tabID), from: self)
     }
 
     /// Drops a card into an explicit slot of its own split run.
@@ -419,205 +312,140 @@ extension BrowserStore {
     /// gap the pointer is nearest without checking the ends first.
     @discardableResult
     func moveSplitMember(
-        _ tabID: TabID,
+        _ tabID: UUID,
         toMemberIndex memberIndex: Int,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            session.selectedSpaceID == assignment.spaceID,
-            space.tabs.contains(where: { $0.id == tabID }),
-            session.moveSplitMember(
-                tabID,
-                toMemberIndex: memberIndex,
-                in: assignment.spaceID
-            )
-        else { return false }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
+        guard spaceModel(matching: assignment) != nil, selectedSpaceID == assignment.spaceID else { return false }
+        return family.send(
+            MoveSplitMember(
+                workspaceID: family.workspaceID, spaceID: assignment.spaceID, tabID: tabID, index: memberIndex),
+            from: self)
     }
 
     /// Steps a card one or more slots along its run. Selection is untouched:
     /// the card the person is moving is the card they keep looking at.
     @discardableResult
     func moveSplitMember(
-        _ tabID: TabID,
+        _ tabID: UUID,
         by offset: Int,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            session.selectedSpaceID == assignment.spaceID,
-            space.tabs.contains(where: { $0.id == tabID }),
-            session.moveSplitMember(tabID, by: offset, in: assignment.spaceID)
-        else { return false }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
+        guard spaceModel(matching: assignment) != nil, selectedSpaceID == assignment.spaceID else { return false }
+        return family.send(stepping(tabID, by: offset, in: assignment.spaceID), from: self)
     }
 
-    /// Whether stepping `tabID` `offset` slots would move anything.
+    /// Whether stepping `tabID` `offset` slots would move anything, as the
+    /// core answers it, in the Space this window shows.
     ///
     /// One predicate for every surface that offers the move: the menu-bar items,
-    /// the iPad chords, and both context menus dim themselves with this rather
-    /// than each deriving "is there a card that way" for itself. A tab outside a
-    /// renderable group answers `false`, so a run too short to draw offers no
-    /// reordering either.
+    /// the iPad chords, and both context menus dim themselves with this.
     func canMoveSplitMember(
-        _ tabID: TabID,
+        _ tabID: UUID,
         by offset: Int,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard offset != 0,
-            session.selectedSpaceID == assignment.spaceID,
-            let space = space(matching: assignment),
-            let groupID = space.splitGroup(containing: tabID)
-        else { return false }
-        let members = space.splitGroupMembers(of: groupID)
-        guard let memberIndex = members.firstIndex(where: { $0.id == tabID })
-        else { return false }
-        return members.indices.contains(memberIndex + offset)
+        guard selectedSpaceID == assignment.spaceID, spaceModel(matching: assignment) != nil else { return false }
+        return family.canSend(stepping(tabID, by: offset, in: assignment.spaceID), from: self)
+    }
+
+    private func stepping(_ tabID: UUID, by offset: Int, in spaceID: UUID) -> StepSplitMember {
+        StepSplitMember(workspaceID: family.workspaceID, spaceID: spaceID, tabID: tabID, offset: offset)
     }
 
     @discardableResult
     func dissolveSplit(
-        containing tabID: TabID,
+        containing tabID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            let groupID = space.tabs.first(where: { $0.id == tabID })?.splitGroupID,
-            session.dissolveSplit(groupID, in: assignment.spaceID)
-        else { return false }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
+        guard let space = spaceModel(matching: assignment), let groupID = space.tabs.model(tabID)?.splitGroupID else {
+            return false
+        }
+        return family.send(
+            DissolveSplit(workspaceID: family.workspaceID, spaceID: space.id, groupID: groupID),
+            from: self)
     }
 
     @discardableResult
     func setSplitGroupTitle(
         _ title: String?,
-        groupID: SplitGroupID,
+        groupID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard
-            space(matching: assignment)?.liveSplitGroupIDs.contains(groupID)
-                == true,
-            session.setSplitGroupTitle(
-                title,
-                groupID: groupID,
-                in: assignment.spaceID
-            )
-        else { return false }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
+        guard spaceModel(matching: assignment) != nil else { return false }
+        return family.send(
+            NameSplit(
+                workspaceID: family.workspaceID, spaceID: assignment.spaceID, groupID: groupID,
+                name: title),
+            from: self, failure: "Core record command failed")
     }
 
     @discardableResult
     func setSplitGroupEmojiIcon(
         _ emoji: String?,
-        groupID: SplitGroupID,
+        groupID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard
-            space(matching: assignment)?.liveSplitGroupIDs.contains(groupID)
-                == true,
-            session.setSplitGroupEmojiIcon(
-                emoji,
-                groupID: groupID,
-                in: assignment.spaceID
-            )
-        else { return false }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
+        guard spaceModel(matching: assignment) != nil else { return false }
+        return family.send(
+            SetSplitIcon(workspaceID: family.workspaceID, spaceID: assignment.spaceID, groupID: groupID, emoji: emoji),
+            from: self, failure: "Core record command failed")
     }
 
     @discardableResult
     func setSplitGroupTint(
-        _ tint: BrowserSpaceBrandColor?,
-        groupID: SplitGroupID,
+        _ tint: BrandColor?,
+        groupID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard
-            space(matching: assignment)?.liveSplitGroupIDs.contains(groupID)
-                == true,
-            session.setSplitGroupTint(
-                tint,
-                groupID: groupID,
-                in: assignment.spaceID
-            )
-        else { return false }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
+        guard spaceModel(matching: assignment) != nil else { return false }
+        return family.send(
+            TintSplit(
+                workspaceID: family.workspaceID, spaceID: assignment.spaceID, groupID: groupID,
+                tint: tint),
+            from: self, failure: "Core record command failed")
     }
 
-    /// The selected tab, when it can host a split card at all.
-    ///
-    /// Durable tabs contribute Open copies. A Start Page is an uncommitted
-    /// navigation draft, so it cannot anchor a group.
-    private var splitTargetTab: BrowserTab? {
-        guard let space = selectedSpace,
-            let selectedTabID = space.selectedTabID,
-            let selected = space.tabs.first(where: { $0.id == selectedTabID }),
-            !selected.isStartPage
-        else { return nil }
-        let memberCount =
-            selected.splitGroupID
-            .map { space.splitGroupMembers(of: $0).count } ?? 1
-        guard memberCount < BrowserSplitGroupPolicy.maximumMembers else {
-            return nil
-        }
-        return selected
+    /// Whether the core would join `tabID` to the split of `targetTabID`: no
+    /// Start Page on either side, not already one group, and room for another
+    /// card. Asked without committing, so menus reflect the core's own rule.
+    private func acceptsSplitJoin(_ tabID: UUID, joining targetTabID: UUID, in spaceID: UUID) -> Bool {
+        family.canSend(
+            JoinSplit(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: spaceID,
+                tabID: tabID, targetTabID: targetTabID, index: nil),
+            from: self)
     }
 
-    /// The tab "Split With Next Tab" would add: the first tab after the
-    /// selected one in its own sidebar section that is free to join.
-    ///
-    /// Scope is the selected tab's placement and folder, in session order,
-    /// which is exactly the order that section renders in. Tabs already
-    /// carrying a group are skipped rather than stolen — including the selected
-    /// tab's own siblings, so repeating the command grows the group outward
-    /// instead of shuffling its members.
-    var nextSplitJoinCandidate: BrowserTab? {
-        guard let space = selectedSpace,
-            let selected = splitTargetTab,
-            let selectedIndex = space.tabs.firstIndex(where: { $0.id == selected.id })
-        else { return nil }
-        return space.tabs[space.tabs.index(after: selectedIndex)...].first {
-            $0.placement == selected.placement
-                && $0.folderID == selected.folderID
-                && $0.splitGroupID == nil
-                && !$0.isStartPage
-        }
+    /// The tab "Split With Next Tab" would add to the split of the tab this
+    /// window shows, as the core answers it: the next tab row in the shown
+    /// tab's own sidebar list that is in no split, when the core would join it.
+    var nextSplitJoinCandidate: UUID? {
+        (try? core.query(SplitJoinCandidate(windowID: windowID)))?.tabID
     }
 
-    /// Whether the tab-list menu's "Split with Current Tab" would do anything.
-    ///
-    /// The joiner may be pinned or filed elsewhere: durable tabs contribute
-    /// copies beside the selected tab, which also contributes a copy if durable.
-    /// What it may not be is the selected tab itself, a member of the group it
-    /// would join, or a tab in a Space that is not the selected one.
+    /// Whether the tab-list menu's "Split with Current Tab" would do anything:
+    /// the core accepts joining the menu's subject to the selected tab's group
+    /// in the Space this window shows.
     func canSplitTabWithSelectedTab(
-        _ tabID: TabID,
+        _ tabID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            space.id == session.selectedSpaceID,
-            let selected = splitTargetTab,
-            selected.id == space.selectedTabID,
-            tabID != selected.id,
-            let tab = space.tabs.first(where: { $0.id == tabID }),
-            !tab.isStartPage,
-            tab.splitGroupID == nil || tab.splitGroupID != selected.splitGroupID
+        guard spaceModel(matching: assignment) != nil, assignment.spaceID == selectedSpaceID,
+            let selectedTabID = selectedTabID(in: assignment.spaceID), tabID != selectedTabID
         else { return false }
-        return true
+        return acceptsSplitJoin(tabID, joining: selectedTabID, in: assignment.spaceID)
     }
 
     /// "Split with Current Tab": the menu's subject joins the selected tab's
     /// group and takes focus, the same way a dropped tab does.
     @discardableResult
     func splitTabWithSelectedTab(
-        _ tabID: TabID,
+        _ tabID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
         guard canSplitTabWithSelectedTab(tabID, matching: assignment),
-            let space = space(matching: assignment),
-            let selectedTabID = space.selectedTabID
+            let selectedTabID = selectedTabID(in: assignment.spaceID)
         else { return false }
         return addTabToSplit(
             BrowserTabDragItem(
@@ -633,28 +461,24 @@ extension BrowserStore {
     /// "Open Link in Split View": the link opens as a new tab beside the tab it
     /// came from, and the two present as one split.
     ///
-    /// Uses ordinary tab insertion in a draft session, then commits the new tab
-    /// and any durable destination copies together after the join succeeds.
+    /// The core commits the new tab and any durable destination copies together
+    /// after validating the complete join.
     @discardableResult
     func openLinkInSplit(
         url: URL,
-        joining targetTabID: TabID,
+        joining targetTabID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
-    ) -> TabID? {
-        guard canOpenLinkInSplit(joining: targetTabID, matching: assignment),
-            let space = space(matching: assignment)
-        else { return nil }
-        var draft = session
+    ) -> UUID? {
+        guard canOpenLinkInSplit(joining: targetTabID, matching: assignment) else { return nil }
+        let openedID = UUID()
         guard
-            let openedID = draft.openTab(
-                title: url.host() ?? url.absoluteString, url: url, in: space.id,
-                requestedIndex: BrowserTabInsertionPolicy.requestedIndex(after: space.selectedTabID, in: space)
-            ),
-            let copies = draft.addTabToSplitPreservingDurableTabs(
-                openedID, joining: targetTabID, at: nil, in: space.id
-            )
+            sendCopying(
+                OpenLinkInSplit(
+                    workspaceID: family.workspaceID, windowID: windowID, spaceID: assignment.spaceID,
+                    tabID: openedID, targetTabID: targetTabID, address: url.absoluteString,
+                    title: url.host() ?? url.absoluteString),
+                in: assignment.spaceID) != nil
         else { return nil }
-        commitSplitCopies(copies, in: space, session: draft)
         return openedID
     }
 
@@ -662,26 +486,22 @@ extension BrowserStore {
     /// `tabID`.
     ///
     /// The web-content context menu asks this while AppKit holds the main
-    /// thread, so it answers from state rather than starting anything. The
-    /// conditions are the ones `splitTargetTab` already applies to the selected
-    /// tab, asked of the right-clicked card instead: a Start Page is a draft
-    /// the sidebar does not even list, and a
-    /// group already at `BrowserSplitGroupPolicy.maximumMembers` takes no more
-    /// cards. A refusal omits the item rather than dimming it — a menu that is
-    /// rarely relevant reads better without a permanently disabled row.
+    /// thread, so it prepares the core command and releases it without
+    /// starting anything: a Start Page is a draft the sidebar does not even
+    /// list, and a full group takes no more cards. A refusal omits the item
+    /// rather than dimming it — a menu that is rarely relevant reads better
+    /// without a permanently disabled row.
     func canOpenLinkInSplit(
-        joining tabID: TabID,
+        joining tabID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            space.id == session.selectedSpaceID,
-            let tab = space.tabs.first(where: { $0.id == tabID }),
-            !tab.isStartPage
+        guard let space = spaceModel(matching: assignment), space.id == selectedSpaceID, space.tabs.model(tabID) != nil
         else { return false }
-        let memberCount =
-            tab.splitGroupID
-            .map { space.splitGroupMembers(of: $0).count } ?? 1
-        return memberCount < BrowserSplitGroupPolicy.maximumMembers
+        return family.canSend(
+            OpenLinkInSplit(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: space.id, tabID: UUID(),
+                targetTabID: tabID, address: "about:blank", title: ""),
+            from: self)
     }
 
     /// Split-level link operations for a page pool. The macOS web-content
@@ -694,7 +514,7 @@ extension BrowserStore {
                     ?? false
             },
             openLink: { [weak self] url, tabID, assignment in
-                _ = self?.openLinkInSplit(
+                self?.openLinkInSplit(
                     url: url,
                     joining: tabID,
                     matching: assignment
@@ -702,130 +522,26 @@ extension BrowserStore {
             }
         )
     }
-
-    /// Commits a sidebar group-row drag: the whole group moves as one ordered
-    /// block to a placement, folder, and anchor.
-    @discardableResult
-    func moveSplitGroup(
-        _ groupID: SplitGroupID,
-        matching assignment: BrowserSpaceRuntimeAssignment,
-        to placement: TabPlacement,
-        folderID: FolderID? = nil,
-        before destinationTabID: TabID? = nil
-    ) -> Bool {
-        guard let space = space(matching: assignment),
-            session.selectedSpaceID == assignment.spaceID,
-            space.tabs.contains(where: { $0.splitGroupID == groupID }),
-            folderID == nil || space.folders.contains(where: { $0.id == folderID }),
-            destinationTabID == nil
-                || space.tabs.contains(where: {
-                    $0.id == destinationTabID
-                        && $0.placement == placement
-                        && $0.folderID == folderID
-                }),
-            session.moveSplitGroup(
-                groupID,
-                to: placement,
-                folderID: folderID,
-                before: destinationTabID,
-                in: assignment.spaceID
-            )
-        else { return false }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
-    }
 }
 
 // MARK: - Selection
 
 extension BrowserStore {
-    func space(
-        matching assignment: BrowserSpaceRuntimeAssignment
-    ) -> BrowserSpace? {
-        guard !deletingSpaceIDs.contains(assignment.spaceID),
-            let space = session.space(id: assignment.spaceID),
-            assignment.matches(space)
-        else { return nil }
-        return space
+    /// Shows another Space in this window. What a window shows is the core
+    /// device's, and never part of the session.
+    func selectSpace(_ id: UUID) {
+        guard id != selectedSpaceID, !isDeleting(id), spaceModel(id) != nil else { return }
+        selectPresentedSpace(id)
     }
 
-    func selectSpace(_ id: SpaceID) {
-        guard id != session.selectedSpaceID,
-            !deletingSpaceIDs.contains(id),
-            session.space(id: id) != nil
-        else { return }
-        session.selectSpace(id)
-        persist(syncUrgency: .coalesced, scope: .core)
+    func selectTab(_ id: UUID) {
+        guard let space = shownSpace, activateSessionTab(id, in: space.id) else { return }
     }
 
-    @discardableResult
-    func selectAdjacentSpace(_ direction: BrowserSpaceSwipeDirection) -> SpaceID? {
-        let spaces = session.spaces.filter {
-            !deletingSpaceIDs.contains($0.id)
-        }
-        guard spaces.count > 1,
-            let currentIndex = spaces.firstIndex(where: { $0.id == session.selectedSpaceID })
-        else {
-            return nil
-        }
-        let nextIndex: Int
-        switch direction {
-        case .previous:
-            nextIndex = (currentIndex - 1 + spaces.count) % spaces.count
-        case .next:
-            nextIndex = (currentIndex + 1) % spaces.count
-        }
-        let nextID = spaces[nextIndex].id
-        selectSpace(nextID)
-        return nextID
-    }
-
-    func selectTab(_ id: TabID) {
-        guard selectedSpace != nil else { return }
-        session.selectTab(id)
-        persist(syncUrgency: .coalesced, scope: .core)
-    }
-
-    @discardableResult
-    func selectDismissalFallback(afterDismissing id: TabID) -> TabID? {
-        guard let space = selectedSpace else { return nil }
-        let fallbackID = dismissalFallbackTabID(
-            afterDismissing: id,
-            in: space
-        )
-        if let fallbackID {
-            session.selectTab(fallbackID)
-        } else {
-            session.clearTabSelection(in: space.id)
-        }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return fallbackID
-    }
-
-    @discardableResult
-    func selectAdjacentTab(offset: Int) -> TabID? {
-        guard let tabs = selectedSpace?.tabs,
-            !tabs.isEmpty,
-            let selectedID = selectedTab?.id,
-            let selectedIndex = tabs.firstIndex(where: { $0.id == selectedID })
-        else {
-            return nil
-        }
-        let count = tabs.count
-        let wrappedIndex = (selectedIndex + offset % count + count) % count
-        let nextID = tabs[wrappedIndex].id
-        selectTab(nextID)
-        return nextID
-    }
-
-    func dismissalFallbackTabID(
-        afterDismissing id: TabID,
-        in space: BrowserSpace
-    ) -> TabID? {
-        tabSelectionHistory.fallbackTabID(
-            afterDismissing: id,
-            in: space.id,
-            availableTabIDs: Set(space.tabs.map(\.id))
-        )
+    /// Stops showing a tab without closing it: the window returns to the tab
+    /// it showed before in the shown Space, or shows nothing there.
+    func selectDismissalFallback(afterDismissing id: UUID) {
+        guard let space = shownSpace else { return }
+        dismissShownTab(id, in: space.id)
     }
 }

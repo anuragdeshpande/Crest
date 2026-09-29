@@ -14,28 +14,32 @@ final class SpacePagerViewport<Content: View>: NSView {
         var initialOffset: CGFloat = 0
         var translation: CGFloat = 0
         var direction: CGFloat = 0
-        var settledDestination: SpaceID?
+        var settledDestination: UUID?
         var transition: SpacePagerSettlement?
         var hasPreparedNeighbors = false
         let commitsSelection: Bool
     }
 
-    private(set) var spaces: [BrowserSpace] = []
-    private(set) var selectedSpaceID: SpaceID?
-    private(set) var presentationSpaceID: SpaceID?
+    private(set) var spaces: [SpaceModel] = []
+    /// What the Spaces were at the last update, kept as values: the models
+    /// change in place, so only a snapshot tells an update what moved.
+    private var shownAssignments: [BrowserSpaceRuntimeAssignment] = []
+    private var shownAccessPolicies: [SpaceAccessPolicy] = []
+    private(set) var selectedSpaceID: UUID?
+    private(set) var presentationSpaceID: UUID?
     private(set) var isInteractionLocked = false
     private(set) var reduceMotion = false
     private(set) var layoutDirection = LayoutDirection.leftToRight
     private(set) var motion: Motion?
     private var generation: UInt = 0
-    private var expectedSelection: SpaceID?
+    private var expectedSelection: UUID?
     private var hosts: [BrowserSpaceRuntimeAssignment: SpacePageHost<Content>] = [:]
-    private var makeRoot: ((BrowserSpace, Bool) -> SpacePageRoot<Content>)?
-    private var selectSpace: (SpaceID) -> SpaceID = { $0 }
+    private var makeRoot: ((SpaceModel, Bool) -> SpacePageRoot<Content>)?
+    private var selectSpace: (UUID) -> UUID = { $0 }
     private var lastSize = CGSize.zero
     private var presentation: SpacePagerPresentation?
-    private var contentTopInsets: [SpaceID: CGFloat] = [:]
-    private var pendingContentTopInsets: [SpaceID: CGFloat] = [:]
+    private var contentTopInsets: [UUID: CGFloat] = [:]
+    private var pendingContentTopInsets: [UUID: CGFloat] = [:]
     private var motionDisplayLink: CADisplayLink?
     private var maximumTrackingSpeed: CGFloat { bounds.width * SpacePagerSettlement.trackingPagesPerSecond }
     private lazy var frameObserver = SpacePagerFrameObserver { [weak self] interval in
@@ -65,18 +69,20 @@ final class SpacePagerViewport<Content: View>: NSView {
     }
 
     func update(
-        spaces: [BrowserSpace], selectedSpaceID: SpaceID,
+        spaces: [SpaceModel], selectedSpaceID: UUID,
         isInteractionLocked: Bool, reduceMotion: Bool, layoutDirection: LayoutDirection,
         presentation: SpacePagerPresentation? = nil,
-        contentTopInsets: [SpaceID: CGFloat] = [:],
-        selectSpace: @escaping (SpaceID) -> SpaceID,
-        makeRoot: @escaping (BrowserSpace, Bool) -> SpacePageRoot<Content>
+        contentTopInsets: [UUID: CGFloat] = [:],
+        selectSpace: @escaping (UUID) -> UUID,
+        makeRoot: @escaping (SpaceModel, Bool) -> SpacePageRoot<Content>
     ) {
-        let assignmentsChanged =
-            self.spaces.map(BrowserSpaceRuntimeAssignment.init(space:))
-            != spaces.map(BrowserSpaceRuntimeAssignment.init(space:))
+        let assignments = spaces.map(BrowserSpaceRuntimeAssignment.init(space:))
+        let accessPolicies = spaces.map(\.settings.accessPolicy)
+        let assignmentsChanged = shownAssignments != assignments
         let selectionChanged = self.selectedSpaceID != selectedSpaceID
-        let accessPoliciesChanged = self.spaces.map(\.accessPolicy) != spaces.map(\.accessPolicy)
+        let accessPoliciesChanged = shownAccessPolicies != accessPolicies
+        shownAssignments = assignments
+        shownAccessPolicies = accessPolicies
         let invalidatesMotion =
             assignmentsChanged || accessPoliciesChanged || isInteractionLocked
             || self.reduceMotion != reduceMotion || self.layoutDirection != layoutDirection
@@ -345,7 +351,7 @@ final class SpacePagerViewport<Content: View>: NSView {
         updateAccessibility()
     }
 
-    private func animate(to destination: SpaceID, commitsSelection: Bool) {
+    private func animate(to destination: UUID, commitsSelection: Bool) {
         guard let presentationSpaceID, let origin = assignment(for: presentationSpaceID),
             let target = assignment(for: destination)
         else { return }
@@ -370,7 +376,7 @@ final class SpacePagerViewport<Content: View>: NSView {
         return host.frame.minX
     }
 
-    private func settleMotion(to destination: SpaceID) {
+    private func settleMotion(to destination: UUID) {
         guard var current = motion, assignment(for: destination) != nil else { return }
         let token = current.generation
         let startOffset = visibleOffset(for: current.origin, during: current)
@@ -428,7 +434,7 @@ final class SpacePagerViewport<Content: View>: NSView {
         startPresentationSampling()
     }
 
-    private func finishMotion(token: UInt, destination: SpaceID?) {
+    private func finishMotion(token: UInt, destination: UUID?) {
         guard let current = motion, current.generation == token,
             assignment(for: current.origin.spaceID) == current.origin,
             let destination, assignment(for: destination) != nil
@@ -499,11 +505,11 @@ final class SpacePagerViewport<Content: View>: NSView {
         motionDisplayLink = nil
     }
 
-    private func assignment(for id: SpaceID) -> BrowserSpaceRuntimeAssignment? {
+    private func assignment(for id: UUID) -> BrowserSpaceRuntimeAssignment? {
         spaces.first { $0.id == id }.map(BrowserSpaceRuntimeAssignment.init(space:))
     }
 
-    private func prepareHosts(around id: SpaceID, retaining extra: SpaceID? = nil, refreshContent: Bool = true) {
+    private func prepareHosts(around id: UUID, retaining extra: UUID? = nil, refreshContent: Bool = true) {
         guard let makeRoot, let index = spaces.firstIndex(where: { $0.id == id }) else { return }
         let neighbors = spaces[max(0, index - 1)...min(spaces.count - 1, index + 1)]
         var required = Set(neighbors.map { BrowserSpaceRuntimeAssignment(space: $0) })

@@ -4,13 +4,17 @@ import Observation
 @Observable
 @MainActor
 final class BrowserTransientBrowsingCoordinator {
-    private struct PeekPresentation {
+    private struct PeekPresentation: Equatable {
         let request: BrowserPeekRequest
         var phase: BrowserPeekPresentationPhase
         var motion: BrowserPeekMotionState?
     }
 
-    private var peeks: [PeekPresentation] = []
+    private var peeks: [PeekPresentation] {
+        get { observed(\.peeksStorage, as: \.peeks) }
+        set { publish(newValue, into: \.peeksStorage, as: \.peeks) }
+    }
+    @ObservationIgnored private var peeksStorage = [PeekPresentation]()
     var peekRequests: [BrowserPeekRequest] { peeks.map(\.request) }
     var peekRequest: BrowserPeekRequest? { peeks.last?.request }
     var peekPresentationPhase: BrowserPeekPresentationPhase? { peeks.last?.phase }
@@ -83,8 +87,14 @@ final class BrowserTransientBrowsingCoordinator {
         return true
     }
 
-    func reconcilePeeks(in session: BrowserSession) {
-        peeks.removeAll { !$0.request.hasSource(in: session) }
+    /// The Peeks whose source tab left its Space, as `browser` reads it.
+    func orphanedPeeks(in browser: BrowserStore) -> [UUID] {
+        peeks.filter { !$0.request.hasSource(in: browser) }.map(\.request.id)
+    }
+
+    /// Dismisses every Peek whose source tab left its Space.
+    func reconcilePeeks(in browser: BrowserStore) {
+        peeks.removeAll { !$0.request.hasSource(in: browser) }
     }
 
     func presentQuickWindow(_ request: BrowserQuickWindowRequest) {
@@ -108,3 +118,5 @@ final class BrowserTransientBrowsingCoordinator {
         return true
     }
 }
+
+extension BrowserTransientBrowsingCoordinator: BrowserStoreFirstObservable {}

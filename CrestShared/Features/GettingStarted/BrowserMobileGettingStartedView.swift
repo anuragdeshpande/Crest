@@ -76,7 +76,7 @@
             }
             .environment(practice.sidebarInteraction)
             .onDisappear { practice.sidebarInteraction.cancel() }
-            .animation(reduceMotion ? nil : CrestMotion.collection, value: practice.space.tabs)
+            .animation(reduceMotion ? nil : CrestMotion.collection, value: practice.space.sidebar.lists.map(\.rows))
 
         }
 
@@ -148,11 +148,15 @@
         @ViewBuilder private var lessonActions: some View {
             switch lesson {
             case 0:
-                Button("Pin Gmail", systemImage: "pin.fill") { practice.browser.pinTab(practice.mailID) }
-                    .buttonStyle(.crestPrimary(tint: CrestBrandPalette.butter))
+                Button("Pin Gmail", systemImage: "pin.fill") {
+                    if let mail = practice.tabID(.mail) { practice.browser.pinTab(mail) }
+                }
+                .buttonStyle(.crestPrimary(tint: CrestBrandPalette.butter))
             case 1:
-                Button("Save A weekend away", systemImage: "bookmark") { practice.browser.saveTab(practice.trailID) }
-                    .buttonStyle(.crestPrimary(tint: CrestBrandPalette.butter))
+                Button("Save A weekend away", systemImage: "bookmark") {
+                    if let trail = practice.tabID(.trail) { practice.browser.saveTab(trail) }
+                }
+                .buttonStyle(.crestPrimary(tint: CrestBrandPalette.butter))
             case 2:
                 Button("Add folder", systemImage: "folder.badge.plus") { practice.addFolder(nested: false) }
                     .buttonStyle(.crestSecondary)

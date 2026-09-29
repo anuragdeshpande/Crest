@@ -1,6 +1,15 @@
 import Foundation
 import Observation
 
+// MARK: - Types
+
+struct BrowserCredentialUsernameHint: Equatable, Sendable {
+    let origin: CredentialOrigin
+    let topLevelOrigin: CredentialOrigin
+    let username: String
+    let capturedAt: Date
+}
+
 /// Owns the short-lived credential state for one retained browser page.
 ///
 /// The generic fill target is intentionally opaque here. WebKit pages use a
@@ -9,7 +18,8 @@ import Observation
 @Observable
 @MainActor
 final class BrowserCredentialPageState<FillTarget> {
-    let spaceID: SpaceID
+    let spaceID: UUID
+    @ObservationIgnored private let core: CrestCore
 
     private(set) var fillRequest: BrowserCredentialFillRequest?
     private(set) var saveCandidate: BrowserCredentialSaveCandidate?
@@ -26,10 +36,14 @@ final class BrowserCredentialPageState<FillTarget> {
     @ObservationIgnored private var pendingSaveCandidate: BrowserCredentialSaveCandidate?
     @ObservationIgnored private var candidateExpirationTask: Task<Void, Never>?
 
-    init(spaceID: SpaceID) {
+    init(spaceID: UUID, core: CrestCore) {
         self.spaceID = spaceID
+        self.core = core
     }
 
+    /// Applies one validated form message. The portable core decides what
+    /// the message means from its redacted facts; the username and password
+    /// values stay here. Without a core answer nothing is captured or offered.
     func receive(
         _ message: BrowserCredentialFormMessage,
         frameOrigin: CredentialOrigin,
@@ -37,46 +51,56 @@ final class BrowserCredentialPageState<FillTarget> {
         isMainFrame: Bool,
         fillTarget: FillTarget?
     ) {
+        let event: CredentialCaptureEvent
         switch message.event {
-        case .username:
-            guard
-                BrowserCredentialCapturePolicy.accepts(
-                    frameOrigin: frameOrigin,
-                    topLevelOrigin: topLevelOrigin
-                ), let username = message.username
-            else {
-                return
-            }
-            rememberUsername(username, origin: frameOrigin, topLevelOrigin: topLevelOrigin)
+        case .fieldGeometry:
+            followField(message, frameOrigin: frameOrigin, isMainFrame: isMainFrame)
+            return
+        case .username: event = .username
+        case .focus: event = .focus
+        case .submit: event = .submit
+        case .documentState: event = .documentState
+        }
+        let now = Date.now
+        let facts = CredentialFormFacts(
+            event: event, frameOrigin: frameOrigin, topLevelOrigin: topLevelOrigin, isMainFrame: isMainFrame,
+            hasFormID: message.formID != nil, hasUsername: message.username != nil,
+            hasPassword: message.password != nil, passwordKind: message.passwordKind,
+            hasVisiblePasswordField: message.hasVisiblePasswordField, hasFillTarget: fillTarget != nil)
+        guard
+            let decision = captureDecision(
+                facts, usernameHint: pendingUsernameHint,
+                pendingCandidate: event == .documentState ? pendingSaveCandidate : nil, now: now)
+        else {
+            // Fail safe: close any fill prompt this page shows and capture nothing.
+            if event == .focus { dismissFillRequest() }
+            return
+        }
+        if decision.clearsUsernameHint { clearUsernameHint() }
 
-        case .focus:
-            guard let passwordKind = message.passwordKind else {
-                dismissFillRequest()
-                return
-            }
-            guard
-                BrowserCredentialCapturePolicy.accepts(
-                    frameOrigin: frameOrigin,
-                    topLevelOrigin: topLevelOrigin
-                ), let formID = message.formID,
+        switch decision.action {
+        case .rememberUsername:
+            guard let username = message.username else { return }
+            rememberUsername(
+                username, origin: frameOrigin, topLevelOrigin: topLevelOrigin,
+                lifetime: decision.usernameHintLifetime)
+
+        case .dismissFill:
+            dismissFillRequest()
+
+        case .offerFill:
+            guard let passwordKind = message.passwordKind, let formID = message.formID,
                 let fillTarget
-            else {
-                return
-            }
-
+            else { return }
             let request = BrowserCredentialFillRequest(
                 id: UUID(),
                 origin: frameOrigin,
                 topLevelOrigin: topLevelOrigin,
-                usernameHint: resolvedUsername(
-                    explicitUsername: message.username,
-                    origin: frameOrigin,
-                    topLevelOrigin: topLevelOrigin
-                ),
+                usernameHint: username(from: decision.usernameSource, explicitUsername: message.username),
                 passwordKind: passwordKind,
-                isCrossOriginFrame: frameOrigin != topLevelOrigin,
-                requestedAt: .now,
-                fieldRect: isMainFrame ? message.fieldRect : nil
+                isCrossOriginFrame: decision.isCrossOriginFrame,
+                requestedAt: now,
+                fieldRect: decision.anchorsToField ? message.fieldRect : nil
             )
             if let previousRequest = fillRequest {
                 fillTargets[previousRequest.id] = nil
@@ -85,36 +109,12 @@ final class BrowserCredentialPageState<FillTarget> {
             fillFormID = formID
             fillRequest = request
 
-        case .fieldGeometry:
-            guard isMainFrame,
-                let request = fillRequest,
-                request.fieldRect != nil,
-                let formID = message.formID,
-                formID == fillFormID,
-                request.origin == frameOrigin,
-                let fieldRect = message.fieldRect,
-                fieldRect != request.fieldRect
-            else {
-                return
-            }
-            fillRequest = request.following(fieldRect)
-
-        case .submit:
+        case .captureCandidate:
             guard
-                BrowserCredentialCapturePolicy.accepts(
-                    frameOrigin: frameOrigin,
-                    topLevelOrigin: topLevelOrigin
-                ),
-                let username = resolvedUsername(
-                    explicitUsername: message.username,
-                    origin: frameOrigin,
-                    topLevelOrigin: topLevelOrigin
-                ), let password = message.password,
+                let username = username(from: decision.usernameSource, explicitUsername: message.username),
+                let password = message.password,
                 let passwordKind = message.passwordKind
-            else {
-                return
-            }
-
+            else { return }
             dismissSaveCandidate()
             let candidate = BrowserCredentialSaveCandidate(
                 id: UUID(),
@@ -123,14 +123,15 @@ final class BrowserCredentialPageState<FillTarget> {
                 username: username,
                 password: password,
                 passwordKind: passwordKind,
-                isCrossOriginFrame: frameOrigin != topLevelOrigin,
-                submittedAt: .now
+                isCrossOriginFrame: decision.isCrossOriginFrame,
+                submittedAt: now
             )
             dismissFillRequest()
             clearUsernameHint()
             pendingSaveCandidate = candidate
+            let lifetime = decision.candidateLifetime
             candidateExpirationTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(BrowserCredentialCapturePolicy.candidateLifetime))
+                try? await Task.sleep(for: .seconds(lifetime))
                 guard !Task.isCancelled, let self else { return }
                 if self.pendingSaveCandidate?.id == candidate.id {
                     self.pendingSaveCandidate = nil
@@ -141,29 +142,38 @@ final class BrowserCredentialPageState<FillTarget> {
                 self.candidateExpirationTask = nil
             }
 
-        case .documentState:
-            guard let candidate = pendingSaveCandidate,
-                let hasVisiblePasswordField = message.hasVisiblePasswordField,
-                isMainFrame || frameOrigin == candidate.origin
-            else {
-                return
-            }
-            guard
-                BrowserCredentialCapturePolicy.shouldOfferSave(
-                    candidate: candidate,
-                    hasVisiblePasswordField: hasVisiblePasswordField
-                )
-            else {
-                if Date.now.timeIntervalSince(candidate.submittedAt)
-                    > BrowserCredentialCapturePolicy.candidateLifetime
-                {
-                    pendingSaveCandidate = nil
-                }
-                return
-            }
+        case .offerSave:
+            guard let candidate = pendingSaveCandidate else { return }
             pendingSaveCandidate = nil
             saveCandidate = candidate
+
+        case .discardPending:
+            pendingSaveCandidate = nil
+
+        case .ignore, .keepPending:
+            return
         }
+    }
+
+    /// A geometry report only moves the prompt already on show, and only for
+    /// the main-frame field of the same form.
+    private func followField(
+        _ message: BrowserCredentialFormMessage,
+        frameOrigin: CredentialOrigin,
+        isMainFrame: Bool
+    ) {
+        guard isMainFrame,
+            let request = fillRequest,
+            request.fieldRect != nil,
+            let formID = message.formID,
+            formID == fillFormID,
+            request.origin == frameOrigin,
+            let fieldRect = message.fieldRect,
+            fieldRect != request.fieldRect
+        else {
+            return
+        }
+        fillRequest = request.following(fieldRect)
     }
 
     func fillContext(
@@ -172,9 +182,7 @@ final class BrowserCredentialPageState<FillTarget> {
     ) throws -> (request: BrowserCredentialFillRequest, target: FillTarget) {
         guard let request = fillRequest,
             request.id == requestID,
-            BrowserCredentialCapturePolicy.offersSavedCredentials(
-                for: request.passwordKind
-            ),
+            fillAllowed(from: .saved, into: request.passwordKind),
             credential.descriptor.spaceID == spaceID,
             credential.descriptor.origin == request.origin,
             let target = fillTargets[requestID]
@@ -189,7 +197,7 @@ final class BrowserCredentialPageState<FillTarget> {
     ) throws -> (request: BrowserCredentialFillRequest, target: FillTarget) {
         guard let request = fillRequest,
             request.id == requestID,
-            request.passwordKind == .new,
+            fillAllowed(from: .generated, into: request.passwordKind),
             let target = fillTargets[requestID]
         else {
             throw BrowserCredentialFillError.staleOrMismatchedRequest
@@ -199,7 +207,17 @@ final class BrowserCredentialPageState<FillTarget> {
 
     func completeFill(username: String, requestID: UUID) {
         guard let request = fillRequest, request.id == requestID else { return }
-        rememberUsername(username, origin: request.origin, topLevelOrigin: request.topLevelOrigin)
+        let facts = CredentialFormFacts(
+            event: .filled, frameOrigin: request.origin, topLevelOrigin: request.topLevelOrigin,
+            isMainFrame: request.fieldRect != nil, hasFormID: fillFormID != nil, hasUsername: true, hasPassword: false,
+            passwordKind: request.passwordKind, hasVisiblePasswordField: nil, hasFillTarget: true)
+        if let decision = captureDecision(facts, usernameHint: nil, pendingCandidate: nil, now: .now),
+            decision.action == .rememberUsername
+        {
+            rememberUsername(
+                username, origin: request.origin, topLevelOrigin: request.topLevelOrigin,
+                lifetime: decision.usernameHintLifetime)
+        }
         dismissFillRequest()
     }
 
@@ -248,7 +266,8 @@ final class BrowserCredentialPageState<FillTarget> {
     private func rememberUsername(
         _ username: String,
         origin: CredentialOrigin,
-        topLevelOrigin: CredentialOrigin
+        topLevelOrigin: CredentialOrigin,
+        lifetime: TimeInterval
     ) {
         let hint = BrowserCredentialUsernameHint(
             origin: origin,
@@ -259,7 +278,7 @@ final class BrowserCredentialPageState<FillTarget> {
         pendingUsernameHint = hint
         usernameExpirationTask?.cancel()
         usernameExpirationTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(BrowserCredentialCapturePolicy.usernameHintLifetime))
+            try? await Task.sleep(for: .seconds(lifetime))
             guard !Task.isCancelled,
                 self?.pendingUsernameHint?.capturedAt == hint.capturedAt
             else { return }
@@ -268,23 +287,47 @@ final class BrowserCredentialPageState<FillTarget> {
         }
     }
 
-    private func resolvedUsername(
-        explicitUsername: String?,
-        origin: CredentialOrigin,
-        topLevelOrigin: CredentialOrigin
+    /// What one form observation does to the page's credential state. Nil
+    /// when the core refuses the facts; the caller then captures and offers
+    /// nothing. Only the facts cross: the username and password stay here.
+    private func captureDecision(
+        _ facts: CredentialFormFacts,
+        usernameHint: BrowserCredentialUsernameHint?,
+        pendingCandidate: BrowserCredentialSaveCandidate?,
+        now: Date
+    ) -> CredentialCaptureDecision? {
+        let capture = CredentialCapture(
+            facts: facts,
+            hint: usernameHint.map {
+                CredentialUsernameHint(
+                    origin: $0.origin, topLevelOrigin: $0.topLevelOrigin,
+                    capturedAt: $0.capturedAt.timeIntervalSince1970)
+            },
+            pending: pendingCandidate.map {
+                CredentialPendingCandidate(origin: $0.origin, submittedAt: $0.submittedAt.timeIntervalSince1970)
+            },
+            now: now.timeIntervalSince1970)
+        guard let decision = try? core.query(capture), decision.candidateLifetime > 0, decision.usernameHintLifetime > 0
+        else { return nil }
+        return decision
+    }
+
+    /// Whether a fill may take a saved credential or a generated password into
+    /// a field of this kind. A core that refuses fills nothing.
+    private func fillAllowed(from source: CredentialFillSource, into passwordKind: CredentialPasswordKind) -> Bool {
+        (try? core.query(CredentialFill(source: source, passwordKind: passwordKind)))?.isAllowed ?? false
+    }
+
+    /// The username the core chose: the message's own, or the remembered one.
+    private func username(
+        from source: CredentialUsernameSource,
+        explicitUsername: String?
     ) -> String? {
-        if let explicitUsername { return explicitUsername }
-        guard let hint = pendingUsernameHint,
-            let username = BrowserCredentialCapturePolicy.username(
-                from: hint,
-                frameOrigin: origin,
-                topLevelOrigin: topLevelOrigin
-            )
-        else {
-            clearUsernameHint()
-            return nil
+        switch source {
+        case .explicit: explicitUsername
+        case .hint: pendingUsernameHint?.username
+        case .none: nil
         }
-        return username
     }
 
     private func clearUsernameHint() {

@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 /// A measured region that can accept a lifted sidebar item. Zones are ranked by
 /// specificity so a folder header or space segment layered inside a section wins
@@ -8,9 +9,9 @@ struct BrowserSidebarReorderZone: Equatable, Sendable {
         /// An ordered run of rows.
         case section(BrowserSidebarReorderSection)
         /// A collapsed folder row: dropping lands the item inside the folder.
-        case folder(FolderID)
-        case currentFolder(FolderID)
-        case currentTab(TabID)
+        case folder(UUID)
+        /// An open tab at the top level: dropping makes a folder around it.
+        case currentTab(UUID)
         /// A space picker segment: dropping moves the item to that space.
         case space(BrowserSpaceRuntimeAssignment)
         /// The window's web-content area for a Space: dropping a tab there adds
@@ -32,7 +33,7 @@ struct BrowserSidebarReorderZone: Equatable, Sendable {
     var specificity: Int {
         switch target {
         case .space: 3
-        case .folder, .currentFolder, .currentTab: 2
+        case .folder, .currentTab: 2
         case .section: 1
         case .splitContent: 0
         }
@@ -44,7 +45,7 @@ struct BrowserSidebarReorderZone: Equatable, Sendable {
     var isContentArea: Bool {
         switch target {
         case .splitContent: true
-        case .section, .folder, .currentFolder, .currentTab, .space: false
+        case .section, .folder, .currentTab, .space: false
         }
     }
 
@@ -54,7 +55,7 @@ struct BrowserSidebarReorderZone: Equatable, Sendable {
     var nestingDepth: Int {
         switch target {
         case .section(let section): section.nestingDepth
-        case .folder, .currentFolder, .currentTab, .space, .splitContent: 0
+        case .folder, .currentTab, .space, .splitContent: 0
         }
     }
 }

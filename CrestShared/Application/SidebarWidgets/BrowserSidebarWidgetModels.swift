@@ -7,10 +7,6 @@ struct BrowserSidebarWidgetKindID: RawRepresentable, Hashable, Sendable {
     static let softwareUpdate = Self(rawValue: "crest.software-update")
 }
 
-enum BrowserSoftwareUpdateSceneID {
-    static let details = "software-update-details"
-}
-
 struct BrowserSidebarWidgetID: Hashable, Identifiable, Sendable {
     let kindID: BrowserSidebarWidgetKindID
     let instanceID: String
@@ -120,28 +116,6 @@ enum BrowserSidebarWidgetCarouselPolicy {
         }?.id
     }
 
-    /// Clamping adjacency for surfaces that represent a bounded run of cards.
-    static func adjacentID(
-        to selectedID: BrowserSidebarWidgetID?,
-        in instances: [BrowserSidebarWidgetInstance],
-        direction: BrowserSidebarWidgetCarouselDirection
-    ) -> BrowserSidebarWidgetID? {
-        guard !instances.isEmpty else { return nil }
-        guard
-            let selectedID,
-            let selectedIndex = instances.firstIndex(where: { $0.id == selectedID })
-        else {
-            return instances.first?.id
-        }
-
-        switch direction {
-        case .previous:
-            return instances[max(instances.startIndex, selectedIndex - 1)].id
-        case .next:
-            return instances[min(instances.index(before: instances.endIndex), selectedIndex + 1)].id
-        }
-    }
-
     /// Wrapping adjacency: the deck is a loop the reader flips through, so the
     /// last card hands back to the first rather than dead-ending.
     static func cyclicAdjacentID(
@@ -249,7 +223,7 @@ struct BrowserSidebarWidgetCarouselCardInsets: Equatable, Sendable {
     static let zero = Self(leading: 0, trailing: 0)
 }
 
-enum BrowserMediaSessionPlaybackState: String, Equatable, Sendable {
+enum BrowserMediaSessionPlaybackState: String, Encodable, Equatable, Sendable {
     case none
     case paused
     case playing
@@ -263,11 +237,11 @@ enum BrowserMediaSessionAction: String, CaseIterable, Hashable, Sendable {
 }
 
 struct BrowserMediaSessionID: Hashable, Identifiable, Sendable {
-    let tabID: TabID
+    let tabID: UUID
     let documentIdentifier: String
 
     var id: String {
-        "\(tabID.rawValue.uuidString.lowercased()):\(documentIdentifier)"
+        "\(tabID.uuidString.lowercased()):\(documentIdentifier)"
     }
 }
 

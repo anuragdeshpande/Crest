@@ -1,144 +1,85 @@
 import Foundation
 
+/// Imports another browser's saved passwords once its review is imported.
+/// The core says which Spaces each password goes to, leaving out Spaces that
+/// are gone or locked, and what each account means against the passwords a
+/// Space already keeps; a Space keeps its saved password for an account it
+/// already has. This writes each Space's Keychain inventory.
 @MainActor
 enum BrowserPasswordImportCommitter {
+    // MARK: - Actions - Importing
+
+    /// Imports `passwords` for the review setup holds over `browser`'s
+    /// workspace, answering how many each Space took and how many none did.
     static func commit(
         _ passwords: [BrowserImportedPassword],
-        plan: BrowserImportReviewPlan,
         browser: BrowserStore
     ) async -> BrowserPasswordImportResult {
         guard !passwords.isEmpty else { return .empty }
-        var recordsBySpace: [SpaceID: [BrowserCredentialCSVImportRecord]] = [:]
-        var importedCount = 0
+        let routes: ImportPasswordRoutes
+        do {
+            routes = try browser.core.query(
+                ImportPasswordDestinations(
+                    workspaceID: browser.family.workspaceID, passwords: passwords.map(\.routingSource)))
+        } catch {
+            return BrowserPasswordImportResult(importedCount: 0, skippedCount: passwords.count)
+        }
+        var credentialsBySpace: [UUID: [ImportedCredential]] = [:]
         var skippedCount = 0
-
-        for (index, password) in passwords.enumerated() {
-            let destinationIDs = destinationSpaceIDs(for: password, plan: plan)
-            guard !destinationIDs.isEmpty else {
+        for (index, (password, route)) in zip(passwords, routes.routes).enumerated() {
+            guard !route.spaceIDs.isEmpty else {
                 skippedCount += 1
                 continue
             }
-            for spaceID in destinationIDs where browser.session.space(id: spaceID) != nil {
-                recordsBySpace[spaceID, default: []].append(
-                    BrowserCredentialCSVImportRecord(
-                        rowNumber: index + 2,
-                        displayName: password.origin.host,
-                        origin: password.origin,
-                        username: password.username,
-                        password: password.password
-                    )
-                )
+            for spaceID in route.spaceIDs {
+                credentialsBySpace[spaceID, default: []].append(
+                    ImportedCredential(
+                        rowNumber: index + 2, displayName: password.origin.host, origin: password.origin,
+                        username: password.username, password: password.password))
             }
         }
 
-        for (spaceID, records) in recordsBySpace {
-            guard let space = browser.session.space(id: spaceID) else {
-                skippedCount += records.count
+        var importedCount = 0
+        for (spaceID, credentials) in credentialsBySpace {
+            guard let space = browser.spaceModel(spaceID) else {
+                skippedCount += credentials.count
                 continue
             }
             do {
                 let existing = try await browser.credentialInventory(in: spaceID)
-                let importPlan = BrowserCredentialImportPlan(
-                    format: .browser,
-                    records: records,
-                    rejections: [],
+                let plan = try browser.core.query(
+                    PasswordImportPreview(credentials: credentials, existing: existing.map(ExistingCredential.init)))
+                let review = BrowserCredentialImportReview(
+                    plan: plan,
                     existingCredentials: existing,
-                    destination: BrowserSpaceRuntimeAssignment(space: space),
-                    synchronizesWithICloud: space.credentialPreferences
-                        .syncsCrestPasswordsWithICloud
+                    destination: BrowserSpaceRuntimeAssignment(spaceID: space.id, profileID: space.profileID),
+                    synchronizesWithICloud: space.settings.credentialPreferences.syncsCrestPasswordsWithICloud
                 )
-                let resolution = try importPlan.resolvedInventory()
+                let resolution = try review.resolvedInventory()
                 if resolution.summary.acceptedCount > 0 {
-                    try await browser.replaceCredentialInventory(
-                        resolution.credentials,
-                        in: spaceID
-                    )
+                    try await browser.replaceCredentialInventory(resolution.credentials, in: spaceID)
                 }
                 importedCount += resolution.summary.acceptedCount
-                skippedCount += resolution.summary.skippedCount
+                skippedCount += resolution.summary.skippedCount + resolution.summary.rejectedCount
             } catch {
-                skippedCount += records.count
+                skippedCount += credentials.count
             }
         }
-        return BrowserPasswordImportResult(
-            importedCount: importedCount,
-            skippedCount: skippedCount
-        )
+        return BrowserPasswordImportResult(importedCount: importedCount, skippedCount: skippedCount)
     }
+}
 
-    static func destinationSpaceIDs(
-        for password: BrowserImportedPassword,
-        plan: BrowserImportReviewPlan
-    ) -> [SpaceID] {
-        Array(
-            Set(
-                sourceSpaceIDs(
-                    sourceApplication: password.sourceApplication,
-                    sourceProfileName: password.sourceProfileName,
-                    origin: password.origin,
-                    plan: plan,
-                    respectsPasswordSelection: true
-                ).compactMap { sourceSpaceID in
-                    guard let review = plan.spaces.first(where: { $0.id == sourceSpaceID }) else {
-                        return nil
-                    }
-                    switch review.destination {
-                    case .newSpace:
-                        return review.id
-                    case .existing(let id):
-                        return id
-                    }
-                }))
+extension BrowserImportedPassword {
+    /// Where the password belongs, as the core routes it: its profile and its
+    /// site's host.
+    var routingSource: ImportPasswordSource {
+        ImportPasswordSource(profileName: sourceProfileName, host: origin.host)
     }
+}
 
-    static func sourceSpaceIDs(
-        for candidate: BrowserPasswordImportCandidate,
-        plan: BrowserImportReviewPlan,
-        respectsPasswordSelection: Bool
-    ) -> [SpaceID] {
-        sourceSpaceIDs(
-            sourceApplication: candidate.sourceApplication,
-            sourceProfileName: candidate.sourceProfileName,
-            origin: candidate.origin,
-            plan: plan,
-            respectsPasswordSelection: respectsPasswordSelection
-        )
-    }
-
-    private static func sourceSpaceIDs(
-        sourceApplication: BrowserImportApplication,
-        sourceProfileName: String,
-        origin: CredentialOrigin,
-        plan: BrowserImportReviewPlan,
-        respectsPasswordSelection: Bool
-    ) -> [SpaceID] {
-        let eligibleReviews = plan.spaces.filter {
-            $0.isIncluded && (!respectsPasswordSelection || $0.includesPasswords)
-        }
-        let profileMatch = eligibleReviews.first {
-            $0.sourceSpace.name.localizedCaseInsensitiveCompare(sourceProfileName)
-                == .orderedSame
-        }
-        let hostMatches = eligibleReviews.filter { review in
-            review.sourceSpace.tabs.contains { tab in
-                (tab.savedSiteURL ?? tab.url)?.host?.localizedCaseInsensitiveCompare(
-                    origin.host
-                ) == .orderedSame
-            }
-        }
-        let matches: [BrowserImportSpaceReview]
-        switch sourceApplication {
-        case .chrome:
-            matches =
-                profileMatch.map { [$0] }
-                ?? hostMatches.first.map { [$0] }
-                ?? eligibleReviews.first.map { [$0] }
-                ?? []
-        case .arc:
-            matches = hostMatches
-        case .zen, .safari, .firefox:
-            matches = []
-        }
-        return matches.map(\.id)
+extension BrowserPasswordImportCandidate {
+    /// Where the password belongs, as the core counts it for the review.
+    var routingSource: ImportPasswordSource {
+        ImportPasswordSource(profileName: sourceProfileName, host: origin.host)
     }
 }

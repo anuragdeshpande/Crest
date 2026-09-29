@@ -73,17 +73,17 @@ final class BrowserSplitDragToSplitWindowTests: XCTestCase {
 
         fixture.send(.leftMouseUp, at: overPage)
         let space = try XCTUnwrap(
-            fixture.model.browser.session.space(id: fixture.assignment.spaceID)
+            fixture.model.browser.spaceModel(fixture.assignment.spaceID)
         )
         let groupID = try XCTUnwrap(
-            space.splitGroup(containing: fixture.joiner.id),
+            space.shownSplit(containing: fixture.joiner.id),
             "Releasing over the page has to commit the split."
         )
         XCTAssertEqual(
-            space.splitGroupMembers(of: groupID).map(\.title),
+            space.splitMembers(of: groupID).map(\.title),
             ["Presented", "Joiner"]
         )
-        XCTAssertEqual(space.selectedTabID, fixture.joiner.id)
+        XCTAssertEqual(fixture.model.browser.selectedTabID(in: space.id), fixture.joiner.id)
         XCTAssertFalse(state.isDragging)
         XCTAssertNil(state.liftPreview)
         pump(0.4)
@@ -94,10 +94,11 @@ final class BrowserSplitDragToSplitWindowTests: XCTestCase {
         let fixture = try makeHostedWindow(groupsJoiner: true)
         defer { fixture.input.close() }
         let state = fixture.model.sidebarInteraction.sidebarReorderState
-        let original = fixture.model.browser.session
-        let space = try XCTUnwrap(original.space(id: fixture.assignment.spaceID))
-        let group = try XCTUnwrap(space.splitGroup(containing: fixture.joiner.id))
-        let members = space.splitGroupMembers(of: group)
+        let original = fixture.model.browser.sessionSeed
+        let originalSelection = fixture.model.browser.selectedTabID(in: fixture.assignment.spaceID)
+        let space = try XCTUnwrap(fixture.model.browser.spaceModel(fixture.assignment.spaceID))
+        let group = try XCTUnwrap(space.shownSplit(containing: fixture.joiner.id))
+        let members = space.splitMembers(of: group).map(\.value)
         let groupFrame = try XCTUnwrap(state.frame(ofRow: .splitGroup(group)))
         let memberFrame = try XCTUnwrap(state.frame(ofRow: .tab(fixture.joiner.id)))
         let destination = try XCTUnwrap(state.frame(ofRow: .tab(fixture.presented.id)))
@@ -111,13 +112,13 @@ final class BrowserSplitDragToSplitWindowTests: XCTestCase {
         XCTAssertEqual(liftedGroup.memberTabIDs, members.map(\.id))
         state.cancel()
         fixture.send(.leftMouseUp, at: drop)
-        XCTAssertEqual(fixture.model.browser.session, original, "Cancelling must preserve membership and ordering.")
+        XCTAssertEqual(fixture.model.browser.sessionSeed, original, "Cancelling must preserve membership and ordering.")
         pump(0.4)
 
         fixture.model.browser.tabMultiSelection.clear()
         fixture.model.browser.tabMultiSelection.click(
             fixture.joiner.id,
-            units: BrowserSidebarSelection.units(in: fixture.model.browser, reorder: state), command: true)
+            units: BrowserSidebarSelection.units(in: fixture.model.browser), command: true)
         XCTAssertTrue(members.allSatisfy { fixture.model.browser.tabMultiSelection.contains($0.id) })
         let selectedMemberFrame = try XCTUnwrap(state.frame(ofRow: .tab(fixture.joiner.id)))
         fixture.beginDrag(from: CGPoint(x: selectedMemberFrame.midX, y: selectedMemberFrame.midY), to: drop)
@@ -140,11 +141,11 @@ final class BrowserSplitDragToSplitWindowTests: XCTestCase {
             .insert(section: .tabs(placement: .current, folderID: nil), beforeID: .tab(fixture.presented.id), index: 0))
         fixture.send(.leftMouseUp, at: drop)
 
-        let updated = try XCTUnwrap(fixture.model.browser.session.space(id: fixture.assignment.spaceID))
-        XCTAssertNil(updated.tabs.first(where: { $0.id == fixture.joiner.id })?.splitGroupID)
-        XCTAssertEqual(updated.tabs.first?.id, fixture.joiner.id)
-        XCTAssertEqual(updated.splitGroupMembers(of: group).map(\.id), members.dropFirst().map(\.id))
-        XCTAssertEqual(updated.selectedTabID, space.selectedTabID)
+        let updated = try XCTUnwrap(fixture.model.browser.spaceModel(fixture.assignment.spaceID))
+        XCTAssertNil(updated.tabs.models.first(where: { $0.id == fixture.joiner.id })?.splitGroupID)
+        XCTAssertEqual(updated.tabs.models.first?.id, fixture.joiner.id)
+        XCTAssertEqual(updated.splitMembers(of: group).map(\.id), members.dropFirst().map(\.id))
+        XCTAssertEqual(fixture.model.browser.selectedTabID(in: updated.id), originalSelection)
     }
 
     // MARK: - Fixture
@@ -155,8 +156,8 @@ final class BrowserSplitDragToSplitWindowTests: XCTestCase {
         let input: BrowserNativeMouseInput
         let model: BrowserRootModel
         let assignment: BrowserSpaceRuntimeAssignment
-        let presented: BrowserTab
-        let joiner: BrowserTab
+        let presented: TabState.Seed
+        let joiner: TabState.Seed
 
         func send(_ type: NSEvent.EventType, at global: CGPoint) {
             input.send(type, at: global)
@@ -181,16 +182,16 @@ final class BrowserSplitDragToSplitWindowTests: XCTestCase {
         line: UInt = #line
     ) throws -> HostedWindow {
         let date = Date(timeIntervalSince1970: 1_700_000_000)
-        let presented = BrowserTab(
-            id: TabID(rawValue: Self.uuid(0x01)),
+        let presented = TabState.Seed(
+            id: Self.uuid(0x01),
             title: "Presented",
             url: URL(string: "about:blank"),
             symbol: "globe",
             placement: .current,
             lastActivatedAt: date
         )
-        var joiner = BrowserTab(
-            id: TabID(rawValue: Self.uuid(0x02)),
+        var joiner = TabState.Seed(
+            id: Self.uuid(0x02),
             title: "Joiner",
             url: URL(string: "about:blank"),
             symbol: "globe",
@@ -199,35 +200,35 @@ final class BrowserSplitDragToSplitWindowTests: XCTestCase {
         )
         var tabs = [presented, joiner]
         if groupsJoiner {
-            let group = SplitGroupID()
+            let group = UUID()
             joiner.splitGroupID = group
             tabs = [presented, joiner]
             for index in 0..<2 {
-                var member = BrowserTab(
+                var member = TabState.Seed(
                     title: "Group member \(index)", url: URL(string: "about:blank"), symbol: "globe",
                     placement: .current, lastActivatedAt: date)
                 member.splitGroupID = group
                 tabs.append(member)
             }
         }
-        let space = BrowserSpace(
-            id: SpaceID(rawValue: Self.uuid(0x03)),
-            profile: BrowsingProfile(id: Self.uuid(0x04)),
+        let space = SpaceState.Seed(
+            id: Self.uuid(0x03),
+            profileID: Self.uuid(0x04),
             name: "Drag To Split",
             symbol: "books.vertical.fill",
             accent: .indigo,
-            branding: .initial(accent: .indigo, symbol: "books.vertical.fill"),
+            branding: SpaceAccent.indigo.house,
             folders: [],
-            tabs: tabs,
-            selectedTabID: presented.id
+            tabs: tabs
         )
-        let browser = BrowserStore(
-            session: BrowserSession(spaces: [space], selectedSpaceID: space.id),
-            persistence: InMemoryBrowserSessionPersistence()
+        let browser = BrowserStore.hostingPages(
+            SessionState.Seed(spaces: [space]),
+            showing: space.id, tabs: [space.id: presented.id]
         )
         let model = BrowserRootModel(
             browser: browser,
             pages: BrowserPagePool(
+                browser: browser,
                 browsingMode: .privateBrowsing,
                 usesEphemeralWebsiteDataStores: true
             ),

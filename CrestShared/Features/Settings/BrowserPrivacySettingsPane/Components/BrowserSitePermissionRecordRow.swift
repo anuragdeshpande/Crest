@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct BrowserSitePermissionRecordRow: View {
-    let record: BrowserSitePermissionRecord
+    let record: SitePermissionRecordState
     let permissionCenter: BrowserSitePermissionCenter
 
     var body: some View {
@@ -12,7 +12,7 @@ struct BrowserSitePermissionRecordRow: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: CrestFormRowMetrics.titleSpacing) {
-                Text(record.origin.displayName)
+                Text(record.siteName)
                     .lineLimit(1)
                 Text(record.displayLabel)
                     .font(CrestTypography.metadata)
@@ -22,10 +22,12 @@ struct BrowserSitePermissionRecordRow: View {
 
             Spacer(minLength: CrestSpacing.small)
 
-            Menu(record.decision.settingsLabel) {
+            Menu(record.decision.title) {
                 Group {
-                    Button("Allow", systemImage: "checkmark.circle") {
-                        set(.grantPersistently)
+                    if !record.permission.isAskedBySystem {
+                        Button("Allow", systemImage: "checkmark.circle") {
+                            set(.grantPersistently)
+                        }
                     }
                     Button("Block", systemImage: "nosign") {
                         set(.denyPersistently)
@@ -44,14 +46,14 @@ struct BrowserSitePermissionRecordRow: View {
             .crestMenuActionLabelStyle()
             .modifier(BrowserPlatformSitePermissionMenuModifier())
             .accessibilityLabel(
-                "\(record.displayLabel) for \(record.origin.displayName)"
+                "\(record.displayLabel) for \(record.siteName)"
             )
-            .accessibilityValue(record.decision.settingsLabel)
+            .accessibilityValue(Text(record.decision.title))
         }
         .frame(minHeight: CrestFormRowMetrics.minimumHeight)
     }
 
-    private func set(_ decision: BrowserSitePermissionDecision) {
+    private func set(_ decision: SitePermissionDecision) {
         permissionCenter.setDecision(
             decision,
             for: record.permission,

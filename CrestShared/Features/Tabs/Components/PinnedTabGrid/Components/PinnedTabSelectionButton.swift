@@ -1,15 +1,15 @@
 import SwiftUI
 
 struct PinnedTabSelectionButton: View {
-    let tab: BrowserTab
-    let spaceID: SpaceID
+    let tab: TabStateModel
+    let favicons: FaviconAssets
     let profileID: UUID
     let isSelected: Bool
     let isLoaded: Bool
     let siteTheme: BrowserTabIconAccent?
     let select: () -> Void
     var isMultiSelected = false
-    var branding: BrowserSpaceBranding? = nil
+    var branding: SpaceBranding? = nil
     let iconCustomization: BrowserIconCustomizationPresentation
 
     @Environment(\.browserInteractionCapabilities) private var capabilities
@@ -19,14 +19,12 @@ struct PinnedTabSelectionButton: View {
 
     var body: some View {
         Button(action: select) {
-            TabFaviconView(tab: tab, profileID: profileID, size: 19 * BrowserSidebarDensityPolicy.scale(iconScale))
+            icon
                 .font(.system(size: 17 * BrowserSidebarDensityPolicy.scale(iconScale), weight: .medium))
                 .browserTabResidency(isLoaded: tab.nativeContent != nil || isLoaded)
                 .browserIconCustomizationPopover(iconCustomization, arrowEdge: iconPickerArrowEdge)
                 .overlay(alignment: .bottomTrailing) {
-                    BrowserTabSidePanelBadge(
-                        tabID: tab.id, spaceID: spaceID,
-                        scale: BrowserSidebarDensityPolicy.scale(iconScale))
+                    TabEngineBadge(tabID: tab.id, scale: BrowserSidebarDensityPolicy.scale(iconScale))
                 }
                 .frame(maxWidth: .infinity)
                 .frame(
@@ -35,7 +33,7 @@ struct PinnedTabSelectionButton: View {
                 .contentShape(.rect)
                 .modifier(
                     PinnedTabInteractionSurface(
-                        faviconData: tab.displayFaviconData,
+                        favicon: tab.iconMode.showsFavicon ? favicons.icon(of: tab.id) : nil,
                         siteTheme: siteTheme,
                         isSelected: isSelected,
                         isHovering: isHovering || isMultiSelected,
@@ -46,6 +44,11 @@ struct PinnedTabSelectionButton: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+    }
+
+    private var icon: some View {
+        TabStateFaviconView(
+            tab: tab, favicons: favicons, profileID: profileID, size: 19 * BrowserSidebarDensityPolicy.scale(iconScale))
     }
 
     private var iconPickerArrowEdge: Edge? {

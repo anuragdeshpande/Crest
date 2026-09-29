@@ -12,18 +12,21 @@ enum BrowserTabActivationPolicy {
         case settings
     }
 
-    static func destination(for tab: BrowserTab, settingsPresentation: SettingsPresentation) -> Destination {
+    /// Where activating a tab showing `content` leads.
+    static func destination(
+        for content: BrowserNativeTabContent?, settingsPresentation: SettingsPresentation
+    ) -> Destination {
         switch settingsPresentation {
         case .embedded:
             .page
         case .sheet:
-            tab.nativeContent == .settings ? .settings : .page
+            content == .settings ? .settings : .page
         }
     }
 
     static func activate(
-        _ tabID: TabID,
-        selectTab: (TabID) -> Void,
+        _ tabID: UUID,
+        selectTab: (UUID) -> Void,
         presentPage: () -> Void
     ) {
         selectTab(tabID)

@@ -21,7 +21,7 @@ struct MobileBrowserTransientUnlockedContent: View {
         BrowserTransientSurface(
             state: presentationState,
             pageStatus: pageStatus,
-            spaces: model.availableSpaces,
+            spaces: model.availableSpaceModels.map(\.identity),
             selectedSpaceID: model.request.spaceID,
             vocabulary: model.request.overlayVocabulary,
             actions: actions
@@ -34,19 +34,8 @@ struct MobileBrowserTransientUnlockedContent: View {
         .onChange(of: model.motionState) { _, state in
             if let state { retainedMotionState = state }
         }
-        .task(id: model.activityRevision) {
+        .task(id: model.archiveTimer) {
             await model.autoArchiveAfterInactivity()
-        }
-        .onChange(of: model.completedNavigationCount) { oldCount, newCount in
-            guard presentationPhase == .committed,
-                let newCount,
-                newCount > 0,
-                newCount != oldCount
-            else { return }
-            model.recordCompletedNavigation(
-                newCount,
-                during: presentationPhase
-            )
         }
         .onChange(of: scenePhase) { _, phase in
             model.setActive(phase == .active)
@@ -102,7 +91,7 @@ struct MobileBrowserTransientUnlockedContent: View {
 
     private var showsInitialLoadingSurface: Bool {
         guard let page = model.page, !model.request.isQuickWindow else { return false }
-        return page.committedNavigationCount == 0 && page.navigationFailure == nil
+        return page.committedNavigationCount == 0 && page.live.failure == nil
     }
 
     private var actions: BrowserTransientCardActions {
@@ -121,12 +110,6 @@ struct MobileBrowserTransientUnlockedContent: View {
 
     private func updatePresentation() async {
         guard model.preparePage(isActive: scenePhase == .active) else { return }
-        if let completedNavigationCount = model.completedNavigationCount {
-            model.recordCompletedNavigation(
-                completedNavigationCount,
-                during: presentationPhase
-            )
-        }
         guard presentationPhase == .committed else { return }
         // All Peek inputs use the shared motion state; only Quick Window has
         // its independent scene entrance.

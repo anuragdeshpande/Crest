@@ -1,11 +1,17 @@
 import Observation
-import WebKit
 
 @Observable
 @MainActor
 final class BrowserFindSession {
-    private(set) var isPresented = false
+    private(set) var isPresented: Bool {
+        get { observed(\.isPresentedStorage, as: \.isPresented) }
+        set { publish(newValue, into: \.isPresentedStorage, as: \.isPresented) }
+    }
+    @ObservationIgnored private var isPresentedStorage = false
     private(set) var matchState = BrowserFindMatchState.idle
+    /// Which match the last completed search selected, out of how many; nil
+    /// when nothing was found or the engine cannot count.
+    private(set) var matches: BrowserFindMatches?
     private(set) var query = ""
 
     /// Bumped every time the page is asked for find, presented or not.
@@ -29,6 +35,7 @@ final class BrowserFindSession {
     func dismiss(using executor: any BrowserFindExecuting) {
         generation &+= 1
         matchState = .idle
+        matches = nil
         query = ""
         isPresented = false
         clear(using: executor)
@@ -44,6 +51,7 @@ final class BrowserFindSession {
         let requestGeneration = generation
         guard !query.isEmpty else {
             matchState = .idle
+            matches = nil
             clear(using: executor)
             return
         }
@@ -52,23 +60,25 @@ final class BrowserFindSession {
         executor.performFind(
             query,
             configuration: Self.configuration(for: direction)
-        ) { [weak self] matchFound in
+        ) { [weak self] result in
             guard let self, generation == requestGeneration else { return }
-            matchState = matchFound ? .found : .notFound
+            matchState = result.matchFound ? .found : .notFound
+            matches = result.matchFound ? result.matches : nil
         }
     }
 
     private func clear(using executor: any BrowserFindExecuting) {
-        executor.performFind("", configuration: WKFindConfiguration()) { _ in }
+        executor.performFind("", configuration: BrowserFindConfiguration()) { _ in }
     }
 
     private static func configuration(
         for direction: BrowserFindDirection
-    ) -> WKFindConfiguration {
-        let configuration = WKFindConfiguration()
+    ) -> BrowserFindConfiguration {
+        var configuration = BrowserFindConfiguration()
         configuration.backwards = direction == .backward
         configuration.caseSensitive = false
-        configuration.wraps = true
         return configuration
     }
 }
+
+extension BrowserFindSession: BrowserStoreFirstObservable {}

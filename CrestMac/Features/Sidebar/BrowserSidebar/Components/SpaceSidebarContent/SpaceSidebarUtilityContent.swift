@@ -2,11 +2,12 @@ import SwiftUI
 
 struct SpaceSidebarUtilityContent: View {
     let surface: BrowserUtilitySurface
-    let space: BrowserSpace
+    let space: SpaceModel
+    let favicons: FaviconAssets
     @Binding var searchText: String
     @Binding var filter: BrowserUtilityListFilter
     let commandSurfaceNamespace: Namespace.ID
-    let downloads: [BrowserDownloadItem]
+    let downloads: [DownloadState]
     let actions: BrowserUtilityListActions
     let dismissOnBlankSpace: () -> Void
     let clearHistory: () -> Void
@@ -20,7 +21,7 @@ struct SpaceSidebarUtilityContent: View {
                 searchText: $searchText,
                 filter: $filter,
                 morphNamespace: commandSurfaceNamespace,
-                morphID: "crest-address-command-\(space.id)",
+                morph: .utilitySearch(spaceID: space.id),
                 clearHistory: clearHistory
             )
             .padding(.horizontal, BrowserChromeLayout.sidebarHorizontalInset)
@@ -34,7 +35,8 @@ struct SpaceSidebarUtilityContent: View {
                 searchText: searchText,
                 filter: filter,
                 actions: actions,
-                dismissOnBlankSpace: dismissOnBlankSpace
+                dismissOnBlankSpace: dismissOnBlankSpace,
+                favicons: favicons
             )
             .transition(.opacity)
         } else {

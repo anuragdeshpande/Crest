@@ -4,19 +4,22 @@ import SwiftUI
 @MainActor
 struct BrowserCommandPalette: View {
     let presentation: BrowserCommandPalettePresentation
+    /// The window's command-surface namespace, in which an overlay palette
+    /// grows out of its Space's address field. Absent where the palette
+    /// appears in place.
     let morphNamespace: Namespace.ID?
-    let morphID: String?
     let overlayContentLeadingInset: CGFloat
     let overlayContentInsets: EdgeInsets?
 
     @State private var model: BrowserCommandPaletteModel
 
     init(
-        space: BrowserSpace?,
-        selectedTabID: TabID?,
+        browser: BrowserStore,
+        space: SpaceModel?,
+        selectedTabID: UUID?,
         initialQuery: String = "",
         commands: BrowserCommandPaletteCommandRegistry? = nil,
-        isPrivateBrowsing: Bool = false,
+        offersRestingCommands: Bool = true,
         isSourceAvailable: @escaping (BrowserTabRuntimeAssignment) -> Bool,
         selectTab:
             @escaping (
@@ -27,23 +30,22 @@ struct BrowserCommandPalette: View {
         dismiss: @escaping () -> Void,
         presentation: BrowserCommandPalettePresentation = .overlay,
         morphNamespace: Namespace.ID? = nil,
-        morphID: String? = nil,
         overlayContentLeadingInset: CGFloat = 0,
         overlayContentInsets: EdgeInsets? = nil,
         emptySelectionActions: BrowserEmptySelectionPaletteActions? = nil
     ) {
         self.presentation = presentation
         self.morphNamespace = morphNamespace
-        self.morphID = morphID
         self.overlayContentLeadingInset = overlayContentLeadingInset
         self.overlayContentInsets = overlayContentInsets
         _model = State(
             initialValue: BrowserCommandPaletteModel(
+                browser: browser,
                 space: space,
                 selectedTabID: selectedTabID,
                 initialQuery: initialQuery,
                 commands: commands,
-                isPrivateBrowsing: isPrivateBrowsing,
+                offersRestingCommands: offersRestingCommands,
                 isSourceAvailable: isSourceAvailable,
                 selectTab: selectTab,
                 openURL: openURL,
@@ -57,7 +59,6 @@ struct BrowserCommandPalette: View {
             model: model,
             presentation: presentation,
             morphNamespace: morphNamespace,
-            morphID: morphID,
             overlayContentLeadingInset: overlayContentLeadingInset,
             overlayContentInsets: overlayContentInsets
         )
@@ -72,7 +73,8 @@ struct BrowserCommandPalette: View {
     ZStack {
         CrestBrandTheme.canvas
         BrowserCommandPalette(
-            space: BrowserCommandPalettePreviewFixture.currentSpace,
+            browser: BrowserCommandPalettePreviewFixture.browser,
+            space: BrowserCommandPalettePreviewFixture.space,
             selectedTabID: BrowserCommandPalettePreviewFixture.selectedTabID,
             initialQuery: "swift",
             commands: BrowserCommandPalettePreviewFixture.registry,
@@ -87,9 +89,11 @@ struct BrowserCommandPalette: View {
 
 #Preview("Command Palette — Embedded") {
     BrowserCommandPalette(
-        space: BrowserCommandPalettePreviewFixture.currentSpace,
+        browser: BrowserCommandPalettePreviewFixture.browser,
+        space: BrowserCommandPalettePreviewFixture.space,
         selectedTabID: BrowserCommandPalettePreviewFixture.selectedTabID,
         commands: BrowserCommandPalettePreviewFixture.registry,
+        offersRestingCommands: false,
         isSourceAvailable: { _ in true },
         selectTab: { _, _ in true },
         openURL: { _, _ in true },

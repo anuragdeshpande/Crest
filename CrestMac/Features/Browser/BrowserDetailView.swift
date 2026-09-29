@@ -8,45 +8,28 @@ struct BrowserDetailView: View {
     let tabPromotionNamespace: Namespace.ID
     let startPageFocusRequest: Int
     let isCommandPalettePresented: Bool
+    /// The window's commands, for the Start Page's palette.
+    let commands: BrowserCommandPaletteCommandRegistry
     var previewsStartPage = false
 
     var body: some View {
         let tab = presentation.singleTab
-        let page = selectedPage(for: tab)
+        let space = presentation.presentingSpace
+        let page = tab.flatMap { tab in
+            space.flatMap { pages.surfacePage(for: tab.id, in: $0, accessController: spaceAccess) }
+        }
         BrowserDetailContent(
             page: page,
             tab: tab,
-            space: presentation.presentingSpace,
-            pagePresentation: previewsStartPage ? .startPage : pagePresentation(for: page, tab: tab),
+            space: space,
+            pagePresentation: previewsStartPage ? .startPage : .of(tab?.surface, page: page),
             browser: browser,
             pages: pages,
             spaceAccess: spaceAccess,
             tabPromotionNamespace: tabPromotionNamespace,
             startPageFocusRequest: startPageFocusRequest,
-            isCommandPalettePresented: isCommandPalettePresented
+            isCommandPalettePresented: isCommandPalettePresented,
+            commands: commands
         )
-    }
-
-    private func pagePresentation(
-        for page: BrowserPage?,
-        tab: BrowserTab?
-    ) -> BrowserPagePresentation {
-        BrowserPagePresentationPolicy.resolve(
-            BrowserPagePresentationInput(
-                selection: tab.map { $0.pagePresentationSelection }
-                    ?? .none,
-                hasActivePage: page != nil,
-                hasNavigationFailure: page?.navigationFailure != nil,
-                hasProcessFailure: page?.webContentFailureMessage != nil,
-                unloadedBehavior: .remainUnloaded
-            )
-        )
-    }
-
-    private func selectedPage(for tab: BrowserTab?) -> BrowserPage? {
-        guard let tab,
-            let space = presentation.presentingSpace
-        else { return nil }
-        return pages.surfacePage(for: tab, in: space, accessController: spaceAccess)
     }
 }

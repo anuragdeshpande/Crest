@@ -18,10 +18,10 @@ struct BrowserLinkDestinationHost {
                 accessController: spaceAccess
             )
         else { return false }
-        return space.tabs.contains { $0.id == source.tabID }
+        return space.tabs.model(source.tabID) != nil
     }
 
-    func otherSpaces(from source: BrowserTabRuntimeAssignment) -> [BrowserSpace] {
+    func otherSpaces(from source: BrowserTabRuntimeAssignment) -> [SpaceModel] {
         guard canOpenLink(from: source), let browser, let spaceAccess else { return [] }
         return BrowserSidebarAccessPolicy.availableTabMoveDestinationSpaces(
             from: BrowserSpaceRuntimeAssignment(
@@ -36,14 +36,12 @@ struct BrowserLinkDestinationHost {
         for text: String,
         from source: BrowserTabRuntimeAssignment
     ) -> BrowserSelectionSearchDestination? {
-        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty,
-            canOpenLink(from: source),
-            let provider = browser?.session.space(id: source.spaceID)?.browsingPreferences.searchProvider,
-            let url = provider.searchURL(for: query),
-            BrowserExternalURLPolicy.accepts(url)
+        guard canOpenLink(from: source), let browser,
+            let search = try? browser.core.query(
+                SelectionSearch(workspaceID: browser.family.workspaceID, spaceID: source.spaceID, text: text)),
+            let url = search.url.flatMap(URL.init(string:))
         else { return nil }
-        return BrowserSelectionSearchDestination(url: url, provider: provider, source: source)
+        return BrowserSelectionSearchDestination(url: url, engineTitle: search.engineTitle, source: source)
     }
 
     @discardableResult
@@ -52,7 +50,7 @@ struct BrowserLinkDestinationHost {
         from source: BrowserTabRuntimeAssignment,
         in destination: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard BrowserExternalURLPolicy.accepts(url),
+        guard BrowserCorePolicy.acceptsExternalURL(url),
             canOpenLink(from: source), let browser, let spaceAccess,
             BrowserSidebarAccessPolicy.unlockedSpace(
                 matching: destination,
@@ -66,6 +64,7 @@ struct BrowserLinkDestinationHost {
 
 struct BrowserSelectionSearchDestination: Equatable, Sendable {
     let url: URL
-    let provider: BrowserSearchProvider
+    /// The name of the engine that runs the search.
+    let engineTitle: String
     let source: BrowserTabRuntimeAssignment
 }

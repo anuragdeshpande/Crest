@@ -4,7 +4,7 @@ import XCTest
 
 @MainActor
 final class BrowserSidebarAccessPolicyTests: XCTestCase {
-    func testLockedSelectedSpaceHidesItsActionsUntilExactProfileUnlock() async {
+    func testLockedSelectedSpaceHidesItsActionsUntilExactProfileUnlock() async throws {
         let context = makeContext(sourceIsProtected: true)
 
         XCTAssertFalse(
@@ -13,7 +13,7 @@ final class BrowserSidebarAccessPolicyTests: XCTestCase {
                 accessController: context.access
             )
         )
-        let didUnlock = await context.access.unlock(context.source)
+        let didUnlock = await context.access.unlock(try XCTUnwrap(context.browser.spaceModel(context.source.id)))
         XCTAssertTrue(didUnlock)
         XCTAssertTrue(
             BrowserSidebarAccessPolicy.showsSelectedSpaceActions(
@@ -22,10 +22,7 @@ final class BrowserSidebarAccessPolicyTests: XCTestCase {
             )
         )
 
-        context.browser.session.spaces[0] = replacingProfile(
-            in: context.source,
-            with: Self.uuid(9)
-        )
+        context.browser.replaceProfileForTesting(of: context.source.id, with: Self.uuid(9))
         XCTAssertFalse(
             BrowserSidebarAccessPolicy.showsSelectedSpaceActions(
                 in: context.browser,
@@ -70,7 +67,7 @@ final class BrowserSidebarAccessPolicyTests: XCTestCase {
         )
     }
 
-    func testTabMoveDestinationsIncludeOnlyExactCurrentlyUnlockedAssignments() async {
+    func testTabMoveDestinationsIncludeOnlyExactCurrentlyUnlockedAssignments() async throws {
         let context = makeContext(destinationIsProtected: true)
         let sourceAssignment = BrowserSpaceRuntimeAssignment(space: context.source)
 
@@ -82,7 +79,8 @@ final class BrowserSidebarAccessPolicyTests: XCTestCase {
             ).isEmpty
         )
 
-        let didUnlockDestination = await context.access.unlock(context.destination)
+        let didUnlockDestination = await context.access.unlock(
+            try XCTUnwrap(context.browser.spaceModel(context.destination.id)))
         XCTAssertTrue(didUnlockDestination)
         XCTAssertEqual(
             BrowserSidebarAccessPolicy.availableTabMoveDestinationSpaces(
@@ -93,10 +91,7 @@ final class BrowserSidebarAccessPolicyTests: XCTestCase {
             [context.destination.id]
         )
 
-        context.browser.session.spaces[1] = replacingProfile(
-            in: context.destination,
-            with: Self.uuid(9)
-        )
+        context.browser.replaceProfileForTesting(of: context.destination.id, with: Self.uuid(9))
         XCTAssertTrue(
             BrowserSidebarAccessPolicy.availableTabMoveDestinationSpaces(
                 from: sourceAssignment,
@@ -132,18 +127,12 @@ final class BrowserSidebarAccessPolicyTests: XCTestCase {
             name: "Destination",
             isProtected: destinationIsProtected
         )
+        let browser = BrowserStore(seed: SessionState.Seed(spaces: [source, destination]))
+        let access = BrowserSpaceAccessController(authenticator: AcceptingAuthenticator())
+        browser.attachSpaceAccess(access)
         return Context(
-            browser: BrowserStore(
-                session: BrowserSession(
-                    spaces: [source, destination],
-                    selectedSpaceID: source.id
-                ),
-                persistence: InMemoryBrowserSessionPersistence(),
-                browsingMode: .privateBrowsing
-            ),
-            access: BrowserSpaceAccessController(
-                authenticator: AcceptingAuthenticator()
-            ),
+            browser: browser,
+            access: access,
             source: source,
             destination: destination
         )
@@ -154,41 +143,16 @@ final class BrowserSidebarAccessPolicyTests: XCTestCase {
         profileID: UInt8,
         name: String,
         isProtected: Bool
-    ) -> BrowserSpace {
-        BrowserSpace(
-            id: SpaceID(rawValue: Self.uuid(id)),
-            profile: BrowsingProfile(id: Self.uuid(profileID)),
+    ) -> SpaceState.Seed {
+        SpaceState.Seed(
+            id: Self.uuid(id),
+            profileID: Self.uuid(profileID),
             name: name,
             symbol: "square.grid.2x2",
             accent: .indigo,
             folders: [],
             tabs: [],
-            accessPolicy: isProtected ? .deviceOwnerAuthentication : .open,
-            selectedTabID: nil
-        )
-    }
-
-    private func replacingProfile(
-        in space: BrowserSpace,
-        with profileID: UUID
-    ) -> BrowserSpace {
-        BrowserSpace(
-            id: space.id,
-            profile: BrowsingProfile(id: profileID),
-            name: space.name,
-            symbol: space.symbol,
-            accent: space.accent,
-            branding: space.branding,
-            folders: space.folders,
-            tabs: space.tabs,
-            archivedTabs: space.archivedTabs,
-            history: space.history,
-            browsingPreferences: space.browsingPreferences,
-            credentialPreferences: space.credentialPreferences,
-            accessPolicy: space.accessPolicy,
-            isSavedTabsExpanded: space.isSavedTabsExpanded,
-            savedTabsExpansionModifiedAt: space.savedTabsExpansionModifiedAt,
-            selectedTabID: space.selectedTabID
+            accessPolicy: isProtected ? .deviceOwnerAuthentication : .open
         )
     }
 
@@ -204,8 +168,8 @@ final class BrowserSidebarAccessPolicyTests: XCTestCase {
     private struct Context {
         let browser: BrowserStore
         let access: BrowserSpaceAccessController
-        let source: BrowserSpace
-        let destination: BrowserSpace
+        let source: SpaceState.Seed
+        let destination: SpaceState.Seed
     }
 
     private final class AcceptingAuthenticator: BrowserDeviceAuthenticating {

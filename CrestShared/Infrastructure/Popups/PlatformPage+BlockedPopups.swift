@@ -1,41 +1,36 @@
-import WebKit
+import Foundation
 
 extension BrowserPlatformPage {
-    func receiveBlockedPopupMessage(_ message: WKScriptMessage) {
-        if let sourceWebView = message.webView, sourceWebView !== webView {
-            host?.routeBlockedPopupMessage(message)
-            return
-        }
-        guard message.webView === webView,
-            message.name == BrowserBlockedPopupContentBridge.messageHandlerName,
-            message.frameInfo.isMainFrame,
-            let body = message.body as? [String: Any],
-            (body["version"] as? NSNumber)?.intValue == 1,
-            body["event"] as? String == "blocked",
-            body["userActivated"] as? Bool == false,
-            let documentIdentifier = body["documentIdentifier"] as? String,
-            !documentIdentifier.isEmpty,
-            documentIdentifier.count <= 128,
-            let frameURL = message.frameInfo.request.url,
-            let origin = BrowserSiteOrigin(url: frameURL),
-            let currentURL = webView.url,
-            BrowserSiteOrigin(url: currentURL) == origin,
-            !BrowserAutomaticPopupPolicy.allowsAutomaticPopups(
-                decision: permissionCenter.decision(
-                    for: .popups,
-                    origin: origin,
-                    in: spaceID
-                )
-            )
-        else { return }
+    /// Applies Crest's popup decision for the page's site to its engine.
+    func synchronizePopupPermission(for url: URL? = nil) {
+        let origin = (url ?? live.displayURL ?? pageEngine.currentURL)
+            .flatMap(SiteOrigin.init(url:))
+        let allowsAutomaticPopups =
+            origin.map { permissionCenter.decision(for: .popups, origin: $0, in: spaceID).grants } ?? false
+        // An engine's own popup blocker takes the site's own allowance, and
+        // otherwise its default of blocking.
+        enginePage.setSitePermission(.popups, allowed: allowsAutomaticPopups ? true : nil)
+        recordPopupPermissionSynchronized(
+            allowsAutomaticPopups: allowsAutomaticPopups,
+            origin: origin
+        )
+    }
 
-        var nextState = blockedPopupState
-        guard
-            nextState.recordBlockedAttempt(
-                documentIdentifier: documentIdentifier,
-                origin: origin
-            )
+    /// The notice the Site Controls affordance draws, or nil when the running
+    /// engine cannot report a blocked popup at all. An engine that does not
+    /// declare `popups` must not present a control that can never populate.
+    var blockedPopupNotice: BrowserBlockedPopupNotice? {
+        guard pageEngine.registration.supports(.popups) else { return nil }
+        return blockedPopupState.notice
+    }
+
+    /// A popup the engine's own blocker held back in the current document.
+    func recordEngineBlockedPopup(pageURL: URL, documentIdentifier: String) {
+        guard let origin = SiteOrigin(url: pageURL),
+            !permissionCenter.decision(for: .popups, origin: origin, in: spaceID).grants
         else { return }
+        var nextState = blockedPopupState
+        guard nextState.recordBlockedAttempt(documentIdentifier: documentIdentifier, origin: origin) else { return }
         blockedPopupState = nextState
     }
 
@@ -53,9 +48,9 @@ extension BrowserPlatformPage {
 
     func allowAutomaticPopupsForBlockedSite() {
         guard let notice = blockedPopupState.notice,
-            notice.status == .blocked,
-            let currentURL = displayURL ?? webView.url,
-            BrowserSiteOrigin(url: currentURL) == notice.origin
+            notice.status.offersAllow,
+            let currentURL = live.displayURL ?? pageEngine.currentURL,
+            SiteOrigin(url: currentURL) == notice.origin
         else { return }
 
         permissionCenter.setDecision(
@@ -65,11 +60,14 @@ extension BrowserPlatformPage {
             in: spaceID
         )
         synchronizePopupPermission(for: currentURL)
+        // An engine that kept the blocked popups opens them now; WebKit waits
+        // for the page to try again.
+        if enginePage.showBlockedPopups() { recordAcceptedPopup() }
     }
 
     func recordPopupPermissionSynchronized(
         allowsAutomaticPopups: Bool,
-        origin: BrowserSiteOrigin?
+        origin: SiteOrigin?
     ) {
         guard let origin,
             blockedPopupState.notice?.origin == origin

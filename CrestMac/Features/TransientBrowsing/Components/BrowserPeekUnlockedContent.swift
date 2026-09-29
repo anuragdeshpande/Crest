@@ -28,7 +28,7 @@ struct BrowserPeekUnlockedContent: View {
         BrowserTransientSurface(
             state: presentationState,
             pageStatus: pageStatus,
-            spaces: model.availableSpaces,
+            spaces: model.availableSpaceModels.map(\.identity),
             selectedSpaceID: model.request.spaceID,
             vocabulary: BrowserPeekVocabulary.overlay,
             actions: actions
@@ -112,17 +112,12 @@ struct BrowserPeekUnlockedContent: View {
     private var showsInitialLoadingSurface: Bool {
         guard let page = model.page else { return false }
         return page.committedNavigationCount == 0
-            && page.navigationFailure == nil
+            && page.live.failure == nil
             && page.webContentFailureMessage == nil
     }
 
     private var taskLifecycle: BrowserPeekTaskLifecycleModifier {
-        BrowserPeekTaskLifecycleModifier(
-            requestID: model.request.id,
-            completedNavigationCount: model.page?.completedNavigationCount,
-            present: presentCard,
-            recordCompletedNavigation: model.recordCompletedNavigation
-        )
+        BrowserPeekTaskLifecycleModifier(requestID: model.request.id, present: presentCard)
     }
 
     private func presentCard() async {

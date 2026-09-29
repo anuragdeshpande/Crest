@@ -2,23 +2,23 @@ import SwiftUI
 
 struct BrowserSpaceSymbolArtworkIdentity: Equatable, Sendable {
     private enum Artwork: Equatable, Sendable {
-        case crest(BrowserSpaceCrest, colors: [BrowserSpaceBrandColor])
-        case symbol(color: BrowserSpaceBrandColor)
+        case crest(SpaceCrest, colors: ColorPalette)
+        case symbol(color: BrandColor)
         case emoji
     }
 
     private let artwork: Artwork
     let symbol: String
-    let accessPolicy: BrowserSpaceAccessPolicy
+    let requiresAuthentication: Bool
     let size: CGFloat
     let lockSize: CGFloat
     let colorScheme: ColorScheme
     let displayScale: CGFloat
 
     init(
-        branding: BrowserSpaceBranding,
+        branding: SpaceBranding,
         symbol: String,
-        accessPolicy: BrowserSpaceAccessPolicy,
+        requiresAuthentication: Bool,
         size: CGFloat,
         lockSize: CGFloat,
         colorScheme: ColorScheme,
@@ -34,7 +34,7 @@ struct BrowserSpaceSymbolArtworkIdentity: Equatable, Sendable {
             artwork = .symbol(color: branding.resolvedSymbolColor)
         }
         self.symbol = symbol
-        self.accessPolicy = accessPolicy
+        self.requiresAuthentication = requiresAuthentication
         self.size = size
         self.lockSize = lockSize
         self.colorScheme = colorScheme

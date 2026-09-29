@@ -9,7 +9,7 @@ import SwiftUI
 /// lives here and the page arrives as a builder.
 struct BrowserSidebarSpacePager<Page: View>: View {
     let context: BrowserSidebarContext
-    @ViewBuilder let page: (BrowserSpace, Bool) -> Page
+    @ViewBuilder let page: (SpaceModel, Bool) -> Page
 
     @State private var dropViewportID = UUID()
 
@@ -19,11 +19,11 @@ struct BrowserSidebarSpacePager<Page: View>: View {
         } else {
             BrowserSpacePager(
                 spaces: context.availableSpaces,
-                selectedSpaceID: context.browser.session.selectedSpaceID,
+                selectedSpaceID: context.browser.selectedSpaceID,
                 isInteractionLocked: isInteractionLocked,
                 selectSpace: { spaceID in
                     context.selectSpace(spaceID)
-                    return context.browser.session.selectedSpaceID
+                    return context.browser.selectedSpaceID
                 },
                 content: { space, isSelected in
                     page(space, isSelected)

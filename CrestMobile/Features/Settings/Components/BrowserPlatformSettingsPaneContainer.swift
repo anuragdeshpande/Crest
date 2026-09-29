@@ -19,19 +19,18 @@ struct BrowserPlatformSettingsPaneContainer<Content: View>: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     Text(destination.title).font(.title2.weight(.semibold))
-                    BrowserSettingsSectionGrid(allowsColumns: ![.passwords, .about, .extensions].contains(destination))
-                    {
+                    BrowserSettingsSectionGrid(allowsColumns: ![.passwords, .about].contains(destination)) {
                         content
                     }
                 }.padding(24)
             }
             .background(BrowserSettingsCanvas.background)
-            .accessibilityIdentifier("settings-form-\(destination.rawValue)")
+            .accessibilityIdentifier("settings-form-\(destination.name)")
         } else {
             Form {
                 BrowserSettingsPaneHeader(
                     destination: destination,
-                    identifier: "settings-header-\(destination.rawValue)",
+                    identifier: "settings-header-\(destination.name)",
                     layout: .mobilePage
                 )
                 .listRowInsets(EdgeInsets())
@@ -40,7 +39,7 @@ struct BrowserPlatformSettingsPaneContainer<Content: View>: View {
 
                 content
             }
-            .accessibilityIdentifier("settings-form-\(destination.rawValue)")
+            .accessibilityIdentifier("settings-form-\(destination.name)")
         }
     }
 }

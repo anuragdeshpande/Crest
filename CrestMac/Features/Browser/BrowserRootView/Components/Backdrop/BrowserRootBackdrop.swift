@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct BrowserRootBackdrop: View, BrowserChromeAnimating {
-    let space: BrowserSpace?
-    let spaces: [BrowserSpace]
+    let space: SpaceModel?
+    let spaces: [SpaceModel]
     let transparencyIsEnabled: Bool
     let transparencyStrength: Double
     let isWindowFocused: Bool
@@ -22,6 +22,9 @@ struct BrowserRootBackdrop: View, BrowserChromeAnimating {
             }
             .opacity(baseLayerOpacity)
         }
+        // The window's background, wherever no page or control covers it, is
+        // chrome: the title bar strip above a page and the gaps around it.
+        .overlay { BrowserWindowTitleBarSurface() }
         .ignoresSafeArea()
         .animation(
             chromeAnimation(CrestMotion.windowBackdrop),

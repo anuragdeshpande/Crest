@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 
 @testable import Crest
@@ -431,8 +432,8 @@ final class BrowserMediaSessionTests: XCTestCase {
 
     private func assignment(profileID: UUID = UUID()) -> BrowserTabRuntimeAssignment {
         BrowserTabRuntimeAssignment(
-            tabID: TabID(),
-            spaceID: SpaceID(),
+            tabID: UUID(),
+            spaceID: UUID(),
             profileID: profileID
         )
     }
@@ -445,7 +446,7 @@ final class BrowserMediaSessionTests: XCTestCase {
         playback: BrowserMediaSessionPlaybackState = .paused,
         audible: Bool = false,
         muted: Bool = false,
-        actions: Set<BrowserMediaSessionAction> = []
+        actions: Set<BrowserMediaSessionAction> = [.play, .pause]
     ) -> BrowserMediaSessionPageEvent {
         BrowserMediaSessionPageEvent(
             documentIdentifier: document,

@@ -1,15 +1,12 @@
 import SwiftUI
 
 struct BrowserDownloadStatusIcon: View {
-    let item: BrowserDownloadItem
+    let item: DownloadState
 
     var body: some View {
-        switch item.state {
-        case .preparing:
-            ProgressView().controlSize(.small)
-        case .awaitingApproval:
-            Image(systemName: "exclamationmark.shield.fill").foregroundStyle(.orange)
-        case .downloading:
+        if let symbol = item.phase.symbol {
+            Image(systemName: symbol).foregroundStyle(symbolStyle)
+        } else if item.phase.isTransferring {
             ZStack {
                 Image(
                     systemName: BrowserDownloadFileIconPolicy.systemImage(
@@ -29,22 +26,30 @@ struct BrowserDownloadStatusIcon: View {
             .accessibilityLabel("Download Progress")
             .accessibilityValue(
                 Text(
-                    BrowserDownloadProgressPolicy.normalized(item.progress),
+                    item.progress,
                     format: .percent.precision(.fractionLength(0))
                 )
             )
-        case .finished:
+        } else if item.phase.isLive {
+            ProgressView().controlSize(.small)
+        } else {
             Image(
                 systemName: BrowserDownloadFileIconPolicy.systemImage(
                     for: item.filename
                 )
             )
-        case .blockedAutomaticDownload:
-            Image(systemName: "arrow.down.circle.fill").foregroundStyle(.orange)
-        case .canceled:
-            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-        case .failed:
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+        }
+    }
+
+    /// A decision the person owes reads as a caution, trouble as an error, and
+    /// anything else stays quiet.
+    private var symbolStyle: AnyShapeStyle {
+        if item.phase.awaitsDecision {
+            AnyShapeStyle(Color.orange)
+        } else if item.phase.needsAttention {
+            AnyShapeStyle(Color.red)
+        } else {
+            AnyShapeStyle(HierarchicalShapeStyle.secondary)
         }
     }
 }
@@ -78,7 +83,7 @@ enum BrowserDownloadFileIconPolicy {
 struct BrowserDownloadFeedbackLayer: View {
     let events: [BrowserDownloadFeedbackEvent]
     let profileID: UUID?
-    let spaceID: SpaceID?
+    let spaceID: UUID?
     let destinationFrameInGlobal: CGRect?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

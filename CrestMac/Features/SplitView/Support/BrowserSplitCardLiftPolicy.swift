@@ -69,7 +69,7 @@ enum BrowserSplitCardLiftPolicy {
     /// preview stands its title-and-favicon placeholder down the moment a
     /// snapshot arrives, so a blank one leaves the carry showing neither the page
     /// nor the tab. A card with nothing to picture must not ask.
-    static func picturesPage(_ presentation: BrowserPagePresentation) -> Bool {
+    static func picturesPage(_ presentation: PagePresentation) -> Bool {
         presentation == .livePage
     }
 
@@ -87,11 +87,11 @@ enum BrowserSplitCardLiftPolicy {
     /// Asking the members first removes both. Membership is the row's order, the
     /// answer carries the slot as well as the tab, and a frame belonging to
     /// nobody on show is not a card anybody can be pointing at.
-    static func card(
+    static func card<Member: Identifiable>(
         at point: CGPoint,
-        members: [BrowserTab],
-        cardFrames: [TabID: CGRect]
-    ) -> (tabID: TabID, index: Int, frame: CGRect)? {
+        members: [Member],
+        cardFrames: [UUID: CGRect]
+    ) -> (tabID: UUID, index: Int, frame: CGRect)? where Member.ID == UUID {
         for (index, member) in members.enumerated() {
             guard let frame = cardFrames[member.id],
                 !frame.isEmpty,
@@ -110,10 +110,10 @@ enum BrowserSplitCardLiftPolicy {
     /// still there, and the midpoint between it and its neighbour lands in the
     /// middle of a card, which would read a whole column as a resize divider and
     /// refuse every pickup inside it.
-    static func orderedMemberFrames(
-        members: [BrowserTab],
-        cardFrames: [TabID: CGRect]
-    ) -> [CGRect] {
+    static func orderedMemberFrames<Member: Identifiable>(
+        members: [Member],
+        cardFrames: [UUID: CGRect]
+    ) -> [CGRect] where Member.ID == UUID {
         BrowserSplitDropPolicy.ordered(members.compactMap { cardFrames[$0.id] })
     }
 
@@ -162,8 +162,8 @@ enum BrowserSplitCardLiftPolicy {
     /// from the wrong end and is reflected back before it leaves.
     static func gapIndex(
         at point: CGPoint,
-        cardFrames: [TabID: CGRect],
-        lifted liftedTabID: TabID,
+        cardFrames: [UUID: CGRect],
+        lifted liftedTabID: UUID,
         layoutDirection: LayoutDirection
     ) -> Int {
         let neighbours = BrowserSplitDropPolicy.ordered(
@@ -182,18 +182,18 @@ enum BrowserSplitCardLiftPolicy {
     ///
     /// The lifted member stays in the list rather than standing down for a slot
     /// of its own, and that is the whole reason a lift never remounts a card.
-    /// Its `TabID` is still the identity at the gap's position, so `ForEach`
+    /// Its `UUID` is still the identity at the gap's position, so `ForEach`
     /// moves the host it already has instead of building a second one for a live
     /// `WKWebView` to be handed to. The card simply stops drawing while it is
     /// away.
     ///
     /// It is also why the drop is invisible: the row is already in the order the
     /// commit produces, so the session catching up changes nothing on screen.
-    static func displayMembers(
-        _ members: [BrowserTab],
-        lifted liftedTabID: TabID?,
+    static func displayMembers<Member: Identifiable>(
+        _ members: [Member],
+        lifted liftedTabID: UUID?,
         gapIndex: Int
-    ) -> [BrowserTab] {
+    ) -> [Member] where Member.ID == UUID {
         guard let liftedTabID,
             let sourceIndex = members.firstIndex(where: { $0.id == liftedTabID })
         else { return members }

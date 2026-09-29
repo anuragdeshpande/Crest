@@ -9,14 +9,14 @@ struct BrowserPrivacySettingsPane: View {
     let contentBlockingErrorDescription: String?
 
     @Environment(\.browserSettingsSelections) private var selections
-    @State private var localSelectedSpaceID: SpaceID?
-    private var selectedSpaceID: SpaceID? {
+    @State private var localSelectedSpaceID: UUID?
+    private var selectedSpaceID: UUID? {
         get { if let selections { selections.privacySpaceID } else { localSelectedSpaceID } }
         nonmutating set {
             if let selections { selections.privacySpaceID = newValue } else { localSelectedSpaceID = newValue }
         }
     }
-    private var selectedSpaceBinding: Binding<SpaceID?> {
+    private var selectedSpaceBinding: Binding<UUID?> {
         Binding(get: { selectedSpaceID }, set: { selectedSpaceID = $0 })
     }
     @State private var confirmsReset = false
@@ -25,7 +25,7 @@ struct BrowserPrivacySettingsPane: View {
         BrowserSettingsPane(.privacy) {
             BrowserPrivacySpaceSection(
                 selectedSpaceID: selectedSpaceBinding,
-                spaces: browser.session.spaces
+                spaces: browser.spaceModels
             )
 
             if canRevealSelectedSpaceData {
@@ -37,16 +37,25 @@ struct BrowserPrivacySettingsPane: View {
                     )
                 }
 
-                BrowserContentBlockingSettingsSection(
-                    policy: contentBlockingPolicyBinding,
-                    errorDescription: contentBlockingErrorDescription
-                )
+                if supportsContentBlocking {
+                    BrowserContentBlockingSettingsSection(
+                        policy: contentBlockingPolicyBinding,
+                        errorDescription: contentBlockingErrorDescription
+                    )
+                } else {
+                    Section("Content blocking", systemImage: "hand.raised.slash") {
+                        Text("Blocking ads and trackers comes from the extensions you install.")
+                            .crestFormFootnote()
+                    }
+                }
 
-                BrowserSavedSitePermissionSection(
-                    records: records,
-                    permissionCenter: permissionCenter,
-                    resetAll: { confirmsReset = true }
-                )
+                if browser.core.state.offers(.permissions) {
+                    BrowserSavedSitePermissionSection(
+                        records: records,
+                        permissionCenter: permissionCenter,
+                        resetAll: { confirmsReset = true }
+                    )
+                }
 
                 Section {
                     BrowserPlatformPrivacyScopeFootnote()
@@ -79,26 +88,32 @@ struct BrowserPrivacySettingsPane: View {
         }
     }
 
-    private var records: [BrowserSitePermissionRecord] {
+    private var records: [SitePermissionRecordState] {
         guard let selectedSpaceID, canRevealSelectedSpaceData else { return [] }
         return permissionCenter.records(in: selectedSpaceID)
     }
 
-    private var selectedSpace: BrowserSpace? {
+    private var selectedSpace: SpaceModel? {
         guard let selectedSpaceID else { return nil }
-        return browser.session.space(id: selectedSpaceID)
+        return browser.spaceModel(selectedSpaceID)
     }
 
     private var canRevealSelectedSpaceData: Bool {
-        BrowserSettingsPrivacyPolicy.canRevealSpaceData(
-            in: selectedSpace,
-            accessController: spaceAccess
-        )
+        guard let selectedSpace else { return false }
+        return !spaceAccess.isLocked(selectedSpace)
     }
 
-    private var contentBlockingPolicyBinding: Binding<BrowserContentBlockingPolicy> {
+    /// Crest's own blocking is a WebKit content-rule list. An engine either
+    /// applies it or it does not, and a preference that cannot reach any page
+    /// is worse than an absent one: where blocking comes only from an extension,
+    /// the section says so instead.
+    private var supportsContentBlocking: Bool {
+        browser.core.state.offers(.contentBlocking)
+    }
+
+    private var contentBlockingPolicyBinding: Binding<ContentBlockingPolicy> {
         browser.browsingPreferenceBinding(
-            \.contentBlockingPolicy,
+            \.contentBlocking,
             in: selectedSpaceID,
             default: .balanced
         )

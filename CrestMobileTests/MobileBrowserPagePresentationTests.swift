@@ -5,47 +5,39 @@ import XCTest
 @MainActor
 final class MobileBrowserPagePresentationTests: XCTestCase {
     func testCompactPageActionsExposeOnlyTheSelectedRuntimeAssignment() throws {
-        let firstTab = BrowserTab(
+        let firstTab = TabState.Seed(
             title: "First",
             url: URL(string: "about:blank"),
             placement: .current
         )
-        let secondTab = BrowserTab(
+        let secondTab = TabState.Seed(
             title: "Second",
             url: URL(string: "about:blank"),
             placement: .current
         )
-        let firstSpace = BrowserSpace(
-            id: SpaceID(rawValue: UUID()),
-            profile: BrowsingProfile(),
+        let firstSpace = SpaceState.Seed(
             name: "First Space",
             symbol: "1.circle",
             accent: .indigo,
             folders: [],
-            tabs: [firstTab],
-            selectedTabID: firstTab.id
+            tabs: [firstTab]
         )
-        let secondSpace = BrowserSpace(
-            id: SpaceID(rawValue: UUID()),
-            profile: BrowsingProfile(),
+        let secondSpace = SpaceState.Seed(
             name: "Second Space",
             symbol: "2.circle",
             accent: .teal,
             folders: [],
-            tabs: [secondTab],
-            selectedTabID: secondTab.id
+            tabs: [secondTab]
         )
-        let browser = BrowserStore(
-            session: BrowserSession(
-                spaces: [firstSpace, secondSpace],
-                selectedSpaceID: firstSpace.id
-            ),
-            persistence: InMemoryBrowserSessionPersistence()
+        let browser = BrowserStore.hostingPages(
+            SessionState.Seed(spaces: [firstSpace, secondSpace]),
+            showing: firstSpace.id, tabs: [firstSpace.id: firstTab.id, secondSpace.id: secondTab.id]
         )
         let pages = MobileBrowserPageStore(
+            browser: browser,
             usesEphemeralWebsiteDataStores: true
         )
-        pages.select(session: browser.session)
+        pages.select()
         let firstPage = try XCTUnwrap(pages.activePage)
         let firstPort = MobileSelectedPageActionPort(
             browser: browser,
@@ -56,7 +48,7 @@ final class MobileBrowserPagePresentationTests: XCTestCase {
 
         XCTAssertTrue(firstPort.isAvailable)
         XCTAssertTrue(firstPort.activePage === firstPage)
-        XCTAssertEqual(firstPort.activeURL, firstTab.url)
+        XCTAssertEqual(firstPort.activeURL, firstTab.address)
 
         browser.selectSpace(secondSpace.id)
         let secondPort = MobileSelectedPageActionPort(
@@ -84,7 +76,7 @@ final class MobileBrowserPagePresentationTests: XCTestCase {
         XCTAssertNil(secondPort.activeURL)
         XCTAssertFalse(secondPort.copyPageLinkAsMarkdown())
 
-        pages.select(session: browser.session)
+        pages.select()
         let secondPage = try XCTUnwrap(pages.activePage)
         XCTAssertTrue(secondPort.isAvailable)
         XCTAssertTrue(secondPort.activePage === secondPage)
@@ -107,13 +99,13 @@ final class MobileBrowserPagePresentationTests: XCTestCase {
     }
 
     private func assignment(
-        tab: BrowserTab,
-        space: BrowserSpace
+        tab: TabState.Seed,
+        space: SpaceState.Seed
     ) -> BrowserTabRuntimeAssignment {
         BrowserTabRuntimeAssignment(
             tabID: tab.id,
             spaceID: space.id,
-            profileID: space.profile.id
+            profileID: space.profileID
         )
     }
 }

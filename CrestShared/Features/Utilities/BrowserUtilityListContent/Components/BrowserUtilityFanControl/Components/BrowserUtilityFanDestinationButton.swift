@@ -4,7 +4,7 @@ struct BrowserUtilityFanDestinationButton: View {
     let surface: BrowserUtilitySurface
     let selectedSurface: BrowserUtilitySurface?
     let badgeColor: Color
-    let downloads: [BrowserDownloadItem]
+    let downloads: [DownloadState]
     let newDownloadCount: Int
     let select: (BrowserUtilitySurface) -> Void
 
@@ -81,10 +81,10 @@ struct BrowserUtilityFanDestinationButton: View {
 
     private var symbol: String {
         guard surface == .downloads else { return surface.systemImage }
-        if downloads.contains(where: { $0.state.needsAttention }) {
+        if downloads.contains(where: { $0.phase.needsAttention }) {
             return "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90"
         }
-        if downloads.contains(where: { $0.state.isInProgress }) {
+        if downloads.contains(where: { $0.phase.isLive }) {
             return "arrow.down.circle"
         }
         return "arrow.down.circle.fill"
@@ -101,7 +101,7 @@ struct BrowserUtilityFanDestinationButton: View {
     }
 
     private var downloadBadgeColor: Color {
-        downloads.contains(where: { $0.state.needsAttention }) ? .red : badgeColor
+        downloads.contains(where: { $0.phase.needsAttention }) ? .red : badgeColor
     }
 }
 
@@ -129,10 +129,7 @@ struct BrowserUtilityNotificationBadge: View {
                     Capsule()
                         .trim(
                             from: 0,
-                            to: max(
-                                BrowserDownloadProgressPolicy.normalized(progress),
-                                0.04
-                            )
+                            to: max(min(progress, 1), 0.04)
                         )
                         .stroke(
                             .primary.opacity(0.72),

@@ -9,19 +9,22 @@ import XCTest
 final class BrowserWindowTitleTests: XCTestCase {
 
     func testBlankTitlesUseSafeHostWithoutCredentialsPathOrQuery() {
-        let model = makeModel()
-        model.browser.session.spaces[0].tabs[0].title = " \n\t "
-        model.browser.session.spaces[0].tabs[0].url = URL(
-            string: "https://user:secret@www.example.com:8443/private?token=secret")
+        let model = makeModel { tabs in
+            tabs[0].title = " \n\t "
+            tabs[0].url = "https://user:secret@www.example.com:8443/private?token=secret"
+        }
         XCTAssertEqual(model.windowTitle, "example.com:8443")
-        model.browser.session.spaces[0].tabs[0].url = URL(string: "file:///private/secret.html")
-        XCTAssertEqual(model.windowTitle, ProductIdentity.name)
+        let local = makeModel { tabs in
+            tabs[0].title = " \n\t "
+            tabs[0].url = "file:///private/secret.html"
+        }
+        XCTAssertEqual(local.windowTitle, ProductIdentity.name)
     }
 
     func testLockedSpaceRedactsTitleAndURLBeforePageReconciliation() async {
         let model = makeModel()
-        model.browser.session.spaces[0].accessPolicy = .deviceOwnerAuthentication
-        let space = model.browser.selectedSpace!
+        model.browser.updateSpaceAccessPolicy(.deviceOwnerAuthentication, in: model.browser.selectedSpaceID)
+        let space = model.browser.shownSpace!
         XCTAssertEqual(model.windowTitle, ProductIdentity.name)
         let unlocked = await model.spaceAccess.unlock(space)
         XCTAssertTrue(unlocked)
@@ -40,91 +43,80 @@ final class BrowserWindowTitleTests: XCTestCase {
     func testWindowLocalSelectionDoesNotFollowAnotherWindow() {
         let first = makeModel()
         let second = makeModel(browser: first.browser.makeWindowStore())
-        second.browser.selectTab(second.browser.selectedSpace!.tabs[1].id)
-        second.browser.updateSelectedTabFromPage(url: nil, title: "Other window changed")
+        second.browser.selectTab(second.browser.shownSpace!.tabs.models[1].id)
+        second.browser.seedSelectedTabNavigation(to: nil, titled: "Other window changed")
         XCTAssertEqual(first.windowTitle, "Alpha")
         XCTAssertEqual(second.windowTitle, "Other window changed")
     }
 
     func testBackgroundMetadataDoesNotOverwriteFocusedSplitMember() {
-        let model = makeModel()
-        let group = SplitGroupID()
-        model.browser.session.spaces[0].tabs[0].splitGroupID = group
-        model.browser.session.spaces[0].tabs[1].splitGroupID = group
-        let space = model.browser.selectedSpace!
-        model.browser.updateTabFromPage(
-            url: space.tabs[1].url,
-            title: "Background Beta",
-            for: space.tabs[1].id,
-            matching: BrowserSpaceRuntimeAssignment(space: space)
-        )
+        let group = UUID()
+        let model = makeModel { tabs in
+            tabs[0].splitGroupID = group
+            tabs[1].splitGroupID = group
+            // The unfocused member's page recorded a new title.
+            tabs[1].title = "Background Beta"
+        }
+        let space = model.browser.shownSpace!
         XCTAssertEqual(model.windowTitle, "Alpha")
-        model.browser.selectTab(space.tabs[1].id)
+        model.browser.selectTab(space.tabs.models[1].id)
         XCTAssertEqual(model.windowTitle, "Background Beta")
-        model.browser.selectTab(space.tabs[0].id)
+        model.browser.selectTab(space.tabs.models[0].id)
         XCTAssertEqual(model.windowTitle, "Alpha")
     }
 
     func testDeletingSpaceImmediatelyRedactsItsTitle() {
         let model = makeModel()
-        XCTAssertTrue(model.browser.family.beginDeletingSpace(model.browser.session.selectedSpaceID))
+        XCTAssertTrue(model.browser.family.beginDeletingSpace(model.browser.selectedSpaceID))
         XCTAssertEqual(model.windowTitle, ProductIdentity.name)
     }
 
     func testSpaceSwitchRejectsThePreviousActivePage() async throws {
-        let model = makeModel()
-        model.pages.select(session: model.browser.session)
+        let beta = TabState.Seed(title: "Beta", url: URL(string: "https://beta.crest.test"), placement: .current)
+        let destination = SpaceState.Seed(
+            name: "Other", symbol: "circle", accent: .indigo,
+            folders: [], tabs: [beta]
+        )
+        let model = makeModel(adding: [destination])
+        model.pages.select()
         let page = try XCTUnwrap(model.pages.activePage)
         try await load("Live Alpha", into: page)
-        var destination = model.browser.selectedSpace!
-        destination = BrowserSpace(
-            id: SpaceID(), profile: BrowsingProfile(), name: "Other", symbol: "circle", accent: .indigo,
-            folders: [], tabs: [destination.tabs[1]], selectedTabID: destination.tabs[1].id
-        )
-        model.browser.session.spaces.append(destination)
         model.browser.selectSpace(destination.id)
-        XCTAssertEqual(model.pages.activeTabID, model.browser.session.spaces[0].tabs[0].id)
+        XCTAssertEqual(model.pages.activeTabID, model.browser.spaceModels[0].tabs.models[0].id)
         XCTAssertEqual(model.windowTitle, "Beta")
-        let sessionBeforePageCallbacks = model.browser.session
+        let sessionBeforePageCallbacks = model.browser.sessionSeed
         model.address = "Destination address draft"
 
         model.synchronizePageMetadata()
-        model.recordCompletedNavigation()
 
-        XCTAssertEqual(model.browser.session, sessionBeforePageCallbacks)
+        XCTAssertEqual(model.browser.sessionSeed, sessionBeforePageCallbacks)
         XCTAssertEqual(model.address, "Destination address draft")
     }
 
-    func testExtensionCommandsUseWindowIdentityNotPageTitle() {
-        let browserWindow = NSWindow()
-        browserWindow.identifier = NSUserInterfaceItemIdentifier(BrowserSceneID.browser.rawValue)
-        browserWindow.title = "A webpage title"
-        XCTAssertTrue(BrowserExtensionCommandMonitor.acceptsWindow(browserWindow))
-        for role in BrowserSceneID.allCases where role != .browser {
-            let other = NSWindow()
-            other.identifier = NSUserInterfaceItemIdentifier(role.rawValue)
-            other.title = ProductIdentity.name
-            XCTAssertFalse(BrowserExtensionCommandMonitor.acceptsWindow(other))
-        }
-        XCTAssertFalse(BrowserExtensionCommandMonitor.acceptsWindow(nil))
-    }
-
-    private func makeModel(browser: BrowserStore? = nil) -> BrowserRootModel {
-        let alpha = BrowserTab(title: "Alpha", url: URL(string: "https://alpha.crest.test"), placement: .current)
-        let beta = BrowserTab(title: "Beta", url: URL(string: "https://beta.crest.test"), placement: .current)
-        let space = BrowserSpace(
-            id: SpaceID(), profile: BrowsingProfile(), name: "Test", symbol: "circle", accent: .indigo,
-            folders: [], tabs: [alpha, beta], selectedTabID: alpha.id
+    /// A window over a Space showing Alpha, then Beta, with `adding` after it
+    /// and its tabs as `configure` leaves them; or over `browser`'s session.
+    private func makeModel(
+        browser: BrowserStore? = nil, adding extra: [SpaceState.Seed] = [],
+        configure: (inout [TabState.Seed]) -> Void = { _ in }
+    ) -> BrowserRootModel {
+        let alpha = TabState.Seed(title: "Alpha", url: URL(string: "https://alpha.crest.test"), placement: .current)
+        let beta = TabState.Seed(title: "Beta", url: URL(string: "https://beta.crest.test"), placement: .current)
+        var tabs = [alpha, beta]
+        configure(&tabs)
+        let space = SpaceState.Seed(
+            name: "Test", symbol: "circle", accent: .indigo,
+            folders: [], tabs: tabs
         )
+        let browser =
+            browser
+            ?? BrowserStore.hostingPages(SessionState.Seed(spaces: [space] + extra))
+        let spaceAccess = BrowserSpaceAccessController(authenticator: TitleAuthenticator())
+        browser.attachSpaceAccess(spaceAccess)
         return BrowserRootModel(
-            browser: browser
-                ?? BrowserStore(
-                    session: BrowserSession(spaces: [space], selectedSpaceID: space.id),
-                    persistence: InMemoryBrowserSessionPersistence()
-                ),
-            pages: BrowserPagePool(),
+            browser: browser,
+            pages: BrowserPagePool(browser: browser),
             chrome: BrowserChromeState(),
-            spaceAccess: BrowserSpaceAccessController(authenticator: TitleAuthenticator()),
+            spaceAccess: spaceAccess,
             windowState: nil, startupBehavior: .lastActiveTab,
             persistedSidebarWidth: BrowserChromeLayout.sidebarIdealWidth
         )
@@ -135,7 +127,7 @@ final class BrowserWindowTitleTests: XCTestCase {
             URLRequest(url: URL(string: "https://alpha.crest.test")!),
             responseHTML: "<html><head><title>\(title)</title></head><body>Fixture</body></html>"
         )
-        try await waitUntil { page.title == title && !page.isLoading }
+        try await waitUntil { page.live.title == title && !page.live.isLoading }
     }
 
     private func waitUntil(_ condition: @escaping @MainActor () -> Bool) async throws {

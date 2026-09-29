@@ -18,12 +18,12 @@ extension BrowserSidebarNavigationPort {
             goForward: { pages.goForward() },
             goBackToHistoryItem: { item in pages.goBack(to: item) },
             goForwardToHistoryItem: { item in pages.goForward(to: item) },
-            isLoading: { pages.activePage?.isLoading == true },
+            isLoading: { pages.activePage?.live.isLoading == true },
             hasActivePage: { pages.activePage != nil },
-            activeURL: { pages.activePage?.displayURL },
-            reloadOrStop: { pages.reloadOrStop(in: browser.session) },
-            reload: { pages.forceReload(in: browser.session) },
-            reloadFromOrigin: { pages.reloadFromOrigin(in: browser.session) },
+            activeURL: { pages.activePage?.live.displayURL },
+            reloadOrStop: { pages.reloadOrStop() },
+            reload: { pages.forceReload() },
+            reloadFromOrigin: { pages.reloadFromOrigin() },
             clearSiteDataAndReload: { await pages.clearSiteDataAndReload() }
         )
     }

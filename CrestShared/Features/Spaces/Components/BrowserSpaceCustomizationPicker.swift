@@ -1,12 +1,15 @@
 import SwiftUI
 
 /// Uses the live sidebar's track, artwork, and overflow controls. The host owns
-/// selection and ordering, whether it is editing a session or a setup draft.
+/// selection and ordering, whether it is editing the read model's Spaces or a
+/// setup draft.
 struct BrowserSpaceCustomizationPicker: View {
-    let spaces: [BrowserSpace]
-    let selectedSpaceID: SpaceID
-    let selectSpace: (SpaceID) -> Void
-    let moveSpace: (SpaceID, SpaceID) -> Void
+    // MARK: - Variables
+
+    let spaces: [BrowserSpaceIdentity]
+    let selectedSpaceID: UUID
+    let selectSpace: (UUID) -> Void
+    let moveSpace: (UUID, UUID) -> Void
     let addSpace: () -> Void
 
     private var usesTouch: Bool {
@@ -16,6 +19,24 @@ struct BrowserSpaceCustomizationPicker: View {
             false
         #endif
     }
+
+    // MARK: - Initializers
+
+    init(
+        spaces: [some BrowserSpaceIdentifying],
+        selectedSpaceID: UUID,
+        selectSpace: @escaping (UUID) -> Void,
+        moveSpace: @escaping (UUID, UUID) -> Void,
+        addSpace: @escaping () -> Void
+    ) {
+        self.spaces = spaces.map(\.identity)
+        self.selectedSpaceID = selectedSpaceID
+        self.selectSpace = selectSpace
+        self.moveSpace = moveSpace
+        self.addSpace = addSpace
+    }
+
+    // MARK: - Body
 
     var body: some View {
         #if os(iOS)

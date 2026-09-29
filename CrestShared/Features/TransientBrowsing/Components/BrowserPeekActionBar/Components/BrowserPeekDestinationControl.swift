@@ -1,11 +1,11 @@
 import SwiftUI
 
 struct BrowserPeekDestinationControl: View {
-    let spaces: [BrowserSpace]
-    let selectedSpaceID: SpaceID
+    let spaces: [BrowserSpaceIdentity]
+    let selectedSpaceID: UUID
     let openInSpace: (BrowserSpaceRuntimeAssignment) -> Void
 
-    private var selectedSpace: BrowserSpace? {
+    private var selectedSpace: BrowserSpaceIdentity? {
         spaces.first { $0.id == selectedSpaceID }
     }
 
@@ -49,6 +49,6 @@ struct BrowserPeekDestinationControl: View {
 
     private func openInSelectedSpace() {
         guard let selectedSpace else { return }
-        openInSpace(BrowserSpaceRuntimeAssignment(space: selectedSpace))
+        openInSpace(selectedSpace.assignment)
     }
 }

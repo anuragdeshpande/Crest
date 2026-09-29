@@ -2,17 +2,17 @@ import SwiftUI
 
 struct BrowserSearchEngineManager: View {
     let browser: BrowserStore
-    let space: BrowserSpace
+    let space: SpaceModel
     let dismissKeyboard: @MainActor () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var editorRequest: BrowserSearchEngineEditorRequest?
-    @State private var pendingDeletion: BrowserCustomSearchProvider?
+    @State private var pendingDeletion: CustomSearchProvider?
     @State private var keyboardDismissal = BrowserSearchEngineKeyboardDismissal()
 
     init(
         browser: BrowserStore,
-        space: BrowserSpace,
+        space: SpaceModel,
         dismissKeyboard: @escaping @MainActor () -> Void = {}
     ) {
         self.browser = browser
@@ -24,7 +24,7 @@ struct BrowserSearchEngineManager: View {
         NavigationStack {
             List {
                 Section("Built-In", systemImage: "magnifyingglass") {
-                    ForEach(BrowserSearchProvider.allCases) { provider in
+                    ForEach(SearchProvider.all) { provider in
                         providerRow(provider)
                     }
                 }
@@ -100,7 +100,7 @@ struct BrowserSearchEngineManager: View {
         } message: { custom in
             Text(
                 verbatim:
-                    preferences.searchProvider.id == .custom(custom.id)
+                    preferences.searchProvider == SearchProvider(custom: custom)
                     ? String(localized: "Google will become this Space’s search engine.")
                     : String(
                         localized: "This removes \(custom.name) from this Space."
@@ -109,31 +109,31 @@ struct BrowserSearchEngineManager: View {
         }
     }
 
-    private var preferences: BrowserSpaceBrowsingPreferences {
-        browser.liveSpace(space).browsingPreferences
+    private var preferences: BrowsingPreferences {
+        space.settings.browsingPreferences
     }
 
-    private func providerRow(_ provider: BrowserSearchProvider) -> some View {
+    private func providerRow(_ provider: SearchProvider) -> some View {
         Button {
             select(provider)
         } label: {
             BrowserSearchEngineProviderLabel(
-                provider: provider, profileID: space.profile.id,
-                isSelected: preferences.searchProvider.id == provider.id)
+                provider: provider, profileID: space.profileID,
+                isSelected: preferences.searchProvider == provider)
         }
         .buttonStyle(.plain)
     }
 
     private func customProviderRow(
-        _ custom: BrowserCustomSearchProvider
+        _ custom: CustomSearchProvider
     ) -> some View {
         HStack {
             Button {
-                select(custom.provider)
+                select(SearchProvider(custom: custom))
             } label: {
                 BrowserSearchEngineProviderLabel(
-                    provider: custom.provider, profileID: space.profile.id,
-                    isSelected: preferences.searchProvider.id == .custom(custom.id)
+                    provider: SearchProvider(custom: custom), profileID: space.profileID,
+                    isSelected: preferences.searchProvider == SearchProvider(custom: custom)
                 )
                 .contentShape(.rect)
             }
@@ -152,28 +152,21 @@ struct BrowserSearchEngineManager: View {
         .accessibilityElement(children: .contain)
     }
 
-    private func select(_ provider: BrowserSearchProvider) {
+    private func select(_ provider: SearchProvider) {
         var updated = preferences
         updated.searchProvider = provider
         browser.updateBrowsingPreferences(updated, in: space.id)
     }
 
     private func save(
-        _ custom: BrowserCustomSearchProvider,
+        _ engine: CustomSearchEngine,
         selectsProvider: Bool
     ) throws {
-        var updated = preferences
-        try updated.upsertCustomSearchProvider(custom)
-        if selectsProvider {
-            updated.searchProvider = custom.provider
-        }
-        browser.updateBrowsingPreferences(updated, in: space.id)
+        try browser.upsertCustomSearchProvider(engine, selects: selectsProvider, in: space.id)
     }
 
-    private func remove(_ custom: BrowserCustomSearchProvider) {
-        var updated = preferences
-        updated.removeCustomSearchProvider(id: custom.id)
-        browser.updateBrowsingPreferences(updated, in: space.id)
+    private func remove(_ custom: CustomSearchProvider) {
+        browser.removeCustomSearchProvider(id: custom.id, in: space.id)
         pendingDeletion = nil
     }
 }

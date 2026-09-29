@@ -9,11 +9,14 @@ import SwiftUI
 /// pointer may do to it.
 struct BrowserRootPageSurface: View {
     @Environment(\.spaceContentPresentation) private var contentPresentation
+    @Environment(\.browserMacWindows) private var windows
     let model: BrowserRootModel
-    let space: BrowserSpace
+    let space: SpaceModel
     let isSelectedSpace: Bool
     let transientBrowsing: BrowserTransientBrowsingCoordinator
     let tabPromotionNamespace: Namespace.ID
+    /// The chords the window's commands show in a Start Page's palette.
+    let shortcuts: BrowserShortcutStore?
     var appearance = BrowserChromeAppearance()
     var layoutDirection = LayoutDirection.leftToRight
 
@@ -21,12 +24,13 @@ struct BrowserRootPageSurface: View {
         isSelectedSpace && contentPresentation == .interactive
     }
 
-    private var selectedTab: BrowserTab? {
-        space.tabs.first { $0.id == space.selectedTabID }
+    /// The tab the window shows in this Space.
+    private var shownTab: TabStateModel? {
+        model.browser.selectedTabID(in: space.id).flatMap { space.tabs.model($0) }
     }
 
     private var surfacePage: BrowserPage? {
-        selectedTab.flatMap { model.pages.surfacePage(for: $0, in: space, accessController: model.spaceAccess) }
+        shownTab.flatMap { model.pages.surfacePage(for: $0.id, in: space, accessController: model.spaceAccess) }
     }
 
     private var previewsStartPage: Bool {
@@ -35,17 +39,16 @@ struct BrowserRootPageSurface: View {
 
     private var pageSurfacePresentation: BrowserPageSurfacePresentation {
         if previewsStartPage, !model.spaceAccess.isLocked(space) {
-            let draft = space.currentTabs.first { $0.isStartPage && space.splitGroup(containing: $0.id) == nil }
-            return .single(space: space, cardTabID: draft?.id)
+            return .single(space: space, cardTabID: nil)
         }
         return BrowserPageSurfaceBranchPolicy.resolve(
-            selectedSpace: space,
-            isSelectedSpaceLocked: model.spaceAccess.isLocked(space),
-            selectedTabID: space.selectedTabID,
+            space: space,
+            isLocked: model.spaceAccess.isLocked(space),
+            cards: model.browser.cards(in: space),
             hasEnteredSplitContent:
                 isSelectedSpace && model.sidebarInteraction.sidebarReorderState.hasEnteredSplitContent,
             resolvedTarget: isSelectedSpace ? model.sidebarInteraction.sidebarReorderState.resolvedTarget : nil,
-            presentsTrailingPanel: isSelectedSpace && model.extensionSidebar?.panel != nil
+            presentsTrailingPanel: isSelectedSpace && model.extensionSidePanel.panel != nil
         )
     }
 
@@ -84,6 +87,7 @@ struct BrowserRootPageSurface: View {
                 members: members,
                 placeholderIndex: placeholderIndex,
                 tabPromotionNamespace: tabPromotionNamespace,
+                shortcuts: shortcuts,
                 appearance: appearance
             )
         } else {
@@ -91,7 +95,7 @@ struct BrowserRootPageSurface: View {
                 adjoinsLeadingSidebar:
                     model.sidebarPresentation.reservesSidebarWidth,
                 usesBorderlessFrame: appearance.borderless,
-                isStartPage: previewsStartPage || selectedTab?.isStartPage == true,
+                isStartPage: previewsStartPage || shownTab?.surface == .startPage,
                 hasActivePage: surfacePage != nil,
                 completedNavigationCount: surfacePage?.completedNavigationCount ?? 0,
                 hasSelectedSpace: true,
@@ -105,19 +109,21 @@ struct BrowserRootPageSurface: View {
                     if model.spaceAccess.isLocked(space) {
                         BrowserSpaceAccessView(
                             space: space,
-                            spaces: model.browser.session.spaces,
+                            spaces: BrowserSidebarAccessPolicy.availableSpaces(in: model.browser),
                             accessController: model.spaceAccess,
                             selectSpace: { assignment in
                                 guard
-                                    let candidate = model.browser.space(
-                                        matching: assignment
-                                    ), !model.spaceAccess.isLocked(candidate)
+                                    let candidate = BrowserSidebarAccessPolicy.unlockedSpace(
+                                        matching: assignment, in: model.browser, accessController: model.spaceAccess)
                                 else { return }
-                                model.browser.selectSpace(assignment.spaceID)
+                                model.browser.selectSpace(candidate.id)
                             },
                             presentation: .contentOverlay
                         )
-                        .background { LockedSpacePagePreview(space: space, pages: model.pages) }
+                        .background {
+                            LockedSpacePagePreview(
+                                space: space, cards: model.browser.cards(in: space), pages: model.pages)
+                        }
                     } else {
                         BrowserDetailView(
                             presentation: presentation,
@@ -129,6 +135,8 @@ struct BrowserRootPageSurface: View {
                                 model.chrome.startPageFocusRequest,
                             isCommandPalettePresented:
                                 model.chrome.isCommandPalettePresented,
+                            commands: model.paletteRegistry(
+                                windows: windows, layoutDirection: layoutDirection, shortcuts: shortcuts),
                             previewsStartPage: previewsStartPage
                         )
                     }

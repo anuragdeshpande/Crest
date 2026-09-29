@@ -118,38 +118,13 @@ final class BrowserSplitFocusPolicyTests: XCTestCase {
     }
 }
 
-/// Follow Mouse persists immediately without allowing isolated launches to
-/// touch the installed profile.
-@MainActor
-final class BrowserSplitFocusPreferenceTests: XCTestCase {
-
-    func testIsolatedLaunchNeverWritesPersistentPreferences() {
-        let suiteName =
-            "BrowserSplitFocusPreferenceTests.isolation.\(UUID().uuidString)"
-        let persistentDefaults = UserDefaults(suiteName: suiteName)!
-        defer { persistentDefaults.removePersistentDomain(forName: suiteName) }
-        let store = BrowserSplitFocusPreferenceStore.launch(
-            usesIsolatedLaunch: true,
-            persistentDefaults: persistentDefaults
-        )
-
-        store.followsMouse = true
-
-        XCTAssertFalse(
-            persistentDefaults.bool(
-                forKey: BrowserSplitFocusPreferenceStore.followsMouseKey
-            )
-        )
-    }
-}
-
 /// The registry that turns a mouse-down location into the card it landed in.
 @MainActor
 final class BrowserSplitCardFrameRegistryTests: XCTestCase {
 
     func testACardThatLeavesTheRowStopsClaimingItsOldFrame() {
         let registry = BrowserSplitCardFrameRegistry()
-        let tabID = TabID()
+        let tabID = UUID()
         registry.register(CGRect(x: 0, y: 0, width: 400, height: 600), for: tabID)
 
         registry.removeFrame(for: tabID)

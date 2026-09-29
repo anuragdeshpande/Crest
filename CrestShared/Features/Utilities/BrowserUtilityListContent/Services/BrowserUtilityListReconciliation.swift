@@ -5,14 +5,14 @@ enum BrowserUtilityListReconciliation {
         preparedSections: [BrowserUtilityListSection],
         surface: BrowserUtilitySurface,
         assignment: BrowserSpaceRuntimeAssignment,
-        downloads: [BrowserDownloadItem],
+        downloads: [DownloadState],
         searchText: String,
         filter: BrowserUtilityListFilter
     ) -> [BrowserUtilityListSection] {
         guard surface == .downloads else { return preparedSections }
 
         let liveDownloads = downloads.reduce(
-            into: [UUID: BrowserDownloadItem]()
+            into: [UUID: DownloadState]()
         ) { result, item in
             guard item.profileID == assignment.profileID else { return }
             result[item.id] = item
@@ -28,7 +28,7 @@ enum BrowserUtilityListReconciliation {
                     emittedDownloadIDs.insert(preparedDownload.id).inserted,
                     let currentDownload = liveDownloads[preparedDownload.id],
                     matchesSearch(currentDownload, query: query),
-                    matchesFilter(currentDownload, filter: activeFilter)
+                    activeFilter.includes(.download(currentDownload), at: Date(), in: .autoupdatingCurrent)
                 else { return nil }
                 return BrowserUtilityListItem.download(currentDownload)
             }
@@ -41,31 +41,13 @@ enum BrowserUtilityListReconciliation {
     }
 
     nonisolated private static func matchesSearch(
-        _ item: BrowserDownloadItem,
+        _ item: DownloadState,
         query: String
     ) -> Bool {
         query.isEmpty
             || item.filename.localizedStandardContains(query)
-            || item.state.utilityStatusText
+            || BrowserDownloadRowPresentation.status(of: item)
                 .resolvedForSearch()
                 .localizedStandardContains(query)
-    }
-
-    nonisolated private static func matchesFilter(
-        _ item: BrowserDownloadItem,
-        filter: BrowserUtilityListFilter
-    ) -> Bool {
-        switch filter {
-        case .all:
-            true
-        case .downloadsInProgress:
-            item.state.isInProgress
-        case .downloadsFinished:
-            item.state == .finished
-        case .downloadsNeedsAttention:
-            item.state.needsAttention
-        default:
-            false
-        }
     }
 }

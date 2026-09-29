@@ -26,7 +26,7 @@ struct BrowserSidebar<Content: View>: View {
     /// selected, or `nil` when it is locked or gone. This is where a shell that
     /// owns the address field brings it back in step; a shell whose root model
     /// already observes the session does nothing.
-    let spaceSelectionChanged: (BrowserSpace?) -> Void
+    let spaceSelectionChanged: (SpaceModel?) -> Void
 
     @ViewBuilder let content: (BrowserSidebarContext) -> Content
 
@@ -43,7 +43,7 @@ struct BrowserSidebar<Content: View>: View {
         utilityPresentation: BrowserUtilityPresentationState,
         chromeActions: BrowserSidebarChromeActions,
         presentsSelectedSpacePage: Bool = true,
-        spaceSelectionChanged: @escaping (BrowserSpace?) -> Void = { _ in },
+        spaceSelectionChanged: @escaping (SpaceModel?) -> Void = { _ in },
         @ViewBuilder content: @escaping (BrowserSidebarContext) -> Content
     ) {
         self.browser = browser
@@ -108,8 +108,8 @@ struct BrowserSidebar<Content: View>: View {
         utilityCoordinator.selectedDownloads.map(\.id)
     }
 
-    private var newUtilityDownloads: [BrowserDownloadItem] {
-        guard let profileID = browser.selectedSpace?.profile.id else { return [] }
+    private var newUtilityDownloads: [DownloadState] {
+        guard let profileID = browser.shownSpace?.profileID else { return [] }
         return pageAccess.downloadCenter.unacknowledgedItems(for: profileID)
     }
 
@@ -123,7 +123,7 @@ struct BrowserSidebar<Content: View>: View {
         )
     }
 
-    private func confirmClearHistory(for space: BrowserSpace) {
+    private func confirmClearHistory(for space: SpaceModel) {
         clearHistoryConfirmation =
             BrowserSidebarSpacePresentationPolicy.clearHistoryConfirmation(
                 for: space,
@@ -138,8 +138,8 @@ struct BrowserSidebar<Content: View>: View {
     /// A shell that has no page beside the sidebar takes the outgoing page down
     /// before the session moves, so nothing is briefly showing one Space's page
     /// under another Space's tabs.
-    private func selectSpace(_ spaceID: SpaceID) {
-        guard spaceID != browser.session.selectedSpaceID else { return }
+    private func selectSpace(_ spaceID: UUID) {
+        guard spaceID != browser.selectedSpaceID else { return }
         if !presentsSelectedSpacePage {
             pageAccess.deactivatePagePresentation()
         }
@@ -153,13 +153,9 @@ struct BrowserSidebar<Content: View>: View {
         if presentsSelectedSpacePage { pageAccess.selectPages() }
     }
 
-    private var selectedUnlockedSpace: BrowserSpace? {
-        guard let space = browser.selectedSpace else { return nil }
-        return BrowserSidebarAccessPolicy.selectedUnlockedSpace(
-            matching: BrowserSpaceRuntimeAssignment(space: space),
-            in: browser,
-            accessController: spaceAccess
-        )
+    private var selectedUnlockedSpace: SpaceModel? {
+        guard let space = browser.shownSpace, !spaceAccess.isLocked(space) else { return nil }
+        return space
     }
 }
 
@@ -181,9 +177,9 @@ struct BrowserSidebar<Content: View>: View {
     ) { context in
         BrowserSidebarSpacePager(context: context) { space, isSelected in
             VStack {
-                Text(space.name)
+                Text(space.settings.name)
                     .font(.headline)
-                Text("\(space.tabs.count) tabs")
+                Text("\(space.tabs.models.count) tabs")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

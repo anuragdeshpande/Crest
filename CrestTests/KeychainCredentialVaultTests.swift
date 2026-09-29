@@ -6,10 +6,10 @@ import XCTest
 @MainActor
 final class KeychainCredentialVaultTests: XCTestCase {
     func testSynchronizationMigrationRollsBackEarlierItemsWhenALaterWriteFails() async throws {
-        let spaceID = SpaceID()
+        let spaceID = UUID()
         let first = try keychainItem(
             descriptor: descriptor(
-                id: CredentialID(rawValue: UUID()),
+                id: UUID(),
                 spaceID: spaceID,
                 username: "first"
             ),
@@ -17,7 +17,7 @@ final class KeychainCredentialVaultTests: XCTestCase {
         )
         let second = try keychainItem(
             descriptor: descriptor(
-                id: CredentialID(rawValue: UUID()),
+                id: UUID(),
                 spaceID: spaceID,
                 username: "second"
             ),
@@ -47,9 +47,9 @@ final class KeychainCredentialVaultTests: XCTestCase {
     }
 
     func testCredentialLookupRejectsNonUTF8SecretData() async throws {
-        let spaceID = SpaceID()
+        let spaceID = UUID()
         let descriptor = descriptor(
-            id: CredentialID(rawValue: UUID()),
+            id: UUID(),
             spaceID: spaceID,
             username: "person"
         )
@@ -75,15 +75,15 @@ final class KeychainCredentialVaultTests: XCTestCase {
     }
 
     func testDescriptorLookupRejectsMetadataWhoseSyncFlagDiffersFromKeychain() async throws {
-        let spaceID = SpaceID()
+        let spaceID = UUID()
         let descriptor = descriptor(
-            id: CredentialID(rawValue: UUID()),
+            id: UUID(),
             spaceID: spaceID,
             username: "person"
         )
         let encoded = try JSONEncoder().encode(descriptor)
         let item = CredentialKeychainItem(
-            account: descriptor.id.rawValue.uuidString.lowercased(),
+            account: descriptor.id.uuidString.lowercased(),
             metadata: encoded,
             secret: Data("secret".utf8),
             isSynchronizable: true
@@ -103,14 +103,14 @@ final class KeychainCredentialVaultTests: XCTestCase {
     }
 
     func testAtomicReplacementRestoresTheOriginalInventoryWhenAWriteFails() async throws {
-        let spaceID = SpaceID()
+        let spaceID = UUID()
         let firstDescriptor = descriptor(
-            id: CredentialID(rawValue: UUID()),
+            id: UUID(),
             spaceID: spaceID,
             username: "first"
         )
         let secondDescriptor = descriptor(
-            id: CredentialID(rawValue: UUID()),
+            id: UUID(),
             spaceID: spaceID,
             username: "second"
         )
@@ -158,9 +158,52 @@ final class KeychainCredentialVaultTests: XCTestCase {
         XCTAssertEqual(restoredItems, [first, second])
     }
 
+    /// Synchronizable descriptors reach builds on other devices that read a
+    /// Space only as `{"rawValue": UUID}`. What this build writes decodes
+    /// with that older shape, and what an older build wrote reads here.
+    func testDescriptorsKeepTheSpaceSpellingOlderBuildsRead() async throws {
+        let spaceID = UUID()
+        var written = descriptor(id: UUID(), spaceID: spaceID, username: "person")
+        written.isSynchronizable = true
+        let item = try CredentialKeychainCodec().item(
+            for: BrowserCredential(descriptor: written, password: "secret"), expectedSpaceID: spaceID)
+
+        let older = try JSONDecoder().decode(PreS62CredentialDescriptor.self, from: item.metadata)
+        XCTAssertEqual(older.spaceID.rawValue, spaceID)
+        XCTAssertEqual(older.id.rawValue, written.id)
+        XCTAssertEqual(older.username, written.username)
+        XCTAssertTrue(older.isSynchronizable)
+
+        let olderItem = CredentialKeychainItem(
+            account: item.account, metadata: try JSONEncoder().encode(older), secret: item.secret,
+            isSynchronizable: true)
+        let vault = KeychainCredentialVault(
+            store: FailingMigrationCredentialKeychainStore(items: [olderItem]), servicePrefix: "test.crest")
+        let read = try await vault.descriptors(in: spaceID)
+        XCTAssertEqual(read, [written])
+    }
+
+    /// A descriptor whose Space is stored bare reads as the same descriptor.
+    func testDescriptorsReadABareSpace() async throws {
+        let spaceID = UUID()
+        let written = descriptor(id: UUID(), spaceID: spaceID, username: "person")
+        let item = try keychainItem(descriptor: written, password: "secret")
+        var metadata = try XCTUnwrap(JSONSerialization.jsonObject(with: item.metadata) as? [String: Any])
+        XCTAssertEqual(metadata["spaceID"] as? [String: String], StoredIdentityJSON.wrapped(spaceID))
+        metadata["spaceID"] = spaceID.uuidString
+        let bareItem = CredentialKeychainItem(
+            account: item.account, metadata: try JSONSerialization.data(withJSONObject: metadata),
+            secret: item.secret, isSynchronizable: false)
+        let vault = KeychainCredentialVault(
+            store: FailingMigrationCredentialKeychainStore(items: [bareItem]), servicePrefix: "test.crest")
+
+        let read = try await vault.descriptors(in: spaceID)
+        XCTAssertEqual(read, [written])
+    }
+
     private func descriptor(
-        id: CredentialID,
-        spaceID: SpaceID,
+        id: UUID,
+        spaceID: UUID,
         username: String
     ) -> CredentialDescriptor {
         CredentialDescriptor(
@@ -182,7 +225,7 @@ final class KeychainCredentialVaultTests: XCTestCase {
         password: String
     ) throws -> CredentialKeychainItem {
         CredentialKeychainItem(
-            account: descriptor.id.rawValue.uuidString.lowercased(),
+            account: descriptor.id.uuidString.lowercased(),
             metadata: try JSONEncoder().encode(descriptor),
             secret: Data(password.utf8),
             isSynchronizable: descriptor.isSynchronizable
@@ -192,6 +235,25 @@ final class KeychainCredentialVaultTests: XCTestCase {
 
 private enum TestCredentialKeychainError: Error, Equatable {
     case injectedFailure
+}
+
+/// The credential descriptor as builds before S6.2 coded it, with the Space in
+/// its ID wrapper.
+private struct PreS62CredentialDescriptor: Codable {
+    struct WrappedIdentity: Codable {
+        let rawValue: UUID
+    }
+
+    let id: WrappedIdentity
+    let spaceID: WrappedIdentity
+    let origin: CredentialOrigin
+    let scope: BrowserCredentialScope
+    let username: String
+    let displayName: String?
+    let createdAt: Date
+    let updatedAt: Date
+    let lastUsedAt: Date?
+    let isSynchronizable: Bool
 }
 
 private actor FailingMigrationCredentialKeychainStore: CredentialKeychainStoring {

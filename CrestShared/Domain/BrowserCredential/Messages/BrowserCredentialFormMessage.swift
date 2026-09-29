@@ -1,5 +1,20 @@
 import Foundation
 
+// MARK: - Types
+
+enum BrowserCredentialFormEvent: String, Equatable, Sendable {
+    case username
+    case focus
+    case submit
+    case documentState
+
+    /// The focused field moved under the prompt already on show — the page
+    /// scrolled, the window resized, or the reader changed the page's zoom.
+    /// It carries geometry and nothing else, so it can never open a prompt,
+    /// only move one.
+    case fieldGeometry
+}
+
 /// A narrowly validated message from Crest's isolated WebKit content world.
 /// It deliberately cannot be encoded, and its textual representations never
 /// include the password received during a submit event.
@@ -13,7 +28,7 @@ struct BrowserCredentialFormMessage: Sendable, CustomStringConvertible, CustomDe
     let formID: String?
     let username: String?
     let password: String?
-    let passwordKind: BrowserCredentialPasswordKind?
+    let passwordKind: CredentialPasswordKind?
     let isTrustedUserEvent: Bool
     let hasVisiblePasswordField: Bool?
 
@@ -43,8 +58,7 @@ struct BrowserCredentialFormMessage: Sendable, CustomStringConvertible, CustomDe
             dictionary["password"],
             maximumLength: Self.maximumPasswordLength
         )
-        let passwordKind = (dictionary["passwordKind"] as? String)
-            .flatMap(BrowserCredentialPasswordKind.init(rawValue:))
+        let passwordKind = (dictionary["passwordKind"] as? String).flatMap(Self.passwordKind(named:))
         let isTrustedUserEvent = dictionary["trusted"] as? Bool ?? false
         let hasVisiblePasswordField = dictionary["hasVisiblePasswordField"] as? Bool
         let fieldRect = BrowserCredentialFieldRect(body: dictionary["fieldRect"])
@@ -112,6 +126,15 @@ struct BrowserCredentialFormMessage: Sendable, CustomStringConvertible, CustomDe
     }
 
     var debugDescription: String { description }
+
+    /// The content script's spelling of a password field's kind.
+    private static func passwordKind(named name: String) -> CredentialPasswordKind? {
+        switch name {
+        case "current": .current
+        case "new": .new
+        default: nil
+        }
+    }
 
     private static func nonemptyString(_ value: Any?, maximumLength: Int) -> String? {
         guard let value = value as? String else { return nil }

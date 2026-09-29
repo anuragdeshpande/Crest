@@ -7,12 +7,12 @@ enum BrowserPerformanceSoakFixture {
         charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
     )
 
-    static func makeSession(
+    static func makeSeed(
         baseURLString: String?,
         rawTabCount: String?,
         isHeavy: Bool = false,
         runID: String
-    ) -> BrowserSession? {
+    ) -> SessionState.Seed? {
         guard let baseURLString,
             let baseURL = URL(string: baseURLString),
             isSafeLoopback(baseURL),
@@ -28,7 +28,6 @@ enum BrowserPerformanceSoakFixture {
                 runID: runID
             )
         }
-        let profile = BrowsingProfile()
         let tabs = (1...tabCount).compactMap { tabIndex in
             performanceTab(
                 index: tabIndex,
@@ -36,57 +35,44 @@ enum BrowserPerformanceSoakFixture {
                 baseURL: baseURL
             )
         }
-        guard tabs.count == tabCount, let firstTab = tabs.first else { return nil }
-        let space = BrowserSpace(
-            id: SpaceID(),
-            profile: profile,
-            name: "Performance",
-            symbol: "gauge.with.dots.needle.67percent",
-            accent: .teal,
-            folders: [],
-            tabs: tabs,
-            browsingPreferences: BrowserSpaceBrowsingPreferences(
-                searchProvider: .google,
-                currentTabCleanupPolicy: .never,
-                contentBlockingPolicy: .off
-            ),
-            selectedTabID: firstTab.id
-        )
-        return BrowserSession(spaces: [space], selectedSpaceID: space.id)
+        guard tabs.count == tabCount, !tabs.isEmpty else { return nil }
+        let space = SpaceState.Seed(
+            name: "Performance", symbol: "gauge.with.dots.needle.67percent", accent: .teal, tabs: tabs,
+            browsingPreferences: soakBrowsing)
+        return SessionState.Seed(spaces: [space])
     }
+
+    /// Google, no cleanup and no content blocking, so nothing a soak measures
+    /// is swept or blocked away.
+    private static let soakBrowsing = BrowsingPreferences.seeded(cleanup: .never, blocking: .off)
 
     private static func makeHeavySession(
         baseURL: URL,
         tabCount: Int,
         runID: String
-    ) -> BrowserSession? {
+    ) -> SessionState.Seed? {
         let palettes = BrowserSpaceHousePalette.allCases
-        let patterns = BrowserSpaceBannerPattern.allCases.shuffled()
+        let patterns = SpaceBannerPattern.allCases.shuffled()
+        // Each house look, in a banner pattern of its own and a light fade.
         var appearances = palettes.enumerated().map { index, palette in
-            (
-                name: palette.name,
-                branding: BrowserSpaceBranding(
-                    colors: palette.colors,
-                    bannerPattern: patterns[index % patterns.count],
-                    readabilityFade: 0.12,
-                    iconStyle: .layeredCrest,
-                    crest: palette.crest)
-            )
+            var look = palette.look
+            look.bannerPattern = patterns[index % patterns.count]
+            look.readabilityFade = 0.12
+            return (name: palette.name, branding: look)
         }
         // A bright control beside the original palettes exercises both foreground tones.
-        appearances.insert(
-            (
-                name: "Daylight",
-                branding: BrowserSpaceBranding(
-                    colors: [.sand, .gold, .winterIce], bannerPattern: .chevron,
-                    readabilityFade: 0, textColorMode: .dark)
-            ), at: 0)
-        let spaces = (1...appearances.count).compactMap { spaceIndex -> BrowserSpace? in
+        var daylight = SpaceBranding.neutral
+        daylight.colors = [.sand, .gold, .winterIce]
+        daylight.bannerPattern = .chevron
+        daylight.readabilityFade = 0
+        daylight.textColorMode = .dark
+        appearances.insert((name: "Daylight", branding: daylight), at: 0)
+        let spaces = (1...appearances.count).compactMap { spaceIndex -> SpaceState.Seed? in
             let appearance = appearances[spaceIndex - 1]
             let folders = (1...8).map { folderIndex in
-                BrowserFolder(title: "Collection \(spaceIndex)-\(folderIndex)")
+                FolderState.Seed(title: "Collection \(spaceIndex)-\(folderIndex)")
             }
-            let tabs = (1...tabCount).compactMap { tabIndex -> BrowserTab? in
+            let tabs = (1...tabCount).compactMap { tabIndex -> TabState.Seed? in
                 let placement: TabPlacement =
                     tabIndex.isMultiple(of: 3)
                     ? .saved
@@ -103,10 +89,9 @@ enum BrowserPerformanceSoakFixture {
                     folderID: folderID
                 )
             }
-            guard tabs.count == tabCount,
-                let firstCurrentTab = tabs.first(where: { $0.placement == .current })
+            guard tabs.count == tabCount, tabs.contains(where: { !$0.placement.isDurable })
             else { return nil }
-            let history = (1...96).compactMap { historyIndex -> BrowserHistoryEntry? in
+            let history = (1...96).compactMap { historyIndex -> HistoryEntryState? in
                 guard
                     let url = performanceURL(
                         index: spaceIndex * 1_000 + historyIndex,
@@ -118,7 +103,7 @@ enum BrowserPerformanceSoakFixture {
                     timeIntervalSince1970: 1_700_000_000
                         + Double(spaceIndex * 1_000 + historyIndex)
                 )
-                return BrowserHistoryEntry(
+                return HistoryEntryState(
                     url: url,
                     title: "History \(spaceIndex)-\(historyIndex)",
                     firstVisitedAt: firstVisit,
@@ -126,26 +111,13 @@ enum BrowserPerformanceSoakFixture {
                     visitCount: historyIndex % 5 + 1
                 )
             }
-            return BrowserSpace(
-                id: SpaceID(),
-                profile: BrowsingProfile(),
-                name: appearance.name,
-                symbol: "gauge.with.dots.needle.67percent",
-                accent: .teal,
-                branding: appearance.branding,
-                folders: folders,
-                tabs: tabs,
-                history: history,
-                browsingPreferences: BrowserSpaceBrowsingPreferences(
-                    searchProvider: .google,
-                    currentTabCleanupPolicy: .never,
-                    contentBlockingPolicy: .off
-                ),
-                selectedTabID: firstCurrentTab.id
-            )
+            return SpaceState.Seed(
+                name: appearance.name, symbol: "gauge.with.dots.needle.67percent", accent: .teal,
+                branding: appearance.branding, folders: folders, tabs: tabs, history: history,
+                browsingPreferences: soakBrowsing)
         }
-        guard spaces.count == appearances.count, let firstSpace = spaces.first else { return nil }
-        return BrowserSession(spaces: spaces, selectedSpaceID: firstSpace.id)
+        guard spaces.count == appearances.count, !spaces.isEmpty else { return nil }
+        return SessionState.Seed(spaces: spaces)
     }
 
     private static func isSafeLoopback(_ url: URL) -> Bool {
@@ -168,8 +140,8 @@ enum BrowserPerformanceSoakFixture {
         runID: String,
         baseURL: URL,
         placement: TabPlacement = .current,
-        folderID: FolderID? = nil
-    ) -> BrowserTab? {
+        folderID: UUID? = nil
+    ) -> TabState.Seed? {
         guard
             let url = performanceURL(
                 index: index,
@@ -177,7 +149,7 @@ enum BrowserPerformanceSoakFixture {
                 baseURL: baseURL
             )
         else { return nil }
-        return BrowserTab(
+        return TabState.Seed(
             title: "Performance \(index)",
             url: url,
             symbol: "gauge.with.dots.needle.67percent",

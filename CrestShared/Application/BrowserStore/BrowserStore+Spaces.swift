@@ -3,50 +3,29 @@ import Foundation
 // MARK: - Spaces and Import
 
 extension BrowserStore {
-    func addSpace() {
-        guard !isTemporaryWorkspace else { return }
-        session.addSpace()
-        if isPrivateBrowsing, let spaceID = session.selectedSpace?.id {
-            session.updateSpaceIdentity(
-                spaceID,
-                name: "Private \(session.spaces.count)",
-                symbol: BrowserPrivateBrowsingAppearance.symbol,
-                accent: .indigo
-            )
-            session.updateSpaceBranding(
-                BrowserPrivateBrowsingAppearance.branding,
-                in: spaceID
-            )
-            session.updateBrowsingPreferences(
-                BrowserSpaceBrowsingPreferences(
-                    searchProvider: .duckDuckGo,
-                    currentTabCleanupPolicy: .never
-                ),
-                in: spaceID
-            )
-            session.updateCredentialPreferences(
-                BrowserCredentialPreferences(
-                    isEnabled: false,
-                    syncsCrestPasswordsWithICloud: false,
-                    alsoOffersSaveToSystemPasswords: false
-                ),
-                in: spaceID
-            )
-        }
-        persist(scope: .core)
+    /// Composition gives the app's one access controller every store whose
+    /// workspace shows Spaces it may unlock, including private browsing. The
+    /// core's own records refuse a locked Space whatever the views believe.
+    func attachSpaceAccess(_ controller: BrowserSpaceAccessController) {
+        controller.attach(self)
     }
 
+    func addSpace() {
+        family.send(
+            CreateSpace(workspaceID: family.workspaceID, windowID: windowID, spaceID: UUID()), from: self,
+            failure: "Core Space command failed")
+    }
+
+    /// Deletes a Space in two steps the core saves before each returns: the
+    /// deletion begins, the platform erases the profile's data and its
+    /// passwords, then the Space goes. A relaunch resumes a deletion that
+    /// began, with the operation it recorded. Throws the rule the core applied
+    /// or why erasing failed; the Space is then kept.
     func deleteSpace(
-        _ id: SpaceID,
+        _ id: UUID,
         dataDeleter: any BrowserSpaceDataDeleting
     ) async throws {
-        guard !isTemporaryWorkspace else {
-            throw BrowserSpaceDeletionError.borrowedProfile
-        }
-        guard session.spaces.count > 1 else {
-            throw BrowserSpaceDeletionError.cannotDeleteLastSpace
-        }
-        guard let space = session.space(id: id) else {
+        guard let space = spaceModel(id).map(BrowserSpaceRuntimeAssignment.init(space:)) else {
             throw BrowserSpaceDeletionError.missingSpace
         }
         guard family.beginDeletingSpace(id) else {
@@ -54,138 +33,193 @@ extension BrowserStore {
         }
         defer { family.finishDeletingSpace(id) }
 
-        if session.selectedSpaceID == id,
-            let index = session.spaces.firstIndex(where: { $0.id == id })
-        {
-            let replacementIndex =
-                index == session.spaces.index(before: session.spaces.endIndex)
-                ? session.spaces.index(before: index)
-                : session.spaces.index(after: index)
-            session.selectSpace(session.spaces[replacementIndex].id)
-            let revision = family.publish(session, from: self)
-            syncCoordinator?.advanceStoreRevision(to: revision)
-            persistence.save(session, scope: .core)
-        }
+        let operationID = workspaceModel?.spaceDeletions.first(where: { $0.spaceID == id })?.id ?? UUID()
+        try family.commit(
+            BeginDeletingSpace(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: id,
+                operationID: operationID),
+            from: self)
 
         try await dataDeleter.deleteData(for: space)
         try await credentialVault.deleteAll(in: id)
 
-        guard let currentSpace = session.space(id: id) else {
-            throw BrowserSpaceDeletionError.missingSpace
-        }
-        guard currentSpace.profile.id == space.profile.id else {
-            throw BrowserSpaceDeletionError.spaceChangedDuringDeletion
-        }
-        guard session.removeSpace(id) != nil else {
-            throw BrowserSpaceDeletionError.cannotDeleteLastSpace
-        }
-        BrowserLinkPreferenceStore.shared.removeReferences(to: id)
-        persist(deletionReason: .explicitDelete, scope: .core)
+        try family.commit(
+            FinishDeletingSpace(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: id,
+                operationID: operationID),
+            from: self)
     }
 
-    func importPortableArchive(_ imported: BrowserPortableImport) throws {
-        guard !imported.spaces.isEmpty else { return }
-        guard
-            session.spaces.count + imported.spaces.count
-                <= BrowserPortableArchive.maximumSpaceCount
-        else {
-            throw BrowserPortableArchiveError.spaceLimitExceeded(
-                BrowserPortableArchive.maximumSpaceCount
-            )
+    func resumePendingSpaceDeletions(dataDeleter: any BrowserSpaceDataDeleting) async {
+        var attempted: Set<UUID> = []
+        while let intent = (workspaceModel?.spaceDeletions ?? []).first(where: {
+            !attempted.contains($0.spaceID) && !family.isActivelyDeletingSpace($0.spaceID)
+        }) {
+            attempted.insert(intent.spaceID)
+            do { try await deleteSpace(intent.spaceID, dataDeleter: dataDeleter) } catch {
+                localSyncErrorDescription = "Space cleanup needs another attempt: \(error.localizedDescription)"
+            }
         }
-        session.spaces.append(contentsOf: imported.spaces)
-        session.selectedSpaceID = imported.spaces[0].id
-        session.repairRuntimeIntegrity()
-        // An import lands whole Spaces, with their history and their icons, so
-        // this is one of the few mutations that really does rewrite everything.
-        persist()
     }
 
-    func commitReviewedImport(_ plan: BrowserImportReviewPlan) throws {
-        session = try plan.preview(mergingInto: session)
-        persist()
+    /// Adds `spaces`, as the core read them from a file, after this
+    /// workspace's own. Throws the rule the core refused them with.
+    func importSpaces(_ spaces: [SpaceState]) throws(Rejection) {
+        guard !spaces.isEmpty else { return }
+        try family.commit(
+            ImportSpaces(workspaceID: family.workspaceID, windowID: windowID, spaces: spaces.map(\.seed)), from: self)
     }
 
-    func commitManualSetup(_ plan: BrowserManualSetupPlan) throws {
-        session = try plan.preview(mergingInto: session)
-        persist()
+    /// Imports the review setup holds for this workspace, as the person chose.
+    /// Throws the rule that refused it.
+    func importReviewedSpaces() throws(Rejection) {
+        try family.commit(ImportReviewedSpaces(workspaceID: family.workspaceID, windowID: windowID), from: self)
+    }
+
+    /// The session importing the review setup holds would leave this
+    /// workspace with. Throws the rule that would refuse it.
+    func reviewedImportPreview() throws(Rejection) -> BrowserSessionPreview {
+        try importPreview(ImportReviewedSpaces(workspaceID: family.workspaceID, windowID: windowID))
+    }
+
+    /// The session `intent` would leave this workspace with, wearing the
+    /// images each tab would wear. Nothing changes. Throws the rule that
+    /// would refuse the import.
+    func importPreview(_ intent: some ImportWorkspace) throws(Rejection) -> BrowserSessionPreview {
+        BrowserSessionPreview(importing: try core.query(ImportPreview(import: intent)), images: core.state.favicons)
     }
 
     func updateSpaceIdentity(
-        _ spaceID: SpaceID,
+        _ spaceID: UUID,
         name: String,
         symbol: String,
         accent: SpaceAccent
     ) {
-        if isTemporaryWorkspace {
-            temporaryProfileSettingsAuthority(in: spaceID)?.updateSpaceIdentity(
-                spaceID, name: name, symbol: symbol, accent: accent)
-            return
-        }
-        guard session.space(id: spaceID) != nil else { return }
-        session.updateSpaceIdentity(
-            spaceID,
-            name: name,
-            symbol: symbol,
-            accent: accent
-        )
-        persist(syncUrgency: .coalesced, scope: .core)
+        sendSpaceSettings(
+            SetSpaceIdentity(
+                workspaceID: profileSettingsBrowser.family.workspaceID, spaceID: spaceID, name: name,
+                symbol: symbol, accent: accent))
     }
 
+    /// The core applies its branding rules to the look before it keeps it.
     func updateSpaceBranding(
-        _ branding: BrowserSpaceBranding,
-        in spaceID: SpaceID
+        _ branding: SpaceBranding,
+        in spaceID: UUID
     ) {
-        if isTemporaryWorkspace {
-            temporaryProfileSettingsAuthority(in: spaceID)?.updateSpaceBranding(branding, in: spaceID)
-            return
-        }
-        guard session.space(id: spaceID) != nil else { return }
-        session.updateSpaceBranding(branding, in: spaceID)
-        persist(syncUrgency: .coalesced, scope: .core)
+        sendSpaceSettings(
+            SetSpaceBranding(
+                workspaceID: profileSettingsBrowser.family.workspaceID, spaceID: spaceID,
+                branding: branding))
     }
 
-    func setDefaultSpace(_ spaceID: SpaceID) {
-        if isTemporaryWorkspace {
-            temporaryProfileSettingsAuthority(in: spaceID)?.setDefaultSpace(spaceID)
-            return
-        }
-        guard session.space(id: spaceID) != nil else { return }
-        session.setDefaultSpace(spaceID)
-        persist(syncUrgency: .coalesced, scope: .core)
+    func setDefaultSpace(_ spaceID: UUID) {
+        sendSpaceSettings(
+            SetDefaultSpace(workspaceID: profileSettingsBrowser.family.workspaceID, spaceID: spaceID))
     }
 
     func updateSpaceAccessPolicy(
-        _ accessPolicy: BrowserSpaceAccessPolicy,
-        in spaceID: SpaceID
+        _ accessPolicy: SpaceAccessPolicy,
+        in spaceID: UUID
     ) {
-        if isTemporaryWorkspace {
-            temporaryProfileSettingsAuthority(in: spaceID)?.updateSpaceAccessPolicy(accessPolicy, in: spaceID)
-            return
-        }
-        guard session.space(id: spaceID) != nil else { return }
-        session.updateSpaceAccessPolicy(accessPolicy, in: spaceID)
-        persist(syncUrgency: .immediate, scope: .core)
+        sendSpaceSettings(
+            SetSpaceAccess(
+                workspaceID: profileSettingsBrowser.family.workspaceID, spaceID: spaceID, policy: accessPolicy))
+    }
+
+    /// Sends an intent about a Space's settings to the workspace that owns
+    /// the Space's profile: this one, or the one a borrowed workspace borrows
+    /// its Space from. Answers whether the session changed.
+    @discardableResult
+    func sendSpaceSettings(_ intent: some Intent) -> Bool {
+        let owner = profileSettingsBrowser
+        return owner.family.send(intent, from: owner, failure: "Core Space command failed")
     }
 
     func moveSpaces(from source: IndexSet, to destination: Int) {
-        session.moveSpaces(from: source, to: destination)
-        persist(syncUrgency: .coalesced, scope: .core)
+        var order = spaceModels.map(\.id)
+        order.move(fromOffsets: source, toOffset: destination)
+        family.send(
+            ReorderSpaces(workspaceID: family.workspaceID, spaceIDs: order), from: self,
+            failure: "Core Space command failed")
     }
 
+    /// Sets a Space's browsing preferences through the core: the settings the
+    /// core sweeps the Space under, then the engine it searches with, each only
+    /// when it differs from what the read model holds.
     func updateBrowsingPreferences(
-        _ preferences: BrowserSpaceBrowsingPreferences,
-        in spaceID: SpaceID
+        _ preferences: BrowsingPreferences,
+        in spaceID: UUID
     ) {
-        if isTemporaryWorkspace {
-            temporaryProfileSettingsAuthority(in: spaceID)?.updateBrowsingPreferences(preferences, in: spaceID)
-            return
+        let owner = profileSettingsBrowser
+        guard let current = owner.spaceModel(spaceID)?.settings.browsingPreferences else { return }
+        let workspaceID = owner.family.workspaceID
+        if preferences.searchSuggestionsEnabled != current.searchSuggestionsEnabled
+            || preferences.currentTabCleanup != current.currentTabCleanup
+            || preferences.contentBlocking != current.contentBlocking
+            || preferences.dataRetention != current.dataRetention
+        {
+            sendSpaceSettings(
+                SetBrowsingPreferences(
+                    workspaceID: workspaceID, spaceID: spaceID,
+                    searchSuggestionsEnabled: preferences.searchSuggestionsEnabled,
+                    currentTabCleanup: preferences.currentTabCleanup, contentBlocking: preferences.contentBlocking,
+                    dataRetention: preferences.dataRetention))
         }
-        guard session.space(id: spaceID) != nil else { return }
-        session.updateBrowsingPreferences(preferences, in: spaceID)
-        persist(syncUrgency: .coalesced, scope: .core)
+        if preferences.searchProvider != current.searchProvider {
+            let selection = preferences.searchProvider.selection
+            sendSpaceSettings(
+                SelectSearchEngine(
+                    workspaceID: workspaceID, spaceID: spaceID, builtIn: selection.builtIn,
+                    customEngineID: selection.customEngineID))
+        }
     }
 
+    /// Saves a custom search engine through the core, which trims and
+    /// validates it, refuses a duplicate name or one past the Space's limit,
+    /// and selects it when `selects`. Throws the rule the engine breaks; an
+    /// unchanged save changes nothing.
+    func upsertCustomSearchProvider(
+        _ engine: CustomSearchEngine,
+        selects: Bool,
+        in spaceID: UUID
+    ) throws {
+        let owner = profileSettingsBrowser
+        guard let space = owner.spaceModel(spaceID) else { return }
+        let workspaceID = owner.family.workspaceID
+        do throws(Rejection) {
+            if space.settings.browsingPreferences.customSearchProviders.contains(where: { $0.id == engine.id }) {
+                try owner.family.commit(
+                    UpdateSearchEngine(workspaceID: workspaceID, spaceID: spaceID, engine: engine),
+                    from: owner)
+                if selects {
+                    try owner.family.commit(
+                        SelectSearchEngine(
+                            workspaceID: workspaceID, spaceID: spaceID, builtIn: nil,
+                            customEngineID: engine.id),
+                        from: owner)
+                }
+            } else {
+                try owner.family.commit(
+                    AddSearchEngine(
+                        workspaceID: workspaceID, spaceID: spaceID, engine: engine, selects: selects),
+                    from: owner)
+            }
+        } catch {
+            switch error {
+            case .invalidSearchEngine, .duplicateSearchEngineName, .searchEngineLimitReached:
+                throw BrowserCustomSearchProviderError(error)
+            default:
+                owner.localSyncErrorDescription = "Core Space command failed: \(error)"
+            }
+        }
+    }
+
+    /// Removes a custom search engine; the core selects Google if it was chosen.
+    func removeCustomSearchProvider(id: UUID, in spaceID: UUID) {
+        sendSpaceSettings(
+            RemoveSearchEngine(
+                workspaceID: profileSettingsBrowser.family.workspaceID, spaceID: spaceID, engineID: id))
+    }
 }
 
 // MARK: - Folders
@@ -194,13 +228,12 @@ extension BrowserStore {
     @discardableResult
     func setSavedTabsExpanded(
         _ isExpanded: Bool,
-        in spaceID: SpaceID
+        in spaceID: UUID
     ) -> Bool {
-        guard session.setSavedTabsExpanded(isExpanded, in: spaceID) else {
-            return false
-        }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
+        sendSpaceSettings(
+            ExpandSavedTabs(
+                workspaceID: profileSettingsBrowser.family.workspaceID, spaceID: spaceID,
+                isExpanded: isExpanded))
     }
 
     @discardableResult
@@ -208,37 +241,49 @@ extension BrowserStore {
         _ isExpanded: Bool,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard space(matching: assignment) != nil else { return false }
+        guard spaceModel(matching: assignment) != nil else { return false }
         return setSavedTabsExpanded(isExpanded, in: assignment.spaceID)
     }
 
     @discardableResult
     func addFolder(
         title: String = "New Folder",
-        color: BrowserSpaceBrandColor = .folderDefault,
-        parentID: FolderID? = nil,
-        in spaceID: SpaceID
-    ) -> FolderID? {
+        color: BrandColor = .folderDefault,
+        parentID: UUID? = nil,
+        in spaceID: UUID
+    ) -> UUID? {
+        let folderID = UUID()
         guard
-            let folderID = session.addFolder(
-                title: title,
-                color: color,
-                parentID: parentID,
-                in: spaceID
-            )
+            family.send(
+                CreateFolder(
+                    workspaceID: family.workspaceID, spaceID: spaceID, folderID: folderID,
+                    placement: .saved, parentID: parentID, title: title, color: color, symbol: "folder",
+                    tabIDs: [], leavesSplits: false),
+                from: self)
         else { return nil }
-        persist(scope: .core)
         return folderID
+    }
+
+    /// Whether a folder may be created inside `parentID`. The core answers
+    /// with its folder count and depth limits.
+    func canAddFolder(inside parentID: UUID, matching assignment: BrowserSpaceRuntimeAssignment) -> Bool {
+        guard spaceModel(matching: assignment) != nil else { return false }
+        return family.canSend(
+            CreateFolder(
+                workspaceID: family.workspaceID, spaceID: assignment.spaceID, folderID: UUID(),
+                placement: .saved, parentID: parentID, title: nil, color: nil, symbol: nil, tabIDs: [],
+                leavesSplits: false),
+            from: self)
     }
 
     @discardableResult
     func addFolder(
         title: String = "New Folder",
-        color: BrowserSpaceBrandColor = .folderDefault,
-        parentID: FolderID? = nil,
+        color: BrandColor = .folderDefault,
+        parentID: UUID? = nil,
         matching assignment: BrowserSpaceRuntimeAssignment
-    ) -> FolderID? {
-        guard space(matching: assignment) != nil else { return nil }
+    ) -> UUID? {
+        guard spaceModel(matching: assignment) != nil else { return nil }
         return addFolder(
             title: title,
             color: color,
@@ -248,45 +293,42 @@ extension BrowserStore {
     }
 
     @discardableResult
-    func renameFolder(_ folderID: FolderID, in spaceID: SpaceID, title: String) -> Bool {
-        guard session.renameFolder(folderID, in: spaceID, title: title) else { return false }
-        persist(syncUrgency: .coalesced, scope: .core)
+    func renameFolder(_ folderID: UUID, in spaceID: UUID, title: String) -> Bool {
+        guard renameSessionFolder(folderID, in: spaceID, title: title) else { return false }
         return true
     }
 
     @discardableResult
     func renameFolder(
-        _ folderID: FolderID,
+        _ folderID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment,
         title: String
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            space.folders.contains(where: { $0.id == folderID })
+        guard let space = spaceModel(matching: assignment), space.folders.contains(folderID)
         else { return false }
         return renameFolder(folderID, in: assignment.spaceID, title: title)
     }
 
     @discardableResult
     func setFolderColor(
-        _ folderID: FolderID,
-        in spaceID: SpaceID,
-        color: BrowserSpaceBrandColor
+        _ folderID: UUID,
+        in spaceID: UUID,
+        color: BrandColor
     ) -> Bool {
-        guard session.setFolderColor(folderID, in: spaceID, color: color) else {
-            return false
-        }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
+        family.send(
+            SetFolderColor(
+                workspaceID: family.workspaceID, spaceID: spaceID, folderID: folderID,
+                color: color),
+            from: self)
     }
 
     @discardableResult
     func setFolderColor(
-        _ folderID: FolderID,
+        _ folderID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment,
-        color: BrowserSpaceBrandColor
+        color: BrandColor
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            space.folders.contains(where: { $0.id == folderID })
+        guard let space = spaceModel(matching: assignment), space.folders.contains(folderID)
         else { return false }
         return setFolderColor(
             folderID,
@@ -297,25 +339,24 @@ extension BrowserStore {
 
     @discardableResult
     func setFolderSymbol(
-        _ folderID: FolderID,
-        in spaceID: SpaceID,
+        _ folderID: UUID,
+        in spaceID: UUID,
         symbol: String
     ) -> Bool {
-        guard session.setFolderSymbol(folderID, in: spaceID, symbol: symbol) else {
-            return false
-        }
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
+        family.send(
+            SetFolderSymbol(
+                workspaceID: family.workspaceID, spaceID: spaceID, folderID: folderID,
+                symbol: symbol),
+            from: self)
     }
 
     @discardableResult
     func setFolderSymbol(
-        _ folderID: FolderID,
+        _ folderID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment,
         symbol: String
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            space.folders.contains(where: { $0.id == folderID })
+        guard let space = spaceModel(matching: assignment), space.folders.contains(folderID)
         else { return false }
         return setFolderSymbol(
             folderID,
@@ -326,29 +367,27 @@ extension BrowserStore {
 
     @discardableResult
     func setFolderCollapsed(
-        _ folderID: FolderID,
-        in spaceID: SpaceID,
+        _ folderID: UUID,
+        in spaceID: UUID,
         isCollapsed: Bool
     ) -> Bool {
         guard
-            session.setFolderCollapsed(
+            collapseSessionFolder(
                 folderID,
                 in: spaceID,
                 isCollapsed: isCollapsed
             )
         else { return false }
-        persist(syncUrgency: .coalesced, scope: .core)
         return true
     }
 
     @discardableResult
     func setFolderCollapsed(
-        _ folderID: FolderID,
+        _ folderID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment,
         isCollapsed: Bool
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            space.folders.contains(where: { $0.id == folderID })
+        guard let space = spaceModel(matching: assignment), space.folders.contains(folderID)
         else { return false }
         return setFolderCollapsed(
             folderID,
@@ -357,21 +396,27 @@ extension BrowserStore {
         )
     }
 
+    /// Whether a folder may move under `parentID`. The core's folder rules
+    /// answer (no cycles, the depth limit including the moving subtree).
     func canMoveFolder(
-        _ folderID: FolderID,
-        in spaceID: SpaceID,
-        into parentID: FolderID?
+        _ folderID: UUID,
+        in spaceID: UUID,
+        into parentID: UUID?
     ) -> Bool {
-        session.canMoveFolder(folderID, in: spaceID, into: parentID)
+        guard !isDeleting(spaceID) else { return false }
+        return family.canSend(
+            MoveFolder(
+                workspaceID: family.workspaceID, spaceID: spaceID, folderID: folderID, placement: nil,
+                parentID: parentID, beforeFolderID: nil, beforeTabID: nil),
+            from: self)
     }
 
     func canMoveFolder(
-        _ folderID: FolderID,
+        _ folderID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment,
-        into parentID: FolderID?
+        into parentID: UUID?
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            space.folders.contains(where: { $0.id == folderID })
+        guard let space = spaceModel(matching: assignment), space.folders.contains(folderID)
         else { return false }
         return canMoveFolder(
             folderID,
@@ -382,33 +427,32 @@ extension BrowserStore {
 
     @discardableResult
     func moveFolder(
-        _ folderID: FolderID,
-        in spaceID: SpaceID,
-        into parentID: FolderID?,
-        before siblingID: FolderID? = nil
+        _ folderID: UUID,
+        in spaceID: UUID,
+        into parentID: UUID?,
+        before siblingID: UUID? = nil
     ) -> Bool {
         guard
-            session.moveFolder(
+            moveSessionFolder(
                 folderID,
                 in: spaceID,
                 into: parentID,
                 before: siblingID
             )
         else { return false }
-        persist(syncUrgency: .coalesced, scope: .core)
         return true
     }
 
     @discardableResult
     func moveFolder(
-        _ folderID: FolderID,
+        _ folderID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment,
-        into parentID: FolderID?,
-        before siblingID: FolderID? = nil
+        into parentID: UUID?,
+        before siblingID: UUID? = nil
     ) -> Bool {
-        guard let space = space(matching: assignment),
+        guard let space = spaceModel(matching: assignment),
             siblingID == nil
-                || space.folders.contains(where: {
+                || space.folders.models.contains(where: {
                     $0.id == siblingID && $0.parentID == parentID
                 }),
             canMoveFolder(
@@ -429,8 +473,8 @@ extension BrowserStore {
     func moveFolder(
         _ item: BrowserFolderDragItem,
         matching destinationAssignment: BrowserSpaceRuntimeAssignment,
-        into parentID: FolderID?,
-        before siblingID: FolderID? = nil
+        into parentID: UUID?,
+        before siblingID: UUID? = nil
     ) -> Bool {
         let sourceAssignment = BrowserSpaceRuntimeAssignment(
             spaceID: item.spaceID,
@@ -446,19 +490,17 @@ extension BrowserStore {
     }
 
     @discardableResult
-    func deleteFolder(_ folderID: FolderID, in spaceID: SpaceID) -> Bool {
-        guard session.deleteFolder(folderID, in: spaceID) else { return false }
-        persist(deletionReason: .explicitDelete, scope: .core)
+    func deleteFolder(_ folderID: UUID, in spaceID: UUID) -> Bool {
+        guard deleteSessionFolder(folderID, in: spaceID) else { return false }
         return true
     }
 
     @discardableResult
     func deleteFolder(
-        _ folderID: FolderID,
+        _ folderID: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            space.folders.contains(where: { $0.id == folderID })
+        guard let space = spaceModel(matching: assignment), space.folders.contains(folderID)
         else { return false }
         return deleteFolder(folderID, in: assignment.spaceID)
     }

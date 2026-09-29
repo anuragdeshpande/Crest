@@ -7,22 +7,22 @@ build and release requirements for contributors.
 ## Start here
 
 - [Architecture](ARCHITECTURE.md) covers Space isolation, persistence,
-  credentials, synchronization, and the native/WebKit boundary.
+  credentials, synchronization, and the engine boundary.
 - [Roadmap](ROADMAP.md) lists public release outcomes and platform gates.
 - [Repository guardrails](RepositoryGuardrails.md) describes source layout,
   validation, dependencies, and public-source checks.
 - [Distribution](Distribution.md) covers release channels, signing,
   notarization, appcasts, and release verification.
 
-## Browser and extension behavior
+## Browser behavior
 
 - [Content blocking](Architecture/ContentBlocking.md)
 - [Desktop Picture in Picture](Architecture/DesktopPictureInPicture.md)
 - [Link opening](LinkOpeningPolicy.md)
 - [Native tab content](NativeTabs.md)
-- [Extension compatibility](ExtensionCompatibility.md)
-- [Extension API compatibility matrix](ExtensionAPICompatibilityMatrix.md)
-- [Extension emulation services](ExtensionEmulationServices.md)
+- [Core architecture](Architecture/CoreArchitecture.md)
+- [Portable control plane](Architecture/ControlPlane.md)
+- [Engine abstraction](Architecture/EngineAbstractionCompletion.md)
 
 ## Project participation
 

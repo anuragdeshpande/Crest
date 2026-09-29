@@ -50,26 +50,26 @@ final class BrowserSidebarReorderRegistryScopeTests: XCTestCase {
 
     /// The cap still bites where it is meant to. Scoping the count must not
     /// become a way of ignoring it: a grid already full of this Space's own tabs
-    /// has nowhere to put another, so the drag resolves nothing rather than
-    /// opening a slot the release would decline.
+    /// has nowhere to put another, so the lift over it says why in the core's
+    /// words, and releasing there commits nothing.
     func testAGridFullOfItsOwnTabsStillRefusesAnIncomingPin() {
         let fixture = ReorderRegistryFixture(
-            ownPinCount: BrowserSpace.maximumPinnedTabs
+            ownPinCount: TabPlacement.pinnedCapacity
         )
         let state = fixture.sidebarInteraction.sidebarReorderState
         fixture.register(in: state)
 
         fixture.liftTheJoiner(in: state, to: CGPoint(x: 144, y: 92))
 
-        XCTAssertNil(
-            state.resolvedTarget,
-            "A grid at the cap has to refuse the drop instead of promising a "
-                + "slot the commit would decline."
-        )
         XCTAssertEqual(
-            state.liftTargetShape,
-            .row,
-            "Nothing resolved, so the lift holds the row shape it started as."
+            state.constraintMessage,
+            Rejection.pinnedTabsFull(PinnedTabsFull(capacity: TabPlacement.pinnedCapacity)).placementExplanation,
+            "A grid at the cap has to refuse the drop, and say why, instead of "
+                + "promising a slot the commit would decline."
+        )
+        XCTAssertNil(
+            state.end(),
+            "Releasing over a refused target commits nothing."
         )
     }
 
@@ -83,7 +83,7 @@ final class BrowserSidebarReorderRegistryScopeTests: XCTestCase {
     /// cards measure themselves before SwiftUI runs the departing ones'
     /// `onDisappear`, so a Space change leaves both sets in the registry for as
     /// long as it takes to animate. Two two-card splits is
-    /// `BrowserSplitGroupPolicy.maximumMembers` exactly, so counted together the
+    /// `CapacityLimits.current.splitMembers` exactly, so counted together the
     /// group is full and the drag is refused a split that has two slots free —
     /// refused in silence, since no resolved target means no placeholder, no
     /// insertion line, and no reason given.
@@ -91,6 +91,31 @@ final class BrowserSidebarReorderRegistryScopeTests: XCTestCase {
     /// Geometry cannot separate them. Both Spaces lay their cards out in the
     /// same content area, and the content area does not move an inch when the
     /// Space in it changes, so the two sets occupy the very same rectangles.
+    /// A row that moves between lists is two views for a moment. The one
+    /// leaving can measure itself again during its exit, after the arriving
+    /// one did; when it leaves, the row keeps the arriving view's frame
+    /// instead of losing its registration until something moves it again.
+    func testARowKeepsItsFrameWhenTheViewItLeftMeasuresLast() {
+        let state = BrowserSidebarReorderState()
+        let space = BrowserSpaceRuntimeAssignment(spaceID: UUID(), profileID: UUID())
+        let id = BrowserSidebarReorderItemID.tab(UUID())
+        let (leaving, arriving) = (UUID(), UUID())
+        func row(y: CGFloat, folderID: UUID? = nil) -> BrowserSidebarReorderRow {
+            BrowserSidebarReorderRow(
+                id: id, space: space, section: .tabs(placement: .current, folderID: folderID),
+                frame: CGRect(x: 0, y: y, width: 240, height: 40))
+        }
+        let folder = UUID()
+        state.register(row: row(y: 200, folderID: folder), owner: leaving)
+        state.register(row: row(y: 40), owner: arriving)
+        state.register(row: row(y: 190, folderID: folder), owner: leaving)
+        state.removeRow(id, owner: leaving)
+
+        XCTAssertEqual(state.frame(ofRow: id), CGRect(x: 0, y: 40, width: 240, height: 40))
+        state.removeRow(id, owner: arriving)
+        XCTAssertNil(state.frame(ofRow: id), "The row goes once no view shows it.")
+    }
+
     func testAnotherSpacesCardsCannotFillThisDragsSplit() {
         let fixture = SplitCardRegistryFixture(
             ownCardCount: 2,
@@ -158,34 +183,34 @@ private func tile(_ index: Int, pageOffset: CGFloat) -> CGRect {
 private struct ReorderRegistryFixture {
     let sidebarInteraction: BrowserSidebarInteractionState
     let browser: BrowserStore
-    let ownPins: [BrowserTab]
-    let foreignPins: [BrowserTab]
-    let joiner: BrowserTab
+    let ownPins: [TabState.Seed]
+    let foreignPins: [TabState.Seed]
+    let joiner: TabState.Seed
 
-    private let ownSpaceID = SpaceID(rawValue: uuid(0x01))
+    private let ownSpaceID = uuid(0x01)
     private let ownProfileID = uuid(0x02)
-    private let foreignSpaceID = SpaceID(rawValue: uuid(0x03))
+    private let foreignSpaceID = uuid(0x03)
     private let foreignProfileID = uuid(0x04)
 
     init(ownPinCount: Int) {
         ownPins = (0..<ownPinCount).map { index in
             makeTab(
-                id: TabID(rawValue: uuid(UInt8(0x10 + index))),
+                id: uuid(UInt8(0x10 + index)),
                 title: "Own Pin \(index)",
                 placement: .pinned
             )
         }
         // One short of the cap, so nothing here is a grid that is genuinely
         // full — only the sum of two grids is.
-        foreignPins = (0..<(BrowserSpace.maximumPinnedTabs - 1)).map { index in
+        foreignPins = (0..<(TabPlacement.pinnedCapacity - 1)).map { index in
             makeTab(
-                id: TabID(rawValue: uuid(UInt8(0x50 + index))),
+                id: uuid(UInt8(0x50 + index)),
                 title: "Foreign Pin \(index)",
                 placement: .pinned
             )
         }
         joiner = makeTab(
-            id: TabID(rawValue: uuid(0x40)),
+            id: uuid(0x40),
             title: "Joiner",
             placement: .current
         )
@@ -202,11 +227,8 @@ private struct ReorderRegistryFixture {
             tabs: foreignPins
         )
         browser = BrowserStore(
-            session: BrowserSession(
-                spaces: [own, foreign],
-                selectedSpaceID: own.id
-            ),
-            persistence: InMemoryBrowserSessionPersistence(),
+            seed: SessionState.Seed(spaces: [own, foreign]),
+            showing: own.id, tabs: firstTabs(of: [own, foreign]),
             browsingMode: .privateBrowsing
         )
         sidebarInteraction = BrowserSidebarInteractionState.connected(to: browser)
@@ -286,20 +308,24 @@ private struct ReorderRegistryFixture {
     }
 
     /// Lifts the current tab out of its row and holds the pointer at `pointer`.
+    /// Lifts the joiner as the sidebar does, asking the core where it may
+    /// land as the lift begins.
     func liftTheJoiner(
         in state: BrowserSidebarReorderState,
         to pointer: CGPoint
     ) {
+        let item = BrowserSidebarReorderItem.tab(
+            BrowserTabDragItem(
+                tabID: joiner.id,
+                spaceID: ownSpaceID,
+                profileID: ownProfileID
+            )
+        )
         state.begin(
-            item: .tab(
-                BrowserTabDragItem(
-                    tabID: joiner.id,
-                    spaceID: ownSpaceID,
-                    profileID: ownProfileID
-                )
-            ),
+            item: item,
             section: currentSection,
-            at: CGPoint(x: joinerRow.midX, y: joinerRow.midY)
+            at: CGPoint(x: joinerRow.midX, y: joinerRow.midY),
+            plan: browser.liftPlan(for: item)
         )
         state.update(pointer: pointer)
     }
@@ -343,15 +369,15 @@ private func splitCardFrames(count: Int) -> [CGRect] {
 private struct SplitCardRegistryFixture {
     let sidebarInteraction: BrowserSidebarInteractionState
     let browser: BrowserStore
-    let ownCards: [BrowserTab]
-    let foreignCards: [BrowserTab]
-    let joiner: BrowserTab
+    let ownCards: [TabState.Seed]
+    let foreignCards: [TabState.Seed]
+    let joiner: TabState.Seed
 
     private let ownCardCount: Int
     private let foreignCardCount: Int
-    private let ownSpaceID = SpaceID(rawValue: uuid(0x05))
+    private let ownSpaceID = uuid(0x05)
     private let ownProfileID = uuid(0x06)
-    private let foreignSpaceID = SpaceID(rawValue: uuid(0x07))
+    private let foreignSpaceID = uuid(0x07)
     private let foreignProfileID = uuid(0x08)
 
     init(ownCardCount: Int, foreignCardCount: Int) {
@@ -359,20 +385,20 @@ private struct SplitCardRegistryFixture {
         self.foreignCardCount = foreignCardCount
         ownCards = (0..<ownCardCount).map { index in
             makeTab(
-                id: TabID(rawValue: uuid(UInt8(0x60 + index))),
+                id: uuid(UInt8(0x60 + index)),
                 title: "Own Card \(index)",
                 placement: .current
             )
         }
         foreignCards = (0..<foreignCardCount).map { index in
             makeTab(
-                id: TabID(rawValue: uuid(UInt8(0x70 + index))),
+                id: uuid(UInt8(0x70 + index)),
                 title: "Foreign Card \(index)",
                 placement: .current
             )
         }
         joiner = makeTab(
-            id: TabID(rawValue: uuid(0x6F)),
+            id: uuid(0x6F),
             title: "Joiner",
             placement: .current
         )
@@ -389,11 +415,8 @@ private struct SplitCardRegistryFixture {
             tabs: foreignCards
         )
         browser = BrowserStore(
-            session: BrowserSession(
-                spaces: [own, foreign],
-                selectedSpaceID: own.id
-            ),
-            persistence: InMemoryBrowserSessionPersistence(),
+            seed: SessionState.Seed(spaces: [own, foreign]),
+            showing: own.id, tabs: firstTabs(of: [own, foreign]),
             browsingMode: .privateBrowsing
         )
         sidebarInteraction = BrowserSidebarInteractionState.connected(to: browser)
@@ -482,29 +505,37 @@ private struct SplitCardRegistryFixture {
 }
 
 private func makeSpace(
-    id: SpaceID,
+    id: UUID,
     profileID: UUID,
     name: String,
-    tabs: [BrowserTab]
-) -> BrowserSpace {
-    BrowserSpace(
+    tabs: [TabState.Seed]
+) -> SpaceState.Seed {
+    SpaceState.Seed(
         id: id,
-        profile: BrowsingProfile(id: profileID),
+        profileID: profileID,
         name: name,
         symbol: "rectangle.stack",
         accent: .indigo,
         folders: [],
-        tabs: tabs,
-        selectedTabID: tabs.first?.id
+        tabs: tabs
     )
 }
 
+/// Each Space shows its first tab, as the sidebar fixtures always have.
+private func firstTabs(of spaces: [SpaceState.Seed]) -> [UUID: UUID] {
+    var tabs: [UUID: UUID] = [:]
+    for space in spaces {
+        tabs[space.id] = space.tabs.first?.id
+    }
+    return tabs
+}
+
 private func makeTab(
-    id: TabID,
+    id: UUID,
     title: String,
     placement: TabPlacement
-) -> BrowserTab {
-    BrowserTab(
+) -> TabState.Seed {
+    TabState.Seed(
         id: id,
         title: title,
         url: URL(fileURLWithPath: "/crest-reorder-registry-scope/\(title)"),

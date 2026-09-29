@@ -1,34 +1,60 @@
 import AppKit
 import Foundation
-import WebKit
+
+struct BrowserFileInputOptions {
+    let allowsDirectories: Bool
+    let allowsMultipleSelection: Bool
+}
 
 @MainActor
 final class BrowserDialogPresenter {
+    // A `dismissal` closes the sheet once its question no longer waits; the
+    // sheet then answers as declined.
+
     func presentAlert(
         message: String,
         request: URLRequest,
+        dismissal: BrowserPromptDismissal? = nil,
         completion: @escaping @MainActor @Sendable () -> Void
     ) {
         let alert = makeAlert(message: message, request: request)
         alert.addButton(withTitle: "OK")
-        present(alert) { _ in completion() }
+        present(alert, dismissal: dismissal) { _ in completion() }
     }
 
     func presentConfirm(
         message: String,
         request: URLRequest,
+        dismissal: BrowserPromptDismissal? = nil,
         completion: @escaping @MainActor @Sendable (Bool) -> Void
     ) {
         let alert = makeAlert(message: message, request: request)
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Cancel")
-        present(alert) { completion($0 == .alertFirstButtonReturn) }
+        present(alert, dismissal: dismissal) { completion($0 == .alertFirstButtonReturn) }
+    }
+
+    /// Pages no longer choose the wording of a beforeunload prompt, so the
+    /// message names the site rather than repeating page-supplied text.
+    func presentBeforeUnload(
+        request: URLRequest,
+        dismissal: BrowserPromptDismissal? = nil,
+        completion: @escaping @MainActor @Sendable (Bool) -> Void
+    ) {
+        let alert = NSAlert()
+        alert.messageText = "Leave this page?"
+        alert.informativeText = "Changes you made on \(Self.sourceLabel(for: request)) may not be saved."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Leave Page")
+        alert.addButton(withTitle: "Stay on Page")
+        present(alert, dismissal: dismissal) { completion($0 == .alertFirstButtonReturn) }
     }
 
     func presentPrompt(
         message: String,
         defaultText: String?,
         request: URLRequest,
+        dismissal: BrowserPromptDismissal? = nil,
         completion: @escaping @MainActor @Sendable (String?) -> Void
     ) {
         let alert = makeAlert(message: message, request: request)
@@ -37,21 +63,21 @@ final class BrowserDialogPresenter {
         alert.accessoryView = input
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Cancel")
-        present(alert) { response in
+        present(alert, dismissal: dismissal) { response in
             completion(response == .alertFirstButtonReturn ? input.stringValue : nil)
         }
     }
 
     func presentFileInput(
-        parameters: WKOpenPanelParameters,
+        options: BrowserFileInputOptions,
         request: URLRequest,
         completion: @escaping @MainActor @Sendable ([URL]?) -> Void
     ) {
         let panel = NSOpenPanel()
         panel.title = "Choose Files for \(Self.sourceLabel(for: request))"
         panel.canChooseFiles = true
-        panel.canChooseDirectories = parameters.allowsDirectories
-        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.canChooseDirectories = options.allowsDirectories
+        panel.allowsMultipleSelection = options.allowsMultipleSelection
         panel.canCreateDirectories = false
         panel.resolvesAliases = true
 
@@ -88,7 +114,8 @@ final class BrowserDialogPresenter {
 
     func presentHTTPAuthentication(
         prompt: BrowserHTTPAuthenticationPrompt,
-        spaceName: String
+        spaceName: String,
+        dismissal: BrowserPromptDismissal? = nil
     ) async -> BrowserHTTPAuthenticationPromptResponse? {
         let descriptor = prompt.descriptor
         let alert = NSAlert()
@@ -130,7 +157,7 @@ final class BrowserDialogPresenter {
         alert.window.initialFirstResponder = username
 
         return await withCheckedContinuation { continuation in
-            present(alert) { response in
+            present(alert, dismissal: dismissal) { response in
                 guard response == .alertFirstButtonReturn else {
                     continuation.resume(returning: nil)
                     return
@@ -190,7 +217,7 @@ final class BrowserDialogPresenter {
     /// is not offered as a saved block, so Escape declines this one hand-off
     /// rather than silently muting the site for good.
     func presentExternalApplicationPermission(
-        origin: BrowserSiteOrigin,
+        origin: SiteOrigin,
         destinationURL: URL,
         spaceName: String
     ) async -> BrowserExternalSchemePromptResponse {
@@ -233,14 +260,14 @@ final class BrowserDialogPresenter {
     }
 
     func approveRiskyDownload(
-        assessment: BrowserDownloadRiskAssessment,
+        assessment: DownloadRiskAssessment,
         sourceURL: URL?,
         spaceName: String
     ) async -> Bool {
         await withCheckedContinuation { continuation in
             let alert = NSAlert()
             alert.messageText = "Download “\(assessment.sanitizedFilename)”?"
-            var paragraphs = assessment.reasons.map(\.message)
+            var paragraphs = assessment.reasons.map { String(localized: $0.message) }
             if let host = sourceURL?.host() {
                 paragraphs.append("Source: \(host) · Space: \(spaceName)")
             } else {
@@ -253,6 +280,61 @@ final class BrowserDialogPresenter {
             alert.addButton(withTitle: "Cancel")
             present(alert) { response in
                 continuation.resume(returning: response == .alertFirstButtonReturn)
+            }
+        }
+    }
+
+    /// Whether to go on with a download the core judged dangerous, before its
+    /// file has a place, or to keep one its engine warned about while it
+    /// downloads: the core's reasons, the engine's warning, where it came from
+    /// and the Space it belongs to.
+    func approveDownload(
+        _ asked: DownloadApprovalAsked, spaceName: String?, dismissal: BrowserPromptDismissal? = nil
+    ) async -> Bool {
+        await withCheckedContinuation { continuation in
+            let alert = NSAlert()
+            let keeps = asked.warning != nil
+            alert.messageText = keeps ? "Keep “\(asked.filename)”?" : "Download “\(asked.filename)”?"
+            var paragraphs = asked.reasons.map { String(localized: $0.message) }
+            if let warning = asked.warning { paragraphs.append(warning.approvalMessage) }
+            switch (asked.sourceHost, spaceName) {
+            case (let host?, let space?): paragraphs.append("Source: \(host) · Space: \(space)")
+            case (let host?, nil): paragraphs.append("Source: \(host)")
+            case (nil, let space?): paragraphs.append("Space: \(space)")
+            case (nil, nil): break
+            }
+            if !keeps {
+                paragraphs.append("macOS will quarantine the completed file. Open it only if you trust its source.")
+            }
+            alert.informativeText = paragraphs.joined(separator: "\n\n")
+            alert.alertStyle = .warning
+            if keeps {
+                alert.addButton(withTitle: "Cancel")
+                alert.addButton(withTitle: "Keep Download")
+            } else {
+                alert.addButton(withTitle: "Download")
+                alert.addButton(withTitle: "Cancel")
+            }
+            present(alert, dismissal: dismissal) { response in
+                continuation.resume(
+                    returning: response == (keeps ? .alertSecondButtonReturn : .alertFirstButtonReturn))
+            }
+        }
+    }
+
+    /// Whether to quit and stop the `count` downloads still in progress.
+    func approveQuitWithDownloads(count: Int, dismissal: BrowserPromptDismissal? = nil) async -> Bool {
+        await withCheckedContinuation { continuation in
+            let alert = NSAlert()
+            alert.messageText =
+                count == 1
+                ? String(localized: "Quit and cancel the download in progress?")
+                : String(localized: "Quit and cancel \(count) downloads in progress?")
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: String(localized: "Keep Browsing"))
+            alert.addButton(withTitle: String(localized: "Quit"))
+            present(alert, dismissal: dismissal) { response in
+                continuation.resume(returning: response == .alertSecondButtonReturn)
             }
         }
     }
@@ -349,11 +431,20 @@ final class BrowserDialogPresenter {
 
     private func present(
         _ alert: NSAlert,
+        dismissal: BrowserPromptDismissal? = nil,
         completion: @escaping @MainActor @Sendable (NSApplication.ModalResponse) -> Void
     ) {
         guard let window = hostWindow else {
+            dismissal?.attach { [weak alert] in
+                guard let alert, alert.window.isVisible else { return }
+                NSApp.stopModal(withCode: .cancel)
+            }
             completion(alert.runModal())
             return
+        }
+        dismissal?.attach { [weak window, weak alert] in
+            guard let window, let alert, alert.window.sheetParent === window else { return }
+            window.endSheet(alert.window, returnCode: .cancel)
         }
         alert.beginSheetModal(for: window, completionHandler: completion)
     }

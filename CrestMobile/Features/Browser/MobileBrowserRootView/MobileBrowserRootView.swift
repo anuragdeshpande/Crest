@@ -18,7 +18,7 @@ struct MobileBrowserRootView: View {
         spaceAccess: BrowserSpaceAccessController = BrowserSpaceAccessController(),
         windowState: BrowserWindowStateStore? = nil,
         suspendsCompactPagePresentation: Bool = false,
-        startupBehavior: BrowserStartupBehavior = .showStartPage,
+        startupBehavior: StartupBehavior = .showStartPage,
         togglePrivateBrowsing: @escaping () -> Void,
         closePrivateBrowsing: @escaping () -> Void
     ) {
@@ -76,7 +76,7 @@ struct MobileBrowserRootView: View {
             \.browserNativeTabActions,
             BrowserNativeTabActions(
                 browser: model.browser, spaceAccess: model.spaceAccess,
-                didOpenURL: { model.pages.select(session: model.browser.session) }))
+                didOpenURL: { model.pages.select() }))
     }
 }
 

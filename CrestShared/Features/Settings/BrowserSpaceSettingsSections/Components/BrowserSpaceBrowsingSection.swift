@@ -3,7 +3,7 @@ import SwiftUI
 /// A Space's search engine, suggestion privacy choice, and current-tab cleanup.
 struct BrowserSpaceBrowsingSection: View {
     let browser: BrowserStore
-    let space: BrowserSpace
+    let space: SpaceModel
     let manageSearchEngines: (() -> Void)?
     let dismissKeyboard: @MainActor () -> Void
     let pickerPresentation: BrowserSpaceBrowsingPickerPresentationStyle
@@ -12,7 +12,7 @@ struct BrowserSpaceBrowsingSection: View {
 
     init(
         browser: BrowserStore,
-        space: BrowserSpace,
+        space: SpaceModel,
         manageSearchEngines: (() -> Void)? = nil,
         dismissKeyboard: @escaping @MainActor () -> Void = {},
         pickerPresentation: BrowserSpaceBrowsingPickerPresentationStyle = BrowserPlatformSearchEnginePresentation
@@ -54,13 +54,10 @@ struct BrowserSpaceBrowsingSection: View {
             Button("Clean Up Eligible Tabs Now", systemImage: "archivebox") {
                 browser.cleanupCurrentTabs(in: space.id)
             }
-            .disabled(
-                currentSpace.browsingPreferences.currentTabCleanupPolicy
-                    == .never
-            )
+            .disabled(currentPreferences.currentTabCleanup == .never)
 
             Text(
-                "This policy applies only to \(currentSpace.name). Eligible tabs remain recoverable from Archive."
+                "This policy applies only to \(space.settings.name). Eligible tabs remain recoverable from Archive."
             )
             .font(.footnote)
             .foregroundStyle(.secondary)
@@ -82,20 +79,16 @@ struct BrowserSpaceBrowsingSection: View {
         manageSearchEngines()
     }
 
-    private var currentSpace: BrowserSpace {
-        browser.liveSpace(space)
+    private var currentPreferences: BrowsingPreferences {
+        space.settings.browsingPreferences
     }
 
-    private var currentPreferences: BrowserSpaceBrowsingPreferences {
-        currentSpace.browsingPreferences
-    }
-
-    private var searchProviderBinding: Binding<BrowserSearchProvider> {
+    private var searchProviderBinding: Binding<SearchProvider> {
         browser.browsingPreferenceBinding(\.searchProvider, in: space)
     }
 
-    private var cleanupPolicyBinding: Binding<BrowserCurrentTabCleanupPolicy> {
-        browser.browsingPreferenceBinding(\.currentTabCleanupPolicy, in: space)
+    private var cleanupPolicyBinding: Binding<CurrentTabCleanup> {
+        browser.browsingPreferenceBinding(\.currentTabCleanup, in: space)
     }
 
     private var searchProviderPicker: some View {
@@ -108,13 +101,13 @@ struct BrowserSpaceBrowsingSection: View {
             accessibilityIdentifier: "space-search-provider",
             dismissKeyboard: dismissKeyboard,
             choiceLabel: { provider in
-                BrowserSearchProviderIdentityLabel(provider: provider, profileID: currentSpace.profile.id)
+                BrowserSearchProviderIdentityLabel(provider: provider, profileID: space.profileID)
             },
             selectedValue: {
                 HStack(spacing: BrowserSpaceBrowsingPickerValueLayout.touch.providerTextSpacing) {
                     BrowserSearchProviderIcon(
                         provider: currentPreferences.searchProvider,
-                        profileID: currentSpace.profile.id,
+                        profileID: space.profileID,
                         size: BrowserSearchProviderIdentityLabelLayout.touch.iconSize)
                     Text(currentPreferences.searchProvider.title)
                         .foregroundStyle(.secondary)
@@ -130,15 +123,15 @@ struct BrowserSpaceBrowsingSection: View {
             title: "Archive current tabs",
             presentation: pickerPresentation,
             selection: cleanupPolicyBinding,
-            choices: BrowserCurrentTabCleanupPolicy.allCases,
-            choiceTitle: { $0.title },
+            choices: CurrentTabCleanup.all,
+            choiceTitle: { String(localized: $0.title) },
             accessibilityIdentifier: "space-tab-cleanup-policy",
             dismissKeyboard: dismissKeyboard,
             choiceLabel: { policy in
                 Text(policy.title)
             },
             selectedValue: {
-                Text(currentPreferences.currentTabCleanupPolicy.title)
+                Text(currentPreferences.currentTabCleanup.title)
                     .foregroundStyle(.secondary)
             })
     }
@@ -147,4 +140,8 @@ struct BrowserSpaceBrowsingSection: View {
 private enum BrowserSearchEngineSheet: String, Identifiable {
     case manager
     var id: String { rawValue }
+}
+
+extension CurrentTabCleanup: Identifiable {
+    var id: String { name }
 }

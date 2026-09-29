@@ -48,6 +48,9 @@ struct MobileBrowserRootContent: View, BrowserChromeAnimating {
     }
 
     var body: some View {
+        // One reading of the window's commands serves the scene's menu and
+        // both Start Page paths.
+        let commandContext = mobileBrowserCommandContext
         MobileBrowserRootSurface(
             presentation: presentation,
             browser: browser,
@@ -68,17 +71,17 @@ struct MobileBrowserRootContent: View, BrowserChromeAnimating {
                     navigation.regularSidebarIsDocked,
                 sidebarPresentation: navigation.regularSidebarPresentation,
                 preferredSidebarWidth: model.sidebarWidthBinding,
-                space: browser.selectedSpace,
+                space: browser.shownSpace,
                 spaces: BrowserSidebarAccessPolicy.availableSpaces(in: browser),
                 reduceTransparency: reduceTransparency,
                 layoutDirection: layoutDirection,
                 usesBorderlessFloatingPageFrame:
                     usesBorderlessPageFrame,
-                isStartPage: browser.selectedTab?.isStartPage != false,
+                isStartPage: showsStartPage,
                 hasActivePage: model.selectedPage != nil,
                 completedNavigationCount:
                     model.selectedPage?.completedNavigationCount ?? 0,
-                hasSelectedSpace: browser.selectedSpace != nil,
+                hasSelectedSpace: browser.shownSpace != nil,
                 showSidebar: showRegularSidebar,
                 handlePageInteraction: navigation.handleRegularPageInteraction,
                 commitSidebarWidth: commitRegularSidebarWidth,
@@ -93,6 +96,7 @@ struct MobileBrowserRootContent: View, BrowserChromeAnimating {
                     sidebarToggleUndocks: true,
                     usesNativeNavigationTransition: true,
                     compactChromeNamespace: compactChromeNamespace,
+                    commandPaletteHandoff: .neither,
                     tabPromotionNamespace: tabPromotionNamespace,
                     address: model.addressBinding,
                     isAddressEditing: $isAddressEditing,
@@ -128,6 +132,7 @@ struct MobileBrowserRootContent: View, BrowserChromeAnimating {
                     sidebarToggleUndocks: false,
                     usesNativeNavigationTransition: false,
                     compactChromeNamespace: compactChromeNamespace,
+                    commandPaletteHandoff: .neither,
                     tabPromotionNamespace: tabPromotionNamespace,
                     address: model.addressBinding,
                     isAddressEditing: $isAddressEditing,
@@ -166,7 +171,7 @@ struct MobileBrowserRootContent: View, BrowserChromeAnimating {
                     }
                 ),
                 page: MobileCompactPageSurface(
-                    selectedTab: browser.selectedTab,
+                    selectedTab: browser.shownTab,
                     isURLCopiedFeedbackVisible: isURLCopiedFeedbackVisible,
                     pageZoomFeedbackLabel: visiblePageZoomFeedbackLabel,
                     reduceMotion: reduceMotion,
@@ -174,14 +179,13 @@ struct MobileBrowserRootContent: View, BrowserChromeAnimating {
                     completePagePresentation:
                         navigation.completePagePresentation,
                     backdrop: MobileCompactPageBackdrop(
-                        isStartPage:
-                            browser.selectedTab?.isStartPage != false,
+                        isStartPage: showsStartPage,
                         hasSelectedPage: model.selectedPage != nil,
                         pageThemeColor: model.selectedPage?.themeColor,
                         underPageBackgroundColor:
                             model.selectedPage?.webView
                             .underPageBackgroundColor,
-                        space: browser.selectedSpace
+                        space: browser.shownSpace
                     ),
                     detail: MobileBrowserDetailSurface(
                         browser: browser,
@@ -192,6 +196,7 @@ struct MobileBrowserRootContent: View, BrowserChromeAnimating {
                         addressFocusRequest: addressFocusRequest,
                         isCommandPalettePresented:
                             commandPaletteMode != nil,
+                        commands: commandContext.paletteRegistry,
                         isCompact: true,
                         obscuresSystemSafeAreas:
                             MobileBrowserViewportPolicy.usesEdgeToEdgeWebViewport(
@@ -226,7 +231,7 @@ struct MobileBrowserRootContent: View, BrowserChromeAnimating {
                     preferredSidebarWidth: model.sidebarWidthBinding,
                     reduceTransparency: reduceTransparency,
                     layoutDirection: layoutDirection,
-                    space: browser.selectedSpace,
+                    space: browser.shownSpace,
                     spaces: BrowserSidebarAccessPolicy.availableSpaces(in: browser),
                     showSidebar: showRegularSidebar,
                     commitSidebarWidth: commitRegularSidebarWidth,
@@ -241,6 +246,7 @@ struct MobileBrowserRootContent: View, BrowserChromeAnimating {
                         sidebarToggleUndocks: false,
                         usesNativeNavigationTransition: false,
                         compactChromeNamespace: compactChromeNamespace,
+                        commandPaletteHandoff: commandPaletteHandoff,
                         tabPromotionNamespace: tabPromotionNamespace,
                         address: model.addressBinding,
                         isAddressEditing: $isAddressEditing,
@@ -288,7 +294,8 @@ struct MobileBrowserRootContent: View, BrowserChromeAnimating {
                     detail: regularPageSurface(
                         adjoinsSidebar:
                             navigation.regularSidebarIsDocked
-                            && layout.reservesSidebarWidth
+                            && layout.reservesSidebarWidth,
+                        commands: commandContext.paletteRegistry
                     )
                     .overlay {
                         MobileTransientBrowsingOverlay(
@@ -311,13 +318,14 @@ struct MobileBrowserRootContent: View, BrowserChromeAnimating {
                         isExpanded: navigation.utilityPresentation
                             .isSwitcherExpanded,
                         selectedSurface: navigation.utilityPresentation.surface,
-                        badgeColor: browser.selectedSpace?.branding.colors.first?
-                            .color ?? .accentColor,
+                        badgeColor: browser.shownSpace.flatMap {
+                            $0.settings.look.colors.first?.color
+                        } ?? .accentColor,
                         downloads: model.selectedUtilityDownloads,
                         newDownloadCount: model.newUtilityDownloads.count,
                         downloadCenter: pages.downloadCenter,
-                        profileID: browser.selectedSpace?.profile.id,
-                        spaceID: browser.selectedSpace?.id,
+                        profileID: browser.shownSpace?.profileID,
+                        spaceID: browser.shownSpace?.id,
                         select: navigation.utilityPresentation.present
                     )
                 }
@@ -325,10 +333,10 @@ struct MobileBrowserRootContent: View, BrowserChromeAnimating {
             palette: { contentInsets in
                 MobileBrowserCommandPaletteLayer(
                     mode: commandPaletteMode,
-                    space: browser.selectedSpace,
-                    selectedTabID: browser.selectedTab?.id,
+                    browser: browser,
+                    space: browser.shownSpace,
+                    selectedTabID: browser.shownTab?.id,
                     commands: mobileBrowserCommandContext.paletteRegistry,
-                    isPrivateBrowsing: browser.isPrivateBrowsing,
                     isSourceAvailable: model.isPaletteSourceAvailable,
                     selectTab: model.selectPaletteTab,
                     openURL: { source, url, mode in
@@ -343,7 +351,7 @@ struct MobileBrowserRootContent: View, BrowserChromeAnimating {
         .environment(\.spacePagerPresentation, spacePagerPresentation)
         .focusedSceneValue(
             \.mobileBrowserCommandContext,
-            mobileBrowserCommandContext
+            commandContext
         )
         .sheet(isPresented: Binding(get: { model.showsSettings }, set: { model.showsSettings = $0 })) {
             MobileBrowserSettingsView(
@@ -370,7 +378,8 @@ struct MobileBrowserRootContent: View, BrowserChromeAnimating {
         }
         .modifier(
             MobileDownloadRiskConfirmationModifier(
-                confirmation: pages.downloadRiskConfirmation
+                confirmation: pages.downloadRiskConfirmation,
+                profileIDs: Set(browser.spaceModels.map(\.profileID))
             )
         )
         .onChange(of: pages.urlCopyFeedbackRevision) { _, revision in

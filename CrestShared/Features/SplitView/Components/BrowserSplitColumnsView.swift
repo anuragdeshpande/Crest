@@ -40,11 +40,11 @@ import SwiftUI
 /// A resize also writes without an implicit animation — the settle animation
 /// below belongs to a column opening or closing, not to pointer tracking, which
 /// has to land on the frame it was measured for.
-struct BrowserSplitColumnsView<Content: View, Panel: View>: View {
+struct BrowserSplitColumnsView<Member: Identifiable, Content: View, Panel: View>: View where Member.ID == UUID {
     /// The presented cards, in session member order.
-    let members: [BrowserTab]
+    let members: [Member]
     /// The one card browser chrome speaks for.
-    let focusedTabID: TabID?
+    let focusedTabID: UUID?
     /// The page insets the whole row sits inside, leading-zeroed when the row
     /// adjoins a docked sidebar.
     let frameInsets: EdgeInsets
@@ -57,14 +57,14 @@ struct BrowserSplitColumnsView<Content: View, Panel: View>: View {
     /// holds it at the slot the gap has reached; this is what makes that slot
     /// read as the gap — an empty column of exactly the size and position the
     /// card will drop back into.
-    let liftedTabID: TabID?
+    let liftedTabID: UUID?
     @Binding var widthTransaction: BrowserSplitWidthTransaction
     /// The fractions a completed divider drag settled on, worth persisting.
     let onResizeCommit: ([Double]) -> Void
     /// A request to make one card the focused one.
-    let onFocus: (TabID) -> Void
-    let usesTransparentInnerSurface: (BrowserTab) -> Bool
-    @ViewBuilder let content: (BrowserTab, Bool) -> Content
+    let onFocus: (UUID) -> Void
+    let usesTransparentInnerSurface: (Member) -> Bool
+    @ViewBuilder let content: (Member, Bool) -> Content
     let panel: BrowserSplitPanelColumn?
     let onPanelResizeCommit: (CGFloat) -> Void
     @ViewBuilder let panelContent: Panel
@@ -128,7 +128,7 @@ struct BrowserSplitColumnsView<Content: View, Panel: View>: View {
     /// the adornments only a real member carries.
     @ViewBuilder
     private func columnSlot(
-        _ slot: BrowserSplitColumnSlot,
+        _ slot: BrowserSplitColumnSlot<Member>,
         width: CGFloat
     ) -> some View {
         let surface = slotSurface(slot).frame(width: width)
@@ -173,7 +173,7 @@ struct BrowserSplitColumnsView<Content: View, Panel: View>: View {
     /// that borrowed a border of its own would read as a different kind of thing
     /// from the card about to replace it; this is that card's surface, already
     /// drawn.
-    private func slotSurface(_ slot: BrowserSplitColumnSlot) -> some View {
+    private func slotSurface(_ slot: BrowserSplitColumnSlot<Member>) -> some View {
         let isGap = slot.member.map { $0.id == liftedTabID } ?? false
         return BrowserRootContentSurface(
             cornerRadius: borderless ? 0 : BrowserChromeLayout.pageCornerRadius,
@@ -297,7 +297,7 @@ struct BrowserSplitColumnsView<Content: View, Panel: View>: View {
         return Array(0..<(members.count - 1))
     }
 
-    private var slots: [BrowserSplitColumnSlot] {
+    private var slots: [BrowserSplitColumnSlot<Member>] {
         BrowserSplitColumnSlot.slots(
             members: members,
             placeholderIndex: placeholderIndex,
@@ -330,7 +330,7 @@ struct BrowserSplitColumnsView<Content: View, Panel: View>: View {
     private func resolvedPanelWidth(containerWidth: CGFloat) -> CGFloat {
         BrowserSplitPanelLayout.resolvedWidth(
             requestedWidth: panelWidthTransaction.width ?? panel?.requestedWidth
-                ?? BrowserExtensionSidebarLayoutMetrics.defaultWidth,
+                ?? BrowserSplitPanelLayoutMetrics.defaultWidth,
             containerWidth: containerWidth,
             memberCount: members.count + (resolvedPlaceholderIndex == nil ? 0 : 1)
         )
@@ -367,7 +367,7 @@ struct BrowserSplitColumnsView<Content: View, Panel: View>: View {
         widths.indices.contains(index) ? widths[index] : 0
     }
 
-    private func cardZIndex(for slot: BrowserSplitColumnSlot) -> Double {
+    private func cardZIndex(for slot: BrowserSplitColumnSlot<Member>) -> Double {
         guard case .member(let member) = slot,
             member.id == focusedTabID
         else { return BrowserSplitLayoutMetrics.restingCardZIndex }
@@ -377,13 +377,13 @@ struct BrowserSplitColumnsView<Content: View, Panel: View>: View {
 
 extension BrowserSplitColumnsView where Panel == EmptyView {
     init(
-        members: [BrowserTab], focusedTabID: TabID?, frameInsets: EdgeInsets,
-        accent: Color, placeholderIndex: Int?, liftedTabID: TabID?,
+        members: [Member], focusedTabID: UUID?, frameInsets: EdgeInsets,
+        accent: Color, placeholderIndex: Int?, liftedTabID: UUID?,
         widthTransaction: Binding<BrowserSplitWidthTransaction>,
         onResizeCommit: @escaping ([Double]) -> Void,
-        onFocus: @escaping (TabID) -> Void,
-        usesTransparentInnerSurface: @escaping (BrowserTab) -> Bool,
-        @ViewBuilder content: @escaping (BrowserTab, Bool) -> Content
+        onFocus: @escaping (UUID) -> Void,
+        usesTransparentInnerSurface: @escaping (Member) -> Bool,
+        @ViewBuilder content: @escaping (Member, Bool) -> Content
     ) {
         self.init(
             members: members, focusedTabID: focusedTabID, frameInsets: frameInsets,

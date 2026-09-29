@@ -7,7 +7,7 @@ extension MobileBrowserCommandContext {
     /// extra window kinds, the Web Inspector, and the share and export sheets,
     /// none of which this shell implements. A command absent here simply never
     /// appears in the launcher — that is the whole contract.
-    static let paletteCommands: [BrowserShortcutCommand] = [
+    static let paletteCommands: [ShortcutCommand] = [
         .closeTabOrWindow,
         .back,
         .forward,
@@ -69,15 +69,16 @@ extension MobileBrowserCommandContext {
     var paletteRegistry: BrowserCommandPaletteCommandRegistry {
         BrowserCommandPaletteCommandRegistry(
             commands: Self.paletteCommands.filter {
-                $0 != .toggleTranslationToolbar || canToggleTranslationToolbar
+                isOffered($0)
+                    && ($0 != .toggleTranslationToolbar || canToggleTranslationToolbar)
             },
             perform: performFromPalette
         )
     }
 
     @MainActor
-    private func performFromPalette(_ command: BrowserShortcutCommand) {
-        switch command {
+    private func performFromPalette(_ command: ShortcutCommand) {
+        switch command.kind {
         case .closeTabOrWindow: dismissSelectedTab()
         case .archiveTab: archiveSelectedTab()
         case .back: goBack()

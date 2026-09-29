@@ -12,12 +12,9 @@ final class BrowserRootModel {
     let pages: BrowserPagePool
     let chrome: BrowserChromeState
     let spaceAccess: BrowserSpaceAccessController
-    private let pageSession: BrowserPageSessionSynchronizer
     let windowState: BrowserWindowStateStore?
     private let layoutPersistence: BrowserWindowLayoutPersistence
-    let startupBehavior: BrowserStartupBehavior
-    let extensionSidebarWindowID: BrowserWindowID
-    var extensionSidebar: BrowserExtensionSidebarHost?
+    let startupBehavior: StartupBehavior
 
     var address = ""
     var isAddressEditing = false
@@ -38,15 +35,26 @@ final class BrowserRootModel {
             self.isAddressEditing = isEditing
         }
     )
-    var hasRestoredExtensions = false
+    var isPrepared = false
     @ObservationIgnored private var isPreparingBrowser = false
-    var isURLCopiedFeedbackVisible = false
-    var visiblePageZoomFeedbackLabel: String?
-    var isFloatingSidebarPresented = false
-    private(set) var isSidebarMorphing = false
+    var visibleNotice: BrowserNotice?
+    var isFloatingSidebarPresented: Bool {
+        get { observed(\.isFloatingSidebarPresentedStorage, as: \.isFloatingSidebarPresented) }
+        set { publish(newValue, into: \.isFloatingSidebarPresentedStorage, as: \.isFloatingSidebarPresented) }
+    }
+    @ObservationIgnored private var isFloatingSidebarPresentedStorage = false
+    private(set) var isSidebarMorphing: Bool {
+        get { observed(\.isSidebarMorphingStorage, as: \.isSidebarMorphing) }
+        set { publish(newValue, into: \.isSidebarMorphingStorage, as: \.isSidebarMorphing) }
+    }
+    @ObservationIgnored private var isSidebarMorphingStorage = false
     /// True while the page row is making the sidebar's dock available, before
     /// the persistent floating card adopts its docked appearance.
-    private(set) var isSidebarApproachingDock = false
+    private(set) var isSidebarApproachingDock: Bool {
+        get { observed(\.isSidebarApproachingDockStorage, as: \.isSidebarApproachingDock) }
+        set { publish(newValue, into: \.isSidebarApproachingDockStorage, as: \.isSidebarApproachingDock) }
+    }
+    @ObservationIgnored private var isSidebarApproachingDockStorage = false
     private(set) var isSidebarSurfaceHovered = false
     private var sidebarMorphRevision = 0
     /// Cancels or awaits the current sidebar transition.
@@ -54,7 +62,11 @@ final class BrowserRootModel {
     /// Injectable phase timing for sidebar transitions.
     @ObservationIgnored
     var sidebarMorphWait: SidebarMorphWait = { try await Task.sleep(for: $0) }
-    var isWindowFocused = true
+    var isWindowFocused: Bool {
+        get { observed(\.isWindowFocusedStorage, as: \.isWindowFocused) }
+        set { publish(newValue, into: \.isWindowFocusedStorage, as: \.isWindowFocused) }
+    }
+    @ObservationIgnored private var isWindowFocusedStorage = true
     var sidebarWidthTransaction: BrowserSidebarWidthTransaction
     /// Live widths stay local until the divider drag commits.
     var splitWidthTransaction = BrowserSplitWidthTransaction(
@@ -62,6 +74,9 @@ final class BrowserRootModel {
     )
     /// The window owns the lift so its preview can outlive the source surface.
     let splitCardLift = BrowserSplitCardLiftState()
+    /// This window's extension side panel, if one is open. Transient by
+    /// construction: nothing about it reaches the session, disk or sync.
+    let extensionSidePanel = BrowserExtensionSidePanelHost()
 
     init(
         browser: BrowserStore,
@@ -69,7 +84,7 @@ final class BrowserRootModel {
         chrome: BrowserChromeState,
         spaceAccess: BrowserSpaceAccessController,
         windowState: BrowserWindowStateStore?,
-        startupBehavior: BrowserStartupBehavior,
+        startupBehavior: StartupBehavior,
         persistedSidebarWidth: CGFloat
     ) {
         self.browser = browser
@@ -77,16 +92,19 @@ final class BrowserRootModel {
         self.pages = pages
         self.chrome = chrome
         self.spaceAccess = spaceAccess
-        pageSession = BrowserPageSessionSynchronizer(browser: browser, spaceAccess: spaceAccess)
         self.windowState = windowState
         layoutPersistence = BrowserWindowLayoutPersistence(windowState: windowState)
-        extensionSidebarWindowID = windowState?.id ?? BrowserWindowID()
         self.startupBehavior = startupBehavior
         sidebarWidthTransaction = BrowserSidebarWidthTransaction(
             persistedWidth: persistedSidebarWidth
         )
         _ = addressBinding
         _ = isAddressEditingBinding
+        registerForNotices()
+    }
+
+    private func registerForNotices() {
+        BrowserNoticeCenter.shared.register(chrome) { [weak self] in self?.isWindowFocused == true }
     }
 }
 
@@ -98,77 +116,55 @@ extension BrowserRootModel {
             width: Double(sidebarWidth),
             isPresented: chrome.columnVisibility != .detailOnly
         )
-        guard !hasRestoredExtensions else {
-            BrowserExtensionStartupLog.skippedAlreadyRestored()
-            return
-        }
-        guard !isPreparingBrowser else { return }
+        guard !isPrepared, !isPreparingBrowser else { return }
         isPreparingBrowser = true
         defer { isPreparingBrowser = false }
 
-        // Apply the launch choice before yielding to extension and rule-list startup.
+        // Apply the launch choice before yielding to rule-list startup.
         // Once the window accepts input, the user's current selection takes precedence.
         if startupBehavior == .showStartPage {
             browser.presentStartPageForLaunch()
             address = ""
         }
-        await pages.restoreExtensions(in: browser.session)
         await pages.prepareContentBlocking()
-        hasRestoredExtensions = true
+        isPrepared = true
         synchronizeSelection()
     }
 
-    func reconcileExtensions() {
-        pages.reconcile(session: browser.session)
+    func reconcilePages() {
+        pages.reconcile()
     }
 
-    func extensionHostWindowFocusChanged(_ isFocused: Bool) {
+    func hostWindowFocusChanged(_ isFocused: Bool) {
         // Window scenes route native key-window notifications directly. A new
         // root's initial SwiftUI focus value must not claim a shared page.
         guard !pages.publishesPageMetadataCentrally else { return }
         pages.setWindowFocused(isFocused)
-        if let id = windowState?.id {
-            pages.extensionControllerPool.setHostWindowFocused(isFocused, windowID: id)
-        } else {
-            pages.extensionControllerPool.setHostWindowFocused(isFocused)
-        }
-    }
-
-    /// Republishes tab state that lives on the page rather than in the session,
-    /// so `tabs.onUpdated` reports load progress and reader mode. Deliberately
-    /// narrower than `reconcileExtensions()`, which also re-evaluates page
-    /// residency and is far too heavy for a load beginning or ending.
-    func reconcileExtensionTabActivity() {
-        pages.extensionControllerPool.reconcileExtensionState(
-            in: browser.session
-        )
     }
 
     func reconcileTabIcons() {
-        pages.reconcileTabIcons(in: browser.session)
+        pages.reconcileTabIcons()
     }
 
     func reconcileContentBlocking() {
-        guard hasRestoredExtensions else { return }
-        let session = browser.session
-        Task { await pages.reconcileContentBlocking(in: session) }
+        guard isPrepared else { return }
+        Task { await pages.reconcileContentBlocking() }
     }
 
     func reconcileCredentialAccess() {
-        pages.reconcileCredentialAccess(in: browser.session)
+        pages.reconcileCredentialAccess()
     }
 
     func reloadContentBlocking() {
-        guard hasRestoredExtensions else { return }
-        let session = browser.session
-        Task { await pages.reloadContentBlocking(in: session) }
+        guard isPrepared else { return }
+        Task { await pages.reloadContentBlocking() }
     }
 
-    func relockProtectedSpaces(_ spaceIDs: Set<SpaceID>) {
+    func relockProtectedSpaces(_ spaceIDs: Set<UUID>) {
         // The Space itself, not just its ID: relocking has to reach the
         // profile its archived tab state is filed under, and that state
         // outlives the resident pages an ID alone can find.
-        for space in browser.session.spaces where spaceIDs.contains(space.id) {
+        for space in browser.spaceModels where spaceIDs.contains(space.id) {
             pages.relockProtectedSpace(space)
         }
     }
@@ -183,6 +179,7 @@ extension BrowserRootModel {
             set: { isFocused in
                 guard self.isWindowFocused != isFocused else { return }
                 self.isWindowFocused = isFocused
+                if isFocused { self.registerForNotices() }
             }
         )
     }
@@ -192,46 +189,26 @@ extension BrowserRootModel {
 
 extension BrowserRootModel {
     private var selectedPage: BrowserPage? {
-        guard let space = browser.selectedSpace,
-            !spaceAccess.isLocked(space),
-            let tab = browser.selectedTab
+        guard let space = browser.shownSpace, !spaceAccess.isLocked(space),
+            let assignment = browser.shownTabAssignment
         else { return nil }
-        return pages.activePage(
-            matching: BrowserTabRuntimeAssignment(
-                tabID: tab.id, spaceID: space.id, profileID: space.profile.id
-            )
-        )
+        return pages.activePage(matching: assignment)
     }
 
     var windowTitle: String {
-        guard let space = browser.selectedSpace,
-            !spaceAccess.isLocked(space),
-            let tab = browser.selectedTab
-        else { return ProductIdentity.name }
-        if tab.isStartPage { return String(localized: "Start Page") }
-        if let title = BrowserTab.resolvedCustomTitle(tab.customTitle) { return title }
-        return BrowserWindowTitle.resolve(page: selectedPage, storedTitle: tab.title, url: tab.url)
-    }
-
-    func synchronizePageMetadata() {
-        guard !isAddressEditing else { return }
-        if pages.publishesPageMetadataCentrally {
-            address = (selectedPage?.metadata.displayURL ?? browser.selectedTab?.url)?.absoluteString ?? ""
-        } else if let page = selectedPage, let source = selectedTabAssignment,
-            let updatedAddress = pageSession.synchronize(page.metadata, matching: source)
-        {
-            address = updatedAddress
+        guard let space = browser.shownSpace, !spaceAccess.isLocked(space), let tab = browser.shownTab else {
+            return ProductIdentity.name
         }
+        return BrowserWindowTitle.resolve(tab: tab, page: selectedPage)
     }
 
-    func recordCompletedNavigation() {
-        guard let page = selectedPage, page.url != nil, let source = selectedTabAssignment else { return }
-        synchronizePageMetadata()
-        let space =
-            pages.publishesPageMetadataCentrally
-            ? browser.selectedSpace : pageSession.recordCompletedNavigation(page.metadata, matching: source)
-        guard let space else { return }
-        Task { await pages.styleVisitedLinks(in: space) }
+    /// Shows the address the page of the tab the window shows reads in the
+    /// core, or its tab's, in the address field, unless the person is editing
+    /// it, the Space is locked or no page shows that tab; another window's or
+    /// Space's page never replaces what the field holds.
+    func synchronizePageMetadata() {
+        guard !isAddressEditing, !selectedSpaceIsLocked, let page = selectedPage else { return }
+        address = (page.live.displayURL ?? browser.shownTab?.address)?.absoluteString ?? ""
     }
 
 }
@@ -242,73 +219,67 @@ extension BrowserRootModel {
     /// Distinguishes Space changes from tab changes.
     var selectionSnapshot: BrowserRootSelectionSnapshot {
         BrowserRootSelectionSnapshot(
-            tabID: browser.selectedTab?.id,
-            spaceID: browser.session.selectedSpaceID
+            tabID: browser.shownTab?.id,
+            spaceID: browser.selectedSpaceID
         )
     }
 
     var selectedSpaceIsLocked: Bool {
-        guard let space = browser.selectedSpace else { return false }
+        guard let space = browser.shownSpace else { return false }
         return spaceAccess.isLocked(space)
     }
 
-    var lockedSpaceIDs: Set<SpaceID> {
-        Set(
-            browser.session.spaces.compactMap { space in
-                spaceAccess.isLocked(space) ? space.id : nil
-            }
-        )
+    var lockedSpaceIDs: Set<UUID> {
+        Set(browser.spaceModels.filter(spaceAccess.isLocked).map(\.id))
     }
 
     func openNewTab() {
-        chrome.openNewTab(
-            isStartPageSelected: browser.selectedTab?.isStartPage == true
-        )
+        chrome.openNewTab(isStartPageSelected: browser.shownTab?.surface == .startPage)
     }
 
+    /// Loads what the person typed, which the core resolves by the Space's
+    /// address rules. A native Settings or Getting Started tab has no page:
+    /// the core gives it the address first, and selection builds its page and
+    /// loads it there.
     func submitAddress() {
-        guard
-            let url = AddressResolver.resolve(
-                address,
-                searchProvider: browser.selectedSpace?.browsingPreferences.searchProvider
-                    ?? .google
-            )
-        else { return }
-        browser.navigateSelectedTab(to: url)
-        pages.load(url)
-        address = url.absoluteString
+        let input = address
+        if browser.shownTab?.surface.showsPage == false {
+            guard browser.navigateSelectedTab(to: input) else { return }
+            pages.select()
+        } else {
+            pages.select()
+            guard pages.navigate(to: input) else { return }
+        }
+        address = (selectedPage?.live.displayURL ?? browser.shownTab?.address)?.absoluteString ?? input
         isAddressEditing = false
         AddressFocusAction.resign()
     }
 
     func synchronizeAfterSelectionChange() {
-        extensionSidebar?.reconcile()
-        guard hasRestoredExtensions else { return }
+        guard isPrepared else { return }
         isAddressEditing = false
         AddressFocusAction.resign()
         synchronizeSelection()
     }
 
     func synchronizeAfterSpaceChange() {
-        extensionSidebar?.reconcile()
-        guard hasRestoredExtensions else { return }
+        guard isPrepared else { return }
         isAddressEditing = false
         AddressFocusAction.resign()
-        if selectedSpaceIsLocked || !pages.isPresentingSelection(in: browser.session) {
+        if selectedSpaceIsLocked || !pages.isPresentingSelection() {
             if selectedSpaceIsLocked {
                 pages.deactivatePagePresentation()
             } else {
                 pages.selectSpace(in: browser)
             }
-            address = selectedSpaceIsLocked ? "" : browser.selectedTab?.url?.absoluteString ?? ""
+            address = selectedSpaceIsLocked ? "" : browser.shownTab?.url ?? ""
             return
         }
-        address = browser.selectedTab?.url?.absoluteString ?? ""
+        address = browser.shownTab?.url ?? ""
     }
 
     func synchronizeAfterLockChange() {
-        extensionSidebar?.reconcile()
-        guard hasRestoredExtensions else { return }
+        guard isPrepared else { return }
         synchronizeSelection()
     }
 
@@ -319,14 +290,12 @@ extension BrowserRootModel {
             address = ""
             return
         }
-        if let tab = browser.selectedTab, tab.isStartPage,
-            browser.selectedSpace?.splitGroup(containing: tab.id) == nil
-        {
+        if browser.shownTab?.surface == .startPage, browser.shownCards.count < 2 {
             pages.leavePagePresentation()
         } else {
-            pages.select(session: browser.session)
+            pages.select()
         }
-        address = browser.selectedTab?.url?.absoluteString ?? ""
+        address = browser.shownTab?.url ?? ""
     }
 
     func handleAuxiliaryMouseAction(
@@ -556,26 +525,17 @@ extension BrowserRootModel {
 // MARK: - Split Layout
 
 extension BrowserRootModel {
-    /// The cards the content area presents for the current selection.
-    ///
-    /// Derived from the session rather than read out of
-    /// `BrowserPagePool.presentedTabIDs`: both answer the same
-    /// `presentedSplitMembers(for:)` question, and taking the store's answer is
-    /// what keeps SwiftUI observing the thing that actually changes when
-    /// membership does.
-    var presentedSplitMembers: [BrowserTab] {
-        guard let space = browser.selectedSpace else { return [] }
-        return space.presentedSplitMembers(for: browser.selectedTab?.id)
+    /// The cards the content area presents, as the window's read model
+    /// publishes them, so SwiftUI observes what changes when membership does.
+    var presentedSplitMembers: [TabStateModel] {
+        browser.shownCards
     }
 
     /// The group the presented cards belong to, or `nil` when one tab presents
     /// alone. Column fractions are stored per group, so a lone tab has no
     /// layout to store.
-    var presentedSplitGroupID: SplitGroupID? {
-        guard let space = browser.selectedSpace,
-            let selectedTabID = browser.selectedTab?.id
-        else { return nil }
-        return space.splitGroup(containing: selectedTabID)
+    var presentedSplitGroupID: UUID? {
+        browser.shownSpace.flatMap(browser.shownSplitGroupID(in:))
     }
 
     var splitWidthTransactionBinding: Binding<BrowserSplitWidthTransaction> {
@@ -596,8 +556,8 @@ extension BrowserRootModel {
         layoutPersistence.commitSplitLayout(fractions, groupID: presentedSplitGroupID)
     }
 
-    func focusSplitCard(_ tabID: TabID) {
-        guard tabID != browser.selectedTab?.id,
+    func focusSplitCard(_ tabID: UUID) {
+        guard tabID != browser.shownTab?.id,
             presentedSplitMembers.contains(where: { $0.id == tabID })
         else { return }
         browser.selectTab(tabID)
@@ -607,15 +567,63 @@ extension BrowserRootModel {
 // MARK: - Command Palette
 
 extension BrowserRootModel {
-    var selectedTabAssignment: BrowserTabRuntimeAssignment? {
-        guard let space = browser.selectedSpace, let tab = browser.selectedTab else {
-            return nil
+    /// Whether this window shows its command palette: one was asked for, and
+    /// the selected tab, or the empty selection of an unlocked Space, can act
+    /// on it.
+    var isCommandPaletteShown: Bool {
+        guard chrome.isCommandPalettePresented else { return false }
+        if let source = selectedTabAssignment {
+            return isPaletteSourceAvailable(source)
         }
-        return BrowserTabRuntimeAssignment(
-            tabID: tab.id,
-            spaceID: space.id,
-            profileID: space.profile.id
+        return emptySelectionPaletteActions?.isAvailable == true
+    }
+
+    /// The New Tab actions of a selected Space with no tab selected.
+    var emptySelectionPaletteActions: BrowserEmptySelectionPaletteActions? {
+        guard let space = browser.shownSpace, browser.shownTab == nil else { return nil }
+        return BrowserEmptySelectionPaletteActions(
+            source: BrowserSpaceRuntimeAssignment(space: space),
+            browser: browser,
+            accessController: spaceAccess,
+            didSelectTab: { [weak self] in
+                guard let self else { return }
+                self.pages.select()
+                self.address = self.browser.shownTab?.url ?? ""
+            }
         )
+    }
+
+    /// Which side of the field-to-palette morph holds the shared identity. The
+    /// field is on screen whenever the sidebar is, docked or floating.
+    func commandPaletteHandoff(reduceMotion: Bool) -> BrowserCommandPaletteHandoff {
+        .resolve(
+            isPaletteShown: isCommandPaletteShown,
+            isFieldOnScreen: sidebarPresentation.showsSidebar,
+            reduceMotion: reduceMotion
+        )
+    }
+
+    var selectedTabAssignment: BrowserTabRuntimeAssignment? {
+        browser.shownTabAssignment
+    }
+
+    /// The commands this window's palettes offer, the overlay's and every
+    /// Start Page's, run by the same routes as the menu bar.
+    func paletteRegistry(
+        windows: BrowserMacWindows?,
+        layoutDirection: LayoutDirection,
+        shortcuts: BrowserShortcutStore?
+    ) -> BrowserCommandPaletteCommandRegistry {
+        BrowserCommandActions(
+            browser: browser,
+            pages: pages,
+            chrome: chrome,
+            windows: windows,
+            spaceAccess: spaceAccess,
+            targetWindowID: windowState?.id,
+            layoutDirection: layoutDirection,
+        )
+        .paletteRegistry(shortcuts: shortcuts)
     }
 
     func isPaletteSourceAvailable(
@@ -643,8 +651,8 @@ extension BrowserRootModel {
         else { return false }
         browser.selectSpace(destination.space.id)
         browser.selectTab(destination.tab.id)
-        pages.select(session: browser.session)
-        address = browser.selectedTab?.url?.absoluteString ?? ""
+        pages.select()
+        address = browser.shownTab?.url ?? ""
         return true
     }
 
@@ -663,24 +671,12 @@ extension BrowserRootModel {
         else { return false }
         switch mode {
         case .editLocation:
-            browser.navigateSelectedTab(to: url)
+            browser.navigateSelectedTab(to: url.absoluteString)
         case .newTab:
-            if browser.selectedTab?.isStartPage == true {
-                browser.navigateSelectedTab(to: url)
-            } else {
-                guard
-                    browser.openNewTab(
-                        url: url,
-                        matching: BrowserSpaceRuntimeAssignment(
-                            spaceID: source.spaceID,
-                            profileID: source.profileID
-                        )
-                    ) != nil
-                else { return false }
-            }
+            guard browser.openAddress(url, in: source.spaceID) else { return false }
         }
-        pages.select(session: browser.session)
-        pages.load(url)
+        pages.select()
+        pages.navigate(to: url.absoluteString)
         address = url.absoluteString
         return true
     }
@@ -689,44 +685,22 @@ extension BrowserRootModel {
 // MARK: - Feedback
 
 extension BrowserRootModel {
-    func presentURLCopyFeedback(revision: Int, reduceMotion: Bool) {
-        guard revision > 0 else { return }
+    func presentNotice(revision: Int, reduceMotion: Bool) {
+        guard revision > 0, let notice = chrome.notice else { return }
         withAnimation(
             accessibleAnimation(CrestMotion.feedbackPresentation, reduceMotion)
         ) {
-            visiblePageZoomFeedbackLabel = nil
-            isURLCopiedFeedbackVisible = true
+            visibleNotice = notice
         }
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: BrowserRootMetrics.urlCopyFeedbackDuration)
+            try? await Task.sleep(for: notice.duration)
             guard let self,
-                self.chrome.urlCopyFeedbackRevision == revision
+                self.chrome.noticeRevision == revision
             else { return }
             withAnimation(
                 self.accessibleAnimation(CrestMotion.dismissal, reduceMotion)
             ) {
-                self.isURLCopiedFeedbackVisible = false
-            }
-        }
-    }
-
-    func presentPageZoomFeedback(revision: Int, reduceMotion: Bool) {
-        guard revision > 0 else { return }
-        withAnimation(
-            accessibleAnimation(CrestMotion.feedbackPresentation, reduceMotion)
-        ) {
-            isURLCopiedFeedbackVisible = false
-            visiblePageZoomFeedbackLabel = chrome.pageZoomFeedbackLabel
-        }
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: BrowserRootMetrics.urlCopyFeedbackDuration)
-            guard let self,
-                self.chrome.pageZoomFeedbackRevision == revision
-            else { return }
-            withAnimation(
-                self.accessibleAnimation(CrestMotion.dismissal, reduceMotion)
-            ) {
-                self.visiblePageZoomFeedbackLabel = nil
+                self.visibleNotice = nil
             }
         }
     }
@@ -749,13 +723,15 @@ extension BrowserRootModel {
 // MARK: - Downloads
 
 extension BrowserRootModel {
-    var selectedUtilityDownloads: [BrowserDownloadItem] {
-        guard let profileID = browser.selectedSpace?.profile.id else { return [] }
+    var selectedUtilityDownloads: [DownloadState] {
+        guard let profileID = browser.shownSpace?.profileID else { return [] }
         return pages.downloadCenter.items(for: profileID)
     }
 
-    var newUtilityDownloads: [BrowserDownloadItem] {
-        guard let profileID = browser.selectedSpace?.profile.id else { return [] }
+    var newUtilityDownloads: [DownloadState] {
+        guard let profileID = browser.shownSpace?.profileID else { return [] }
         return pages.downloadCenter.unacknowledgedItems(for: profileID)
     }
 }
+
+extension BrowserRootModel: BrowserStoreFirstObservable {}

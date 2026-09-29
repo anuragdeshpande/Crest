@@ -6,107 +6,80 @@ import XCTest
 final class BrowserSettingsPrivacyPolicyTests: XCTestCase {
     func testLiveSpaceSelectionRejectsStaleSourcesAndUnavailableDestinationsWithoutMutation() {
         for invalidation in SettingsSelectionInvalidation.allCases {
-            var session = BrowserSession.preview
-            let settings = BrowserTab(title: "Settings", url: nil, nativeContent: .settings, placement: .current)
-            session.spaces[0].tabs.append(settings)
+            var session = SessionState.Seed.preview
+            let settings = TabState.Seed(title: "Settings", url: nil, nativeContent: .settings, placement: .current)
+            // A tab that shows something else now, under the identity the
+            // Settings tab had when the selection was captured.
+            session.spaces[0].tabs.append(
+                invalidation == .replacedTabContent
+                    ? TabState.Seed(
+                        id: settings.id, title: "Getting Started", url: nil, nativeContent: .gettingStarted,
+                        placement: .current)
+                    : settings)
             let source = session.spaces[0]
             let destination = session.spaces[1]
-            session.selectedSpaceID = source.id
-            let persistence = InMemoryBrowserSessionPersistence()
-            let browser = BrowserStore(session: session, persistence: persistence)
+            let browser = BrowserStore(seed: session)
+            browser.selectSpace(source.id)
             let action = BrowserSettingsSpaceSelectionAction(
                 browser: browser, spaceAccess: BrowserSpaceAccessController())
             let assignment = BrowserTabRuntimeAssignment(
-                tabID: settings.id, spaceID: source.id, profileID: source.profile.id)
+                tabID: settings.id, spaceID: source.id, profileID: source.profileID)
             switch invalidation {
             case .removedTab:
-                browser.session.spaces[0].tabs.removeAll { $0.id == settings.id }
+                browser.deleteTab(settings.id, in: source.id)
             case .replacedTabContent:
-                browser.session.spaces[0].tabs[browser.session.spaces[0].tabs.count - 1] = BrowserTab(
-                    id: settings.id, title: "Getting Started", url: nil, nativeContent: .gettingStarted,
-                    placement: .current)
+                break
             case .replacedProfile:
-                browser.session.spaces[0] = BrowserSpace(
-                    id: source.id, profile: BrowsingProfile(id: UUID()), name: source.name,
-                    symbol: source.symbol, accent: source.accent, folders: source.folders,
-                    tabs: source.tabs, selectedTabID: source.selectedTabID)
+                browser.replaceProfileForTesting(of: source.id)
             case .lockedSource:
-                browser.session.spaces[0].accessPolicy = .deviceOwnerAuthentication
+                browser.updateSpaceAccessPolicy(.deviceOwnerAuthentication, in: source.id)
             case .unselectedSource:
-                browser.session.selectedSpaceID = destination.id
+                browser.selectPresentedSpace(destination.id)
             case .deletingSource:
                 _ = browser.family.beginDeletingSpace(source.id)
             case .lockedDestination:
-                browser.session.spaces[1].accessPolicy = .deviceOwnerAuthentication
+                browser.updateSpaceAccessPolicy(.deviceOwnerAuthentication, in: destination.id)
             case .deletingDestination:
                 _ = browser.family.beginDeletingSpace(destination.id)
             case .missingDestination:
-                browser.session.spaces.removeLast()
+                browser.removeSpaceForTesting(destination.id)
             }
-            let before = browser.session
-            let savedCount = persistence.savedScopes.count
+            let before = browser.sessionSeed
+            let revision = browser.sessionRevision
 
             XCTAssertNil(action.select(destination.id, matching: assignment), "\(invalidation)")
 
-            XCTAssertEqual(browser.session, before, "\(invalidation)")
-            XCTAssertEqual(persistence.savedScopes.count, savedCount, "\(invalidation)")
+            XCTAssertEqual(browser.sessionSeed, before, "\(invalidation)")
+            XCTAssertEqual(browser.sessionRevision, revision, "\(invalidation)")
         }
     }
 
-    func testPrivateSpaceSettingsStayProtectedUntilTheSpaceIsUnlocked() async throws {
-        var space = try XCTUnwrap(BrowserSession.preview.spaces.first)
-        space.accessPolicy = .deviceOwnerAuthentication
-        let access = BrowserSpaceAccessController(
-            authenticator: SettingsPrivacyAuthenticatorStub(result: true)
-        )
-
-        XCTAssertFalse(
-            BrowserSettingsPrivacyPolicy.canRevealSpaceData(
-                in: space,
-                accessController: access
-            )
-        )
-
-        let unlocked = await access.unlock(space)
-
-        XCTAssertTrue(unlocked)
-
-        XCTAssertTrue(
-            BrowserSettingsPrivacyPolicy.canRevealSpaceData(
-                in: space,
-                accessController: access
-            )
-        )
-    }
-
     func testLockedSpacesForExportIncludesOnlyStillLockedPrivateSpaces() async throws {
-        var spaces = BrowserSession.preview.spaces
-        spaces[0].accessPolicy = .deviceOwnerAuthentication
-        spaces[1].accessPolicy = .deviceOwnerAuthentication
+        var session = SessionState.Seed.preview
+        session.spaces[0].settings.accessPolicy = .deviceOwnerAuthentication
+        session.spaces[1].settings.accessPolicy = .deviceOwnerAuthentication
+        let browser = BrowserStore(seed: session)
+        let spaces = browser.spaceModels
         let access = BrowserSpaceAccessController(
             authenticator: SettingsPrivacyAuthenticatorStub(result: true)
         )
+        browser.attachSpaceAccess(access)
+
+        let export = BrowserDataPortabilityModel(browser: browser, spaceAccess: access)
+        XCTAssertEqual(export.lockedSpaceIDs, [spaces[0].id, spaces[1].id])
 
         let unlocked = await access.unlock(spaces[0])
 
         XCTAssertTrue(unlocked)
-
-        XCTAssertEqual(
-            BrowserSettingsPrivacyPolicy.lockedSpaces(
-                in: spaces,
-                accessController: access
-            ).map(\.id),
-            [spaces[1].id]
-        )
+        XCTAssertEqual(export.lockedSpaceIDs, [spaces[1].id])
     }
 
     func testCredentialMetadataLoadsOnlyWhilePrivateSpaceIsUnlocked() async throws {
-        var session = BrowserSession.preview
-        session.spaces[0].accessPolicy = .deviceOwnerAuthentication
+        var session = SessionState.Seed.preview
+        session.spaces[0].settings.accessPolicy = .deviceOwnerAuthentication
         let space = session.spaces[0]
         let browser = BrowserStore(
-            session: session,
-            persistence: InMemoryBrowserSessionPersistence(),
+            seed: session,
             credentialVault: InMemoryCredentialVault()
         )
         let url = try XCTUnwrap(URL(string: "https://accounts.example.com/sign-in"))
@@ -119,13 +92,14 @@ final class BrowserSettingsPrivacyPolicyTests: XCTestCase {
         let access = BrowserSpaceAccessController(
             authenticator: SettingsPrivacyAuthenticatorStub(result: true)
         )
+        browser.attachSpaceAccess(access)
         let credentials = BrowserCredentialSpaceStore(browser: browser)
 
         await credentials.load(in: space.id, accessController: access)
 
         XCTAssertTrue(credentials.descriptors.isEmpty)
 
-        let unlocked = await access.unlock(space)
+        let unlocked = await access.unlock(try XCTUnwrap(browser.spaceModel(space.id)))
 
         XCTAssertTrue(unlocked)
         await credentials.load(in: space.id, accessController: access)

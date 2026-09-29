@@ -46,7 +46,7 @@
             .onChange(of: practice.members.map(\.id), initial: true) { _, _ in
                 practice.reconcileSplitWidths()
             }
-            .animation(reduceMotion ? nil : CrestMotion.collection, value: practice.space.tabs)
+            .animation(reduceMotion ? nil : CrestMotion.collection, value: practice.space.sidebar.lists.map(\.rows))
         }
 
         private var sidebar: some View {
@@ -62,7 +62,7 @@
                         description: Text("Your pinned and saved tabs are still in the sidebar."))
                 } else {
                     BrowserSplitColumnsView(
-                        members: members, focusedTabID: practice.space.selectedTabID,
+                        members: members, focusedTabID: practice.selectedTabID,
                         frameInsets: EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10),
                         accent: CrestBrandPalette.coral,
                         placeholderIndex: nil, liftedTabID: nil, widthTransaction: $practice.splitWidths,
@@ -82,17 +82,19 @@
                     assignment: practice.assignment, state: practice.sidebarInteraction.sidebarReorderState)
         }
 
-        private func practiceDocument(_ tab: BrowserTab) -> some View {
+        private func practiceDocument(_ tab: TabStateModel) -> some View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    TabFaviconView(tab: tab, profileID: practice.space.profile.id, size: 18)
-                    Text(tab.displayTitle).font(CrestTypography.sans(12, weight: .semibold)).lineLimit(1)
+                    TabStateFaviconView(
+                        tab: tab, favicons: practice.browser.core.state.favicons, profileID: practice.space.profileID,
+                        size: 18)
+                    Text(tab.shownTitle).font(CrestTypography.sans(12, weight: .semibold)).lineLimit(1)
                 }
                 Divider()
                 Spacer(minLength: 0)
                 if showsSplit {
                     splitInstructions(tab)
-                } else if tab.id == practice.packingID || tab.title == "Packing list" {
+                } else if tab.id == practice.tabID(.packing) || tab.title == PracticeTab.packing.title {
                     Text("Packing list").font(CrestTypography.display(27))
                     ForEach(["Walking shoes", "Water bottle", "Trail map"], id: \.self) { item in
                         Label(item, systemImage: "checkmark.circle").font(CrestTypography.sans(12)).foregroundStyle(
@@ -115,7 +117,7 @@
             .background(CrestBrandTheme.canvas)
         }
 
-        @ViewBuilder private func splitInstructions(_ tab: BrowserTab) -> some View {
+        @ViewBuilder private func splitInstructions(_ tab: TabStateModel) -> some View {
             if practice.members.count < 2 {
                 Image(systemName: "rectangle.split.2x1")
                     .font(.system(size: 44, weight: .ultraLight)).foregroundStyle(CrestBrandPalette.sky)
@@ -161,7 +163,7 @@
             }
         }
 
-        @ViewBuilder private func moveButtons(_ tab: BrowserTab) -> some View {
+        @ViewBuilder private func moveButtons(_ tab: TabStateModel) -> some View {
             Button("Move left", systemImage: "arrow.left") { practice.move(tab.id, by: -1) }
                 .buttonStyle(.crestSecondary)
                 .disabled(!practice.browser.canMoveSplitMember(tab.id, by: -1, matching: practice.assignment))
@@ -181,22 +183,24 @@
             }
 
             private var liftContent: BrowserDragPreviewWindowContent? {
-                guard let lift = practice.sidebarInteraction.sidebarReorderState.liftPreview else { return nil }
+                guard let lift = practice.sidebarInteraction.sidebarReorderState.liftPreview,
+                    let space = practice.browser.workspaceModel?.spaces.models.first
+                else { return nil }
                 let subject: BrowserSidebarLiftPreviewSubject?
                 switch lift.item {
                 case .tab(let item):
-                    subject = practice.space.tabs.first { $0.id == item.tabID }.map(
-                        BrowserSidebarLiftPreviewSubject.tab)
+                    subject = space.tabs.model(item.tabID).map(BrowserSidebarLiftPreviewSubject.tab)
                 case .folder(let item):
-                    subject = practice.space.folders.first { $0.id == item.folderID }.map { .folder($0, rows: []) }
+                    subject = space.folders.model(item.folderID).map { .folder($0, rows: []) }
                 case .splitGroup(let item):
-                    subject = .splitGroup(practice.space.splitGroupMembers(of: item.groupID))
+                    subject = .splitGroup(space.splitMembers(of: item.groupID))
                 }
                 guard let subject else { return nil }
                 return .sidebarLift(
                     BrowserSidebarLiftPreviewContent(
-                        subject: subject, lift: lift, reduceMotion: reduceMotion,
-                        selectedTabID: practice.space.selectedTabID, loadedTabIDs: Set(practice.space.tabs.map(\.id))))
+                        subject: subject, favicons: practice.browser.core.state.favicons, lift: lift,
+                        reduceMotion: reduceMotion, selectedTabID: practice.selectedTabID,
+                        loadedTabIDs: Set(space.tabs.models.map(\.id))))
             }
         #endif
     }

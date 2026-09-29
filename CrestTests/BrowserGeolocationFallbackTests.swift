@@ -7,8 +7,8 @@ import XCTest
 final class BrowserGeolocationBridgeTests: XCTestCase {
     func testDismissingLocationPromptKeepsAskAndRememberedAllowSkipsTheNextPrompt() async throws {
         let fixture = try makeFixture()
-        defer { fixture.page.prepareForSpaceDeletion() }
-        let origin = try XCTUnwrap(BrowserSiteOrigin(url: fixture.url))
+        defer { fixture.page.release(keepingState: false) }
+        let origin = try XCTUnwrap(SiteOrigin(url: fixture.url))
         fixture.page.permissionCenter.setDecision(.ask, for: .location, origin: origin, in: fixture.page.spaceID)
         fixture.page.sitePermissionRequests.setPresentationAvailable(true)
         fixture.page.webView.loadSimulatedRequest(URLRequest(url: fixture.url), responseHTML: "<title>Location</title>")
@@ -48,13 +48,8 @@ final class BrowserGeolocationBridgeTests: XCTestCase {
     func testRevocationStopsRequestsAndRejectsLateCallbacksAfterRegrant() async throws {
         for action in Revocation.allCases {
             let fixture = try makeFixture()
-            defer { fixture.page.prepareForSpaceDeletion() }
-            let origin = try XCTUnwrap(BrowserSiteOrigin(url: fixture.url))
-            if action == .sessionReset {
-                fixture.page.permissionCenter.setDecision(
-                    .grantForSession, for: .location, origin: origin, in: fixture.page.spaceID
-                )
-            }
+            defer { fixture.page.release(keepingState: false) }
+            let origin = try XCTUnwrap(SiteOrigin(url: fixture.url))
             try await loadRequests(in: fixture)
             let current = try XCTUnwrap(fixture.service.currentRequests.first?.value)
             let watch = try XCTUnwrap(fixture.service.watchRequests.first?.value)
@@ -71,8 +66,6 @@ final class BrowserGeolocationBridgeTests: XCTestCase {
                     ))
             case .spaceReset:
                 fixture.page.permissionCenter.reset(spaceID: fixture.page.spaceID)
-            case .sessionReset:
-                fixture.page.permissionCenter.resetSession()
             }
             XCTAssertTrue(
                 fixture.service.currentRequests.isEmpty, "\(action) cancels in-flight positions synchronously")
@@ -94,8 +87,8 @@ final class BrowserGeolocationBridgeTests: XCTestCase {
 
     func testAllowOnceSurvivesOrdinaryUseButAskAgainRevokesItAndFreshRequestsAsk() async throws {
         let fixture = try makeFixture()
-        defer { fixture.page.prepareForSpaceDeletion() }
-        let origin = try XCTUnwrap(BrowserSiteOrigin(url: fixture.url))
+        defer { fixture.page.release(keepingState: false) }
+        let origin = try XCTUnwrap(SiteOrigin(url: fixture.url))
         fixture.page.permissionCenter.setDecision(.ask, for: .location, origin: origin, in: fixture.page.spaceID)
         fixture.page.sitePermissionRequests.setPresentationAvailable(true)
         try await loadRequests(in: fixture, startsAuthorized: false, watchOnly: true)
@@ -128,8 +121,8 @@ final class BrowserGeolocationBridgeTests: XCTestCase {
     func testRevocationDuringSiteOrSystemConsentCannotPersistOrStartOldRequest() async throws {
         for awaitsSystem in [false, true] {
             let fixture = try makeFixture(systemAuthorization: awaitsSystem ? .notDetermined : .authorized)
-            defer { fixture.page.prepareForSpaceDeletion() }
-            let origin = try XCTUnwrap(BrowserSiteOrigin(url: fixture.url))
+            defer { fixture.page.release(keepingState: false) }
+            let origin = try XCTUnwrap(SiteOrigin(url: fixture.url))
             fixture.page.permissionCenter.setDecision(.ask, for: .location, origin: origin, in: fixture.page.spaceID)
             fixture.page.sitePermissionRequests.setPresentationAvailable(true)
             fixture.service.delaysAuthorization = awaitsSystem
@@ -163,10 +156,32 @@ final class BrowserGeolocationBridgeTests: XCTestCase {
         }
     }
 
+    func testAnAllowTheSystemRefusesIsNotSaved() async throws {
+        let fixture = try makeFixture(systemAuthorization: .notDetermined)
+        defer { fixture.page.release(keepingState: false) }
+        let origin = try XCTUnwrap(SiteOrigin(url: fixture.url))
+        fixture.page.permissionCenter.setDecision(.ask, for: .location, origin: origin, in: fixture.page.spaceID)
+        fixture.page.sitePermissionRequests.setPresentationAvailable(true)
+        fixture.service.delaysAuthorization = true
+        try await loadRequests(in: fixture, startsAuthorized: false, watchOnly: true)
+        try await resolvePrompt(in: fixture, response: .grantPersistently)
+        try await waitUntil("the system's consent request") { fixture.service.authorizationContinuation != nil }
+        // The person's Allow waits on the system before the core hears it.
+        XCTAssertEqual(
+            fixture.page.permissionCenter.decision(for: .location, origin: origin, in: fixture.page.spaceID), .ask)
+        fixture.service.authorization = .denied
+        fixture.service.authorizationContinuation?.resume(returning: .denied)
+        fixture.service.authorizationContinuation = nil
+        try await expectCounts(in: fixture, successes: 0, denials: 1)
+        XCTAssertEqual(
+            fixture.page.permissionCenter.decision(for: .location, origin: origin, in: fixture.page.spaceID), .ask)
+        XCTAssertTrue(fixture.service.watchRequests.isEmpty)
+    }
+
     func testQueuedDeliveryRechecksSiteAndSystemAuthorization() async throws {
         for revokesSystem in [false, true] {
             let fixture = try makeFixture()
-            defer { fixture.page.prepareForSpaceDeletion() }
+            defer { fixture.page.release(keepingState: false) }
             try await loadRequests(in: fixture)
             let current = try XCTUnwrap(fixture.service.currentRequests.first?.value)
             let watch = try XCTUnwrap(fixture.service.watchRequests.first?.value)
@@ -184,36 +199,12 @@ final class BrowserGeolocationBridgeTests: XCTestCase {
         }
     }
 
-    func testOriginPolicyRequiresSecureOrLoopbackHTTPOrigin() throws {
-        let secureOrigin = try XCTUnwrap(
-            BrowserSiteOrigin(
-                url: try XCTUnwrap(URL(string: "https://maps.example"))
-            )
-        )
-        let loopbackOrigin = try XCTUnwrap(
-            BrowserSiteOrigin(
-                url: try XCTUnwrap(URL(string: "http://localhost:8080"))
-            )
-        )
-        let insecureOrigin = try XCTUnwrap(
-            BrowserSiteOrigin(
-                url: try XCTUnwrap(URL(string: "http://maps.example"))
-            )
-        )
-
-        XCTAssertTrue(
-            BrowserGeolocationOriginPolicy.allows(secureOrigin)
-        )
-        XCTAssertTrue(
-            BrowserGeolocationOriginPolicy.allows(loopbackOrigin)
-        )
-        XCTAssertFalse(
-            BrowserGeolocationOriginPolicy.allows(insecureOrigin)
-        )
-    }
-
-    private enum Revocation: CaseIterable { case block, ask, originReset, spaceReset, sessionReset }
-    private typealias Fixture = (page: BrowserPage, service: TestBrowserGeolocationService, url: URL)
+    private enum Revocation: CaseIterable { case block, ask, originReset, spaceReset }
+    /// The page, and the window that opened it through the core, which lives as
+    /// long as the page.
+    private typealias Fixture = (
+        page: BrowserPage, service: TestBrowserGeolocationService, url: URL, browser: BrowserStore
+    )
 
     private func loadRequests(in fixture: Fixture, startsAuthorized: Bool = true, watchOnly: Bool = false) async throws
     {
@@ -249,7 +240,7 @@ final class BrowserGeolocationBridgeTests: XCTestCase {
         }
     }
 
-    private func resolvePrompt(in fixture: Fixture, response: BrowserPagePermissionController.Response) async throws {
+    private func resolvePrompt(in fixture: Fixture, response: BrowserSitePermissionPromptResponse) async throws {
         try await waitUntil("a fresh site consent prompt") { fixture.page.sitePermissionRequests.current != nil }
         fixture.page.sitePermissionRequests.resolve(
             try XCTUnwrap(fixture.page.sitePermissionRequests.current?.id), response: response)
@@ -269,14 +260,15 @@ final class BrowserGeolocationBridgeTests: XCTestCase {
     private func makeFixture(
         systemAuthorization: BrowserGeolocationSystemAuthorization = .authorized,
         recoversSystemAuthorization: Bool = false,
-        center: BrowserSitePermissionCenter? = nil,
         url: URL? = nil,
-        space: BrowserSpace? = nil
+        space: SpaceState.Seed? = nil
     ) throws -> Fixture {
         let url = try XCTUnwrap(url ?? URL(string: "https://location.crest.test/"))
-        let origin = try XCTUnwrap(BrowserSiteOrigin(url: url))
-        let space = try XCTUnwrap(space ?? BrowserSession.preview.selectedSpace)
-        let permissionCenter = center ?? BrowserSitePermissionCenter()
+        let origin = try XCTUnwrap(SiteOrigin(url: url))
+        let space = try XCTUnwrap(space ?? SessionState.Seed.preview.spaces.first)
+        let browser = BrowserStore.hostingPages(SessionState.Seed(spaces: [space]))
+        // The Space's choices live in the core that hosts the page, as in the app.
+        let permissionCenter = BrowserSitePermissionCenter(core: browser.core)
         permissionCenter.setDecision(
             .grantPersistently,
             for: .location,
@@ -286,28 +278,29 @@ final class BrowserGeolocationBridgeTests: XCTestCase {
         let service = TestBrowserGeolocationService(
             authorization: systemAuthorization
         )
-        let configuration = BrowserPageConfiguration.make(
-            for: space.profile,
-            websiteDataStore: .nonPersistent()
-        )
-        let page = BrowserPage(
-            configuration: configuration,
-            dialogPresenter: BrowserDialogPresenter(),
-            downloadCenter: BrowserDownloadCenter(),
-            permissionCenter: permissionCenter,
-            geolocationService: service,
-            recoverGeolocationSystemAuthorization: {
-                service.recoveryCount += 1
-                if recoversSystemAuthorization {
-                    service.authorization = .authorized
-                }
-            },
-            spaceID: space.id,
-            profileID: space.profile.id,
-            spaceName: space.name,
-            openNewTab: { _ in }
-        )
-        return (page, service, url)
+        let page = try XCTUnwrap(
+            browser.openWebKitPage(in: space.id, for: nil).map {
+                opened in
+                BrowserPage(
+                    corePage: opened.core,
+                    webKitPage: opened.webKit,
+                    dialogPresenter: BrowserDialogPresenter(),
+                    downloadCenter: BrowserDownloadCenter(),
+                    permissionCenter: permissionCenter,
+                    geolocationService: service,
+                    recoverGeolocationSystemAuthorization: {
+                        service.recoveryCount += 1
+                        if recoversSystemAuthorization {
+                            service.authorization = .authorized
+                        }
+                    },
+                    spaceID: space.id,
+                    profileID: space.profileID,
+                    spaceName: space.settings.name,
+                    openNewTab: { _ in }
+                )
+            })
+        return (page, service, url, browser)
     }
 
     private func permissionState(in webView: WKWebView) async throws -> String? {

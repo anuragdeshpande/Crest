@@ -31,12 +31,13 @@ final class MobileCommandPaletteEditingTests: XCTestCase {
         }
     }
 
-    func testNativeFieldAcceptsCompletionWithoutNavigationAndProvidesTabAction() throws {
+    func testNativeFieldAcceptsCompletionWithoutNavigationAndProvidesTabAction() async throws {
         for presentation in [BrowserCommandPalettePresentation.embedded, .overlay] {
             let fixture = makeEditor(presentation: presentation)
             let field = fixture.field
             field.insertText("exa")
             fixture.coordinator.editingChanged()
+            await fixture.model.waitForPendingResults()
             XCTAssertEqual(field.text, "exa")
             XCTAssertEqual(fixture.model.urlCompletion?.completedQuery, "example.com/path")
             XCTAssertEqual(field.accessibilityLabel, "Command Palette")
@@ -54,12 +55,13 @@ final class MobileCommandPaletteEditingTests: XCTestCase {
         }
     }
 
-    func testNativeSelectionAndMarkedTextSuppressCompletion() throws {
+    func testNativeSelectionAndMarkedTextSuppressCompletion() async throws {
         for presentation in [BrowserCommandPalettePresentation.embedded, .overlay] {
             let fixture = makeEditor(presentation: presentation)
             let field = fixture.field
             field.insertText("exa")
             fixture.coordinator.editingChanged()
+            await fixture.model.waitForPendingResults()
             field.selectedTextRange = field.textRange(from: field.beginningOfDocument, to: field.endOfDocument)
             fixture.coordinator.editingChanged()
             XCTAssertNil(fixture.model.urlCompletion)
@@ -85,12 +87,14 @@ final class MobileCommandPaletteEditingTests: XCTestCase {
         field: BrowserPlatformCommandPaletteField.CompletionField,
         coordinator: BrowserPlatformCommandPaletteField.Coordinator, model: BrowserCommandPaletteModel
     ) {
-        let tab = BrowserTab(title: "Example", url: URL(string: "https://example.com/path"), placement: .current)
-        let space = BrowserSpace(
-            id: SpaceID(), profile: BrowsingProfile(), name: "Test", symbol: "globe", accent: .indigo, folders: [],
-            tabs: [tab], selectedTabID: tab.id)
+        let tab = TabState.Seed(title: "Example", url: URL(string: "https://example.com/path"), placement: .current)
+        let space = SpaceState.Seed(name: "Test", symbol: "globe", accent: .indigo, tabs: [tab])
+        let browser = BrowserStore(
+            seed: SessionState.Seed(spaces: [space]), showing: space.id, tabs: [space.id: tab.id])
         let model = BrowserCommandPaletteModel(
-            space: space, selectedTabID: tab.id, initialQuery: "", commands: nil, isSourceAvailable: { _ in true },
+            browser: browser, space: browser.spaceModel(space.id), selectedTabID: tab.id, initialQuery: "",
+            commands: nil,
+            isSourceAvailable: { _ in true },
             selectTab: { _, _ in
                 XCTFail("Unexpected navigation")
                 return false

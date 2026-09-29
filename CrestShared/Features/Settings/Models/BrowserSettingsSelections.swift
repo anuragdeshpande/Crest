@@ -5,10 +5,8 @@ import SwiftUI
 /// stay with their pane and must be checked again when it is mounted.
 @Observable @MainActor
 final class BrowserSettingsSelections {
-    var privacySpaceID: SpaceID?
-    var passwordSpaceID: SpaceID?
-    var extensionSpaceID: SpaceID?
-    var extensionRouteRevision = 0
+    var privacySpaceID: UUID?
+    var passwordSpaceID: UUID?
 }
 
 private struct BrowserSettingsSelectionsKey: EnvironmentKey {

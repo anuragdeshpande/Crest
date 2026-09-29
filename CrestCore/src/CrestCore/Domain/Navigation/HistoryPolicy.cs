@@ -1,0 +1,53 @@
+using CrestCore.Contracts;
+
+namespace CrestCore.Domain;
+
+public static class HistoryPolicy {
+    #region Variables
+
+    public const int MaximumEntries = 5000;
+
+    #endregion
+
+    #region Actions - Navigation
+
+    /// A newest-first history after a visit to `url`, capped at
+    /// `MaximumEntries`: the page's entry, with one more visit, goes first, and
+    /// a new entry takes `newId`. Null for an address history does not keep,
+    /// which leaves it as it was.
+    public static IReadOnlyList<HistoryEntryState>? Visit(IReadOnlyList<HistoryEntryState> history, string url, string? title,
+        DateTimeOffset now, Guid newId) => Visit(history, url, title, now, newId, MaximumEntries);
+
+    /// A visit to a history that keeps at most `limit` entries.
+    internal static IReadOnlyList<HistoryEntryState>? Visit(IReadOnlyList<HistoryEntryState> history, string url, string? title,
+        DateTimeOffset now, Guid newId, int limit) {
+        ArgumentNullException.ThrowIfNull(history);
+        if (new WebAddress(url).Normalized is not { } normalized) return null;
+        var previous = AddressIndex.Of(history).Entry(normalized);
+#if CREST_CROSS_CHECKS
+        if (previous != history.FirstOrDefault(entry => entry.Url == normalized))
+            throw new System.Diagnostics.UnreachableException("The address index names another entry than the history's newest for the address.");
+#endif
+        var visit = Record(normalized, title, now, newId, previous);
+        var visited = new List<HistoryEntryState>(Math.Min(history.Count + 1, limit)) { visit };
+        List<HistoryEntryState> dropped = [];
+        foreach (var entry in history) {
+            if (entry.Id == visit.Id) continue;
+            if (visited.Count == limit) dropped.Add(entry);
+            else visited.Add(entry);
+        }
+        AddressIndex.Visited(history, visited, visit, previous, dropped);
+        return visited;
+    }
+
+    public static HistoryEntryState Record(string normalizedUrl, string? title, DateTimeOffset now, Guid newId, HistoryEntryState? previous) {
+        if (new WebAddress(normalizedUrl).Normalized != normalizedUrl || newId == Guid.Empty
+            || previous is not null && previous.Url != normalizedUrl) throw new BrowserRuleException(BrowserRuleCodes.InvalidHistoryVisit);
+        string resolvedTitle = string.IsNullOrEmpty(title) ? new Uri(normalizedUrl).Host : title;
+        if (resolvedTitle.Length == 0) resolvedTitle = normalizedUrl;
+        return previous is null ? new(newId, normalizedUrl, resolvedTitle, now, now, 1)
+            : previous with { Title = resolvedTitle, LastVisitedAt = now, VisitCount = checked(previous.VisitCount + 1) };
+    }
+
+    #endregion
+}

@@ -40,7 +40,7 @@ struct MobileBrowserSidebarTopChrome: View {
                     searchText: configuration.context.utilitySearchText,
                     filter: configuration.context.utilityFilter,
                     morphNamespace: configuration.compactChromeNamespace,
-                    morphID: morphID,
+                    morph: .utilitySearch(spaceID: selectedSpaceID),
                     clearHistory: confirmClearHistory
                 )
                 .padding(.horizontal, 12)
@@ -71,7 +71,7 @@ struct MobileBrowserSidebarTopChrome: View {
             GlassEffectContainer(spacing: 0) {
                 MobileCompactNewTabPrompt(
                     namespace: configuration.compactChromeNamespace,
-                    geometryID: configuration.context.browser.session
+                    geometryID: configuration.context.browser
                         .selectedSpaceID,
                     transitionEnded: configuration.compactTransitionEnded,
                     openNewTab: configuration.openNewTab
@@ -91,14 +91,15 @@ struct MobileBrowserSidebarTopChrome: View {
             isEditing: configuration.isAddressEditing,
             isSecure: displayedURL?.scheme?.lowercased() == "https",
             progress: selectedPageActions?.activePage?.estimatedProgress ?? 0,
-            isLoading: selectedPageActions?.activePage?.isLoading == true,
+            isLoading: selectedPageActions?.activePage?.live.isLoading == true,
             hasResidentPage: false,
             capabilities: configuration.context.capabilities,
             activate: configuration.activateAddress,
             submit: configuration.submitAddress,
             morphNamespace: configuration.compactChromeNamespace,
-            morphID: morphID,
-            branding: configuration.context.browser.selectedSpace?.branding
+            spaceID: selectedSpaceID,
+            commandPaletteHandoff: configuration.commandPaletteHandoff,
+            branding: configuration.context.browser.shownSpace.map(\.settings.look)
         )
     }
 
@@ -112,17 +113,19 @@ struct MobileBrowserSidebarTopChrome: View {
 
     private var displayedURL: URL? {
         selectedPageActions?.activeURL
-            ?? configuration.context.browser.selectedTab?.url
+            ?? configuration.context.browser.shownTab?.url.flatMap(URL.init(string:))
     }
 
-    private var morphID: String {
-        "crest-address-command-\(configuration.context.browser.session.selectedSpaceID)"
+    /// The chrome sits above the pager, so the field and the toolbar belong
+    /// to the selected Space.
+    private var selectedSpaceID: UUID {
+        configuration.context.browser.selectedSpaceID
     }
 
     /// The toolbar sits above the pager, so the Space it clears is the selected
     /// one. The root refuses the request unless that Space is still reachable.
     private func confirmClearHistory() {
-        guard let space = configuration.context.browser.selectedSpace else {
+        guard let space = configuration.context.browser.shownSpace else {
             return
         }
         configuration.context.confirmClearHistory(space)

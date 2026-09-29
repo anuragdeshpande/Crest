@@ -1,94 +1,58 @@
-import Combine
 import Foundation
 import Observation
-import WebKit
+import os
 
+/// Crest's downloads for one browsing mode: the core's download records, the
+/// feedback they present, and native data saves. Every record change is an
+/// intent sent to the core; engines report their own downloads to the core,
+/// which records them and hands the person's row actions back to the engine.
 @Observable
 @MainActor
 final class BrowserDownloadCenter: NSObject {
-    private struct AutomaticDownloadScope: Hashable {
-        let webViewID: ObjectIdentifier
-        let origin: BrowserSiteOrigin
-        let spaceID: SpaceID
-    }
+    // MARK: - Types
 
-    typealias CredentialPromptHandler =
-        @MainActor (
-            BrowserHTTPAuthenticationPrompt,
-            String
-        ) async -> BrowserHTTPAuthenticationPromptResponse?
-
-    typealias CredentialLoader =
-        @MainActor (
-            BrowserHTTPAuthenticationProtectionSpace,
-            SpaceID
-        ) async throws -> BrowserCredential?
-
-    typealias CredentialSaver =
-        @MainActor (
-            BrowserHTTPAuthenticationSaveRequest,
-            SpaceID
-        ) async throws -> Void
-
+    /// Asks the person to approve a risky download: its assessment, source,
+    /// Space name and profile.
     typealias RiskApprovalHandler =
         @MainActor (
-            BrowserDownloadRiskAssessment,
+            DownloadRiskAssessment,
             URL?,
-            String
+            String,
+            UUID
         ) async -> Bool
 
     typealias DownloadDestinationResolver =
         @MainActor (
             String,
-            SpaceID,
+            UUID,
             Bool
         ) async -> BrowserPlatformDownloadResolution
 
-    private(set) var ledger = BrowserDownloadLedger()
+    // MARK: - Variables
+
+    private static let logger = Logger(subsystem: "com.pauldavis.crest", category: "Downloads")
+
+    /// The core whose read model holds the download records. Views observe
+    /// its records directly.
+    let core: CrestCore
     private(set) var feedbackEvents: [BrowserDownloadFeedbackEvent] = []
 
-    @ObservationIgnored private var downloads: [ObjectIdentifier: WKDownload] = [:]
-    @ObservationIgnored private var itemIDs: [ObjectIdentifier: UUID] = [:]
-    @ObservationIgnored private var progressObservations: [ObjectIdentifier: AnyCancellable] = [:]
-    @ObservationIgnored private var transferEstimators: [ObjectIdentifier: BrowserDownloadTransferEstimator] = [:]
+    var items: [DownloadState] {
+        core.state.downloads
+    }
+
+    @ObservationIgnored let permissionCenter: BrowserSitePermissionCenter
+    @ObservationIgnored let approveRiskyDownload: RiskApprovalHandler
+    @ObservationIgnored let resolveDownloadDestination: DownloadDestinationResolver
     @ObservationIgnored private var feedbackExpirationTasks: [UUID: Task<Void, Never>] = [:]
-    @ObservationIgnored private var stagingURLs: [ObjectIdentifier: URL] = [:]
-    @ObservationIgnored private var destinationURLs: [ObjectIdentifier: URL] = [:]
-    @ObservationIgnored private var securityScopedResources: [ObjectIdentifier: URL] = [:]
-    @ObservationIgnored private var spaceNames: [ObjectIdentifier: String] = [:]
-    @ObservationIgnored private var spaceIDs: [ObjectIdentifier: SpaceID] = [:]
-    @ObservationIgnored private var sourceOrigins: [ObjectIdentifier: BrowserSiteOrigin] = [:]
-    @ObservationIgnored private var permissionRequests:
-        [ObjectIdentifier: (controller: BrowserPagePermissionController, generation: UUID)] = [:]
-    @ObservationIgnored private var sourceWebViewIDs: [ObjectIdentifier: ObjectIdentifier] = [:]
-    @ObservationIgnored private var automaticDownloadSequences:
-        [AutomaticDownloadScope: BrowserAutomaticDownloadSequence] = [:]
-    @ObservationIgnored private var approvedRetryKeys: Set<ObjectIdentifier> = []
-    @ObservationIgnored private var userInitiatedOverrideKeys: Set<ObjectIdentifier> = []
-    @ObservationIgnored private var requestedFilenames: [ObjectIdentifier: String] = [:]
-    @ObservationIgnored private var forceDestinationPromptKeys: Set<ObjectIdentifier> = []
-    @ObservationIgnored private var nextExtensionDownloadID = 1
-    @ObservationIgnored private var retryContexts: [UUID: BrowserDownloadRetryContext] = [:]
-    @ObservationIgnored private var retryLeases: [UUID: BrowserDownloadRetryLease] = [:]
     @ObservationIgnored private var dataSaveAssignments: [UUID: BrowserSpaceRuntimeAssignment] = [:]
-    @ObservationIgnored private var authenticationSessions: [ObjectIdentifier: BrowserHTTPAuthenticationSession] = [:]
     @ObservationIgnored private var lastRetentionSweepAt: Date?
-    @ObservationIgnored private let promptForCredentials: CredentialPromptHandler
-    @ObservationIgnored private let loadCredential: CredentialLoader
-    @ObservationIgnored private let saveCredential: CredentialSaver
-    @ObservationIgnored private let allowsAnyCredentialSaving: Bool
-    @ObservationIgnored private var credentialAccessBySpaceID: [SpaceID: Bool] = [:]
-    @ObservationIgnored private let approveRiskyDownload: RiskApprovalHandler
-    @ObservationIgnored private let permissionCenter: BrowserSitePermissionCenter
-    @ObservationIgnored private let resolveDownloadDestination: DownloadDestinationResolver
+
+    // MARK: - Initializers
 
     init(
-        ledger: BrowserDownloadLedger = BrowserDownloadLedger(),
-        promptForCredentials: @escaping CredentialPromptHandler = { _, _ in nil },
-        allowsCredentialSaving: Bool = true,
-        loadCredential: @escaping CredentialLoader = { _, _ in nil },
-        saveCredential: @escaping CredentialSaver = { _, _ in },
-        approveRiskyDownload: @escaping RiskApprovalHandler = { _, _, _ in false },
+        core: CrestCore = CrestCore(),
+        approveRiskyDownload: @escaping RiskApprovalHandler = { _, _, _, _ in false },
         permissionCenter: BrowserSitePermissionCenter = BrowserSitePermissionCenter(),
         resolveDownloadDestination:
             @escaping DownloadDestinationResolver = {
@@ -102,52 +66,81 @@ final class BrowserDownloadCenter: NSObject {
                 )
             }
     ) {
-        self.ledger = ledger
-        self.promptForCredentials = promptForCredentials
-        allowsAnyCredentialSaving = allowsCredentialSaving
-        self.loadCredential = loadCredential
-        self.saveCredential = saveCredential
+        self.core = core
         self.approveRiskyDownload = approveRiskyDownload
         self.permissionCenter = permissionCenter
         self.resolveDownloadDestination = resolveDownloadDestination
         super.init()
     }
 
-    var items: [BrowserDownloadItem] {
-        ledger.items
+    // MARK: - Actions - Records
+
+    func items(for profileID: UUID) -> [DownloadState] {
+        items.filter { $0.profileID == profileID }
     }
 
-    func setCredentialAccessEnabled(_ isEnabled: Bool, in spaceID: SpaceID) {
-        credentialAccessBySpaceID[spaceID] = isEnabled
-        for (key, session) in authenticationSessions where spaceIDs[key] == spaceID {
-            session.setCredentialStorageEnabled(
-                allowsAnyCredentialSaving && isEnabled
+    func unacknowledgedItems(for profileID: UUID) -> [DownloadState] {
+        items.filter { $0.profileID == profileID && !$0.isAcknowledged }
+    }
+
+    func item(_ itemID: UUID) -> DownloadState? {
+        items.first { $0.id == itemID }
+    }
+
+    /// Sends one download intent. A refused intent changes nothing; the rule
+    /// it broke is logged, since it means an engine reported something the
+    /// core cannot record.
+    func send(_ intent: some Intent) {
+        do {
+            try core.send(intent)
+        } catch {
+            Self.logger.error(
+                "The core refused \(String(describing: type(of: intent)), privacy: .public): \(DiagnosticLog.describe(error), privacy: .public)"
             )
         }
     }
 
-    func isCredentialAccessEnabled(in spaceID: SpaceID) -> Bool {
-        allowsAnyCredentialSaving && (credentialAccessBySpaceID[spaceID] ?? true)
+    /// Begins a new record and returns its identity.
+    func begin(profileID: UUID, filename: String, createdAt: Date = .now, isAcknowledged: Bool = false) -> UUID {
+        let itemID = UUID()
+        send(
+            BeginDownload(
+                downloadID: itemID, profileID: profileID, filename: filename, createdAt: createdAt,
+                isAcknowledged: isAcknowledged))
+        return itemID
     }
 
-    func items(for profileID: UUID) -> [BrowserDownloadItem] {
-        ledger.items(for: profileID)
+    /// The destination names the file, so the record's filename follows it.
+    func setDestination(_ destination: URL, for itemID: UUID) {
+        send(
+            SetDownloadDestination(
+                downloadID: itemID, destination: destination.absoluteString, filename: destination.lastPathComponent))
     }
 
-    func unacknowledgedItems(for profileID: UUID) -> [BrowserDownloadItem] {
-        ledger.unacknowledgedItems(for: profileID)
+    /// The core's risk verdict for a download. A download the core cannot
+    /// judge asks the person first rather than passing as safe.
+    func riskVerdict(suggestedFilename: String, mimeType: String?, isUserInitiated: Bool) -> DownloadRiskVerdict {
+        let facts = DownloadRiskFacts(suggestedFilename: suggestedFilename, mimeType: mimeType)
+        do {
+            return try core.query(DownloadRisk(facts: facts, isUserInitiated: isUserInitiated))
+        } catch {
+            return DownloadRiskVerdict(
+                assessment: DownloadRiskAssessment(sanitizedFilename: facts.sanitizedFilename, reasons: []),
+                requiresConfirmation: true)
+        }
     }
 
     @discardableResult
     func acknowledgeItems(for profileID: UUID) -> Int {
-        ledger.acknowledgeItems(for: profileID)
+        (try? core.send(AcknowledgeDownloads(profileID: profileID)))?.count ?? 0
     }
 
-    /// Removes only Crest's terminal download records. Files already written to
-    /// their destination remain untouched.
+    /// Removes only Crest's terminal download records, under the retention of
+    /// each of `spaces`. Files already written to their destination remain
+    /// untouched.
     @discardableResult
     func sweepExpiredRecords(
-        using session: BrowserSession,
+        in spaces: [SpaceModel],
         now: Date = .now,
         force: Bool = false
     ) -> Bool {
@@ -161,156 +154,55 @@ final class BrowserDownloadCenter: NSObject {
             return false
         }
         lastRetentionSweepAt = now
-        let retentionByProfileID = session.spaces.reduce(
-            into: [UUID: BrowserDataRetentionDuration]()
-        ) { policies, space in
-            let proposed = space.browsingPreferences.dataRetention.downloads
-            guard let existing = policies[space.profile.id] else {
-                policies[space.profile.id] = proposed
-                return
-            }
-            policies[space.profile.id] = Self.shorter(existing, proposed)
-        }
-        let removedItemIDs = ledger.removeExpiredRecords(
-            retentionByProfileID: retentionByProfileID,
-            now: now
-        )
-        for itemID in removedItemIDs {
-            retryContexts.removeValue(forKey: itemID)
-            retryLeases.removeValue(forKey: itemID)
-        }
+        let expiry = ExpireDownloads(
+            now: now,
+            retentions: spaces.map {
+                DownloadRetention(
+                    profileID: $0.profileID,
+                    lifetime: $0.settings.browsingPreferences.dataRetention.downloads.lifetime)
+            })
+        _ = try? core.send(expiry)
         return true
     }
 
+    /// Cancels a live download. The core cancels one an engine runs on its
+    /// engine too.
     func cancel(_ itemID: UUID) {
-        if dataSaveAssignments.removeValue(forKey: itemID) != nil {
-            ledger.cancel(itemID, message: "Canceled.")
-            return
-        }
-        if retryLeases.removeValue(forKey: itemID) != nil {
-            ledger.cancel(itemID, message: "Canceled.")
-            return
-        }
-        guard let entry = itemIDs.first(where: { $0.value == itemID }),
-            let download = downloads[entry.key]
-        else { return }
-        download.cancel { _ in }
-        removeStagingFile(for: entry.key)
-        ledger.cancel(itemID, message: "Canceled.")
-        release(download)
+        dataSaveAssignments.removeValue(forKey: itemID)
+        if item(itemID)?.phase.isLive == true { send(CancelDownload(downloadID: itemID, message: "Canceled.")) }
     }
 
+    /// Clears a record whose download ended. One an engine ran also leaves the
+    /// engine's own list.
     func clear(_ itemID: UUID) {
-        guard !itemIDs.values.contains(itemID), dataSaveAssignments[itemID] == nil else { return }
-        ledger.remove(itemID)
-        retryContexts.removeValue(forKey: itemID)
-        retryLeases.removeValue(forKey: itemID)
+        guard item(itemID)?.phase.isLive != true, dataSaveAssignments[itemID] == nil else { return }
+        send(RemoveDownload(downloadID: itemID))
     }
 
-    func deleteRecords(profileID: UUID, spaceID: SpaceID) {
-        dataSaveAssignments = dataSaveAssignments.filter {
-            $0.value != BrowserSpaceRuntimeAssignment(spaceID: spaceID, profileID: profileID)
-        }
-        let activeKeys = spaceIDs.compactMap { key, owningSpaceID in
-            owningSpaceID == spaceID ? key : nil
-        }
-        for key in activeKeys {
-            guard let download = downloads[key] else { continue }
-            download.cancel { _ in }
-            removeStagingFile(for: key)
-            release(download)
-        }
-        ledger.removeAll(for: profileID)
-        retryContexts = retryContexts.filter { _, context in
-            context.assignment.profileID != profileID
-                || context.assignment.spaceID != spaceID
-        }
-        retryLeases = retryLeases.filter { _, lease in
-            lease.assignment.profileID != profileID
-                || lease.assignment.spaceID != spaceID
-        }
-        automaticDownloadSequences = automaticDownloadSequences.filter {
-            $0.key.spaceID != spaceID
-        }
+    /// Deletes a Space's records. The core cancels and removes the downloads
+    /// its profile's engines still run.
+    func deleteRecords(profileID: UUID, spaceID: UUID) {
+        let assignment = BrowserSpaceRuntimeAssignment(spaceID: spaceID, profileID: profileID)
+        dataSaveAssignments = dataSaveAssignments.filter { $0.value != assignment }
+        send(RemoveProfileDownloads(profileID: profileID))
     }
 
-    func resetAutomaticDownloadSequence(in webView: WKWebView) {
-        let webViewID = ObjectIdentifier(webView)
-        automaticDownloadSequences = automaticDownloadSequences.filter {
-            $0.key.webViewID != webViewID
-        }
+    /// Retries a download the site's choices blocked, while its Space is
+    /// still there to hold it: the core has its engine replay it.
+    @discardableResult
+    func retryAutomaticDownload(
+        _ itemID: UUID,
+        matching assignment: BrowserSpaceRuntimeAssignment,
+        isAssignmentAvailable: @MainActor (BrowserSpaceRuntimeAssignment) -> Bool
+    ) -> Bool {
+        guard let item = item(itemID), item.profileID == assignment.profileID, item.phase.canRetry,
+            isAssignmentAvailable(assignment)
+        else { return false }
+        send(RestartDownload(downloadID: itemID))
+        return true
     }
 
-    private static func shorter(
-        _ lhs: BrowserDataRetentionDuration,
-        _ rhs: BrowserDataRetentionDuration
-    ) -> BrowserDataRetentionDuration {
-        switch (lhs.lifetime, rhs.lifetime) {
-        case (nil, nil): lhs
-        case (nil, _): rhs
-        case (_, nil): lhs
-        case (let lhsLifetime?, let rhsLifetime?):
-            lhsLifetime <= rhsLifetime ? lhs : rhs
-        }
-    }
-
-    func start(
-        _ download: WKDownload,
-        in webView: WKWebView,
-        profileID: UUID,
-        spaceID: SpaceID,
-        spaceName: String,
-        isUserInitiated: Bool? = nil,
-        feedbackSource: BrowserDownloadFeedbackSource? = nil,
-        suggestedFilenameOverride: String? = nil,
-        forcesDestinationPrompt: Bool = false
-    ) {
-        guard downloads[ObjectIdentifier(download)] == nil else { return }
-        let requestedFilename =
-            suggestedFilenameOverride
-            ?? download.originalRequest?.url?.lastPathComponent
-        let filename = requestedFilename.flatMap { $0.isEmpty ? nil : $0 } ?? "download"
-        let itemID = ledger.begin(profileID: profileID, filename: filename)
-        #if os(macOS)
-            let feedbackSource = BrowserMacDownloadFeedbackSource.capture(in: webView) ?? feedbackSource
-        #endif
-        if let feedbackSource {
-            presentFeedback(
-                BrowserDownloadFeedbackEvent(
-                    id: itemID,
-                    profileID: profileID,
-                    spaceID: spaceID,
-                    filename: filename,
-                    source: feedbackSource
-                )
-            )
-        }
-        if let originalRequest = download.originalRequest,
-            let request = BrowserDownloadRetryRequestPolicy.replayableRequest(
-                from: originalRequest
-            )
-        {
-            retryContexts[itemID] = BrowserDownloadRetryContext(
-                webView: webView,
-                request: request,
-                profileID: profileID,
-                spaceID: spaceID,
-                spaceName: spaceName
-            )
-        }
-        register(
-            download,
-            itemID: itemID,
-            profileID: profileID,
-            spaceID: spaceID,
-            spaceName: spaceName,
-            sourceWebView: webView,
-            isUserApprovedRetry: false,
-            isUserInitiatedOverride: isUserInitiated,
-            suggestedFilenameOverride: suggestedFilenameOverride,
-            forcesDestinationPrompt: forcesDestinationPrompt
-        )
-    }
+    // MARK: - Actions - Native data saves
 
     /// Saves bytes supplied by a trusted native user action, such as WebKit's
     /// PDF toolbar. No network request or automatic-download permission is
@@ -325,10 +217,10 @@ final class BrowserDownloadCenter: NSObject {
         spaceName: String,
         feedbackSource: BrowserDownloadFeedbackSource? = nil
     ) async -> UUID {
-        let assessment = BrowserDownloadRiskAssessment.assess(
-            suggestedFilename: suggestedFilename, mimeType: mimeType)
-        let itemID = ledger.begin(profileID: assignment.profileID, filename: assessment.sanitizedFilename)
-        ledger.setRiskAssessment(assessment, for: itemID)
+        let verdict = riskVerdict(suggestedFilename: suggestedFilename, mimeType: mimeType, isUserInitiated: true)
+        let assessment = verdict.assessment
+        let itemID = begin(profileID: assignment.profileID, filename: assessment.sanitizedFilename)
+        send(AssessDownloadRisk(downloadID: itemID, assessment: assessment))
         dataSaveAssignments[itemID] = assignment
         if let feedbackSource {
             presentFeedback(
@@ -337,7 +229,7 @@ final class BrowserDownloadCenter: NSObject {
                     filename: assessment.sanitizedFilename, source: feedbackSource))
         }
         await finishSavingData(
-            data, itemID: itemID, assessment: assessment, originatingURL: originatingURL,
+            data, itemID: itemID, verdict: verdict, originatingURL: originatingURL,
             assignment: assignment, spaceName: spaceName)
         return itemID
     }
@@ -345,18 +237,21 @@ final class BrowserDownloadCenter: NSObject {
     private func finishSavingData(
         _ data: Data,
         itemID: UUID,
-        assessment: BrowserDownloadRiskAssessment,
+        verdict: DownloadRiskVerdict,
         originatingURL: URL,
         assignment: BrowserSpaceRuntimeAssignment,
         spaceName: String
     ) async {
         defer { dataSaveAssignments.removeValue(forKey: itemID) }
         guard dataSaveAssignments[itemID] == assignment else { return }
-        if assessment.requiresConfirmation(isUserInitiated: true) {
-            let approved = await approveRiskyDownload(assessment, originatingURL, spaceName)
+        let assessment = verdict.assessment
+        if verdict.requiresConfirmation {
+            let approved = await approveRiskyDownload(assessment, originatingURL, spaceName, assignment.profileID)
             guard dataSaveAssignments[itemID] == assignment else { return }
             guard approved else {
-                ledger.cancel(itemID, message: "Canceled before downloading a potentially dangerous file.")
+                send(
+                    CancelDownload(
+                        downloadID: itemID, message: "Canceled before downloading a potentially dangerous file."))
                 return
             }
         }
@@ -366,16 +261,17 @@ final class BrowserDownloadCenter: NSObject {
         guard dataSaveAssignments[itemID] == assignment else { return }
         switch resolution {
         case .cancelled:
-            ledger.cancel(itemID, message: "Canceled.")
+            send(CancelDownload(downloadID: itemID, message: "Canceled."))
         case .unavailable:
             #if os(macOS)
-                ledger.fail(
-                    itemID,
-                    message:
-                        "The download folder is unavailable. Open Crest Settings > General > System Permissions to check folder access or choose another folder."
-                )
+                send(
+                    FailDownload(
+                        downloadID: itemID, reason: .folderUnavailable,
+                        message:
+                            "The download folder is unavailable. Open Crest Settings > General > System Permissions to check folder access or choose another folder."
+                    ))
             #else
-                ledger.fail(itemID, message: "The Downloads folder is unavailable.")
+                send(FailDownload(downloadID: itemID, reason: .folderUnavailable, message: nil))
             #endif
         case .destination(let destination, let resourceURL):
             let scoped = resourceURL?.startAccessingSecurityScopedResource() ?? false
@@ -383,9 +279,9 @@ final class BrowserDownloadCenter: NSObject {
             do {
                 try saveDataToDestination(
                     data, itemID: itemID, destination: destination, originatingURL: originatingURL)
-                ledger.finish(itemID, finalByteCount: Int64(data.count))
+                send(FinishDownload(downloadID: itemID, finalByteCount: Int64(data.count)))
             } catch {
-                ledger.fail(itemID, message: error.localizedDescription)
+                send(FailDownload(downloadID: itemID, reason: .fileAccess, message: error.localizedDescription))
             }
         }
     }
@@ -405,636 +301,23 @@ final class BrowserDownloadCenter: NSObject {
         let staging = BrowserDownloadTransfer.stagingURL(
             itemID: itemID, suggestedFilename: destination.lastPathComponent, directory: stagingDirectory)
         defer { try? fileManager.removeItem(at: staging) }
-        ledger.setDestination(destination, for: itemID)
+        setDestination(destination, for: itemID)
         try data.write(to: staging, options: .atomic)
         try BrowserDownloadTransfer.finish(
             from: staging, to: destination, quarantine: BrowserDownloadQuarantine(sourceURL: originatingURL))
     }
 
-    func startExtensionDownload(
-        _ request: BrowserExtensionDownloadRequest,
-        in webView: WKWebView,
-        profileID: UUID,
-        spaceID: SpaceID,
-        spaceName: String,
-        isUserInitiated: Bool
-    ) async -> Int {
-        let downloadID = nextExtensionDownloadID
-        nextExtensionDownloadID =
-            nextExtensionDownloadID == Int.max
-            ? 1
-            : nextExtensionDownloadID + 1
-        let download = await webView.startDownload(
-            using: URLRequest(url: request.url)
-        )
-        start(
-            download,
-            in: webView,
-            profileID: profileID,
-            spaceID: spaceID,
-            spaceName: spaceName,
-            isUserInitiated: isUserInitiated,
-            suggestedFilenameOverride: request.filename,
-            forcesDestinationPrompt: request.saveAs
-        )
-        return downloadID
-    }
-
-    @discardableResult
-    func retryAutomaticDownload(
-        _ itemID: UUID,
-        matching assignment: BrowserSpaceRuntimeAssignment,
-        isAssignmentAvailable:
-            @escaping @MainActor (BrowserSpaceRuntimeAssignment) -> Bool
-    ) async -> Bool {
-        guard let item = ledger.items.first(where: { $0.id == itemID }),
-            item.profileID == assignment.profileID,
-            item.state == .blockedAutomaticDownload
-        else {
-            return false
-        }
-        guard let context = retryContexts[itemID],
-            context.assignment == assignment,
-            let webView = context.webView
-        else {
-            ledger.fail(
-                itemID,
-                message: "Reload the original page, then try the download again."
-            )
-            return false
-        }
-        guard isAssignmentAvailable(assignment) else { return false }
-        let lease = BrowserDownloadRetryLease(
-            id: UUID(),
-            itemID: itemID,
-            profileID: context.assignment.profileID,
-            spaceID: context.assignment.spaceID
-        )
-        retryLeases[itemID] = lease
-        ledger.restart(itemID)
-        guard !Task.isCancelled else {
-            cancelRetryLease(itemID: itemID, lease: lease)
-            return false
-        }
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                webView.startDownload(using: context.request) {
-                    [weak self] download in
-                    guard let self else {
-                        download.cancel { _ in }
-                        continuation.resume(returning: false)
-                        return
-                    }
-                    continuation.resume(
-                        returning: finishRetryRegistration(
-                            download,
-                            itemID: itemID,
-                            lease: lease,
-                            context: context,
-                            webView: webView,
-                            isAssignmentAvailable: isAssignmentAvailable
-                        )
-                    )
-                }
-            }
-        } onCancel: {
-            Task { @MainActor [weak self] in
-                self?.cancelRetryLease(itemID: itemID, lease: lease)
-            }
-        }
-    }
-
-    private func finishRetryRegistration(
-        _ download: WKDownload,
-        itemID: UUID,
-        lease: BrowserDownloadRetryLease,
-        context: BrowserDownloadRetryContext,
-        webView: WKWebView,
-        isAssignmentAvailable: @MainActor (BrowserSpaceRuntimeAssignment) -> Bool
-    ) -> Bool {
-        let currentItem = ledger.items.first { $0.id == itemID }
-        let currentContext = retryContexts[itemID]
-        guard
-            BrowserDownloadRetryRegistrationPolicy.shouldRegister(
-                lease: lease,
-                currentLease: retryLeases[itemID],
-                item: currentItem,
-                contextAssignment: currentContext === context
-                    ? currentContext?.assignment
-                    : nil,
-                isAssignmentAvailable: isAssignmentAvailable(lease.assignment)
-            )
-        else {
-            rejectRetryRegistration(download, itemID: itemID, lease: lease)
-            return false
-        }
-        retryLeases.removeValue(forKey: itemID)
-        register(
-            download,
-            itemID: itemID,
-            profileID: context.assignment.profileID,
-            spaceID: context.assignment.spaceID,
-            spaceName: context.spaceName,
-            sourceWebView: webView,
-            isUserApprovedRetry: true,
-            isUserInitiatedOverride: nil,
-            suggestedFilenameOverride: nil,
-            forcesDestinationPrompt: false
-        )
-        return true
-    }
-
-    private func cancelRetryLease(
-        itemID: UUID,
-        lease: BrowserDownloadRetryLease
-    ) {
-        guard retryLeases[itemID] == lease else { return }
-        retryLeases.removeValue(forKey: itemID)
-        if ledger.items.first(where: { $0.id == itemID })?.state == .preparing {
-            ledger.blockAutomaticDownload(itemID)
-        }
-    }
-
-    private func rejectRetryRegistration(
-        _ download: WKDownload,
-        itemID: UUID,
-        lease: BrowserDownloadRetryLease
-    ) {
-        if retryLeases[itemID] == lease {
-            retryLeases.removeValue(forKey: itemID)
-            if ledger.items.first(where: { $0.id == itemID })?.state == .preparing {
-                ledger.blockAutomaticDownload(itemID)
-            }
-        }
-        download.cancel { _ in }
-    }
-
-    private func register(
-        _ download: WKDownload,
-        itemID: UUID,
-        profileID: UUID,
-        spaceID: SpaceID,
-        spaceName: String,
-        sourceWebView: WKWebView,
-        isUserApprovedRetry: Bool,
-        isUserInitiatedOverride: Bool?,
-        suggestedFilenameOverride: String?,
-        forcesDestinationPrompt: Bool
-    ) {
-        let key = ObjectIdentifier(download)
-        guard downloads[key] == nil else { return }
-
-        downloads[key] = download
-        itemIDs[key] = itemID
-        if isUserApprovedRetry {
-            approvedRetryKeys.insert(key)
-        }
-        if isUserInitiatedOverride == true {
-            userInitiatedOverrideKeys.insert(key)
-        }
-        if let suggestedFilenameOverride {
-            requestedFilenames[key] = BrowserDownloadDestination.safeFilename(
-                from: suggestedFilenameOverride
-            )
-        }
-        if forcesDestinationPrompt {
-            forceDestinationPromptKeys.insert(key)
-        }
-        spaceNames[key] = spaceName
-        spaceIDs[key] = spaceID
-        sourceWebViewIDs[key] = ObjectIdentifier(sourceWebView)
-        if let controller = (sourceWebView.uiDelegate as? any BrowserPagePermissionProviding)?.sitePermissionRequests {
-            permissionRequests[key] = (controller, controller.generation)
-        }
-        let frameOrigin = BrowserSiteOrigin(download.originatingFrame.securityOrigin)
-        // Automatic downloads belong to the visible site, including files served
-        // by its embedded frames or a CDN, so site controls can change the rule.
-        if let origin = sourceWebView.url.flatMap(BrowserSiteOrigin.init(url:)) {
-            sourceOrigins[key] = origin
-        } else if !frameOrigin.host.isEmpty {
-            sourceOrigins[key] = frameOrigin
-        } else if let sourceURL = download.originalRequest?.url,
-            let sourceOrigin = BrowserSiteOrigin(url: sourceURL)
-        {
-            sourceOrigins[key] = sourceOrigin
-        }
-        authenticationSessions[key] = BrowserHTTPAuthenticationSession(
-            spaceID: spaceID,
-            allowsCredentialSaving: isCredentialAccessEnabled(in: spaceID),
-            loadCredential: { [loadCredential] protectionSpace in
-                try await loadCredential(protectionSpace, spaceID)
-            },
-            saveCredential: { [saveCredential] request in
-                try await saveCredential(request, spaceID)
-            }
-        )
-        download.delegate = self
-        let progress = download.progress
-        transferEstimators[key] = BrowserDownloadTransferEstimator()
-        progressObservations[key] = Publishers.CombineLatest4(
-            progress.publisher(
-                for: \.completedUnitCount,
-                options: [.initial, .new]
-            ),
-            progress.publisher(
-                for: \.totalUnitCount,
-                options: [.initial, .new]
-            ),
-            progress.publisher(
-                for: \.fractionCompleted,
-                options: [.initial, .new]
-            ),
-            progress.publisher(for: \.isPaused, options: [.initial, .new])
-        )
-        .receive(on: DispatchQueue.main)
-        .removeDuplicates { previous, next in
-            previous.0 == next.0
-                && previous.1 == next.1
-                && previous.2 == next.2
-                && previous.3 == next.3
-        }
-        .throttle(
-            for: .milliseconds(100),
-            scheduler: DispatchQueue.main,
-            latest: true
-        )
-        .sink { [weak self] completed, total, fraction, isPaused in
-            MainActor.assumeIsolated {
-                guard let self,
-                    var estimator = self.transferEstimators[key]
-                else { return }
-                let update = estimator.sample(
-                    completedUnitCount: completed,
-                    totalUnitCount: total,
-                    fractionCompleted: fraction,
-                    isPaused: isPaused
-                )
-                self.transferEstimators[key] = estimator
-                self.ledger.setTransferUpdate(update, for: itemID)
-            }
-        }
-    }
-
-    func destinationURL(
-        for download: WKDownload,
-        response: URLResponse,
-        suggestedFilename: String
-    ) async -> URL? {
-        let fileManager = FileManager.default
-        guard
-            let applicationSupportDirectory = fileManager.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask
-            ).first,
-            let itemID = itemIDs[ObjectIdentifier(download)]
-        else {
-            fail(download, message: "The Downloads folder is unavailable.")
-            release(download)
-            return nil
-        }
-
-        let key = ObjectIdentifier(download)
-        let effectiveSuggestedFilename =
-            requestedFilenames[key] ?? suggestedFilename
-        let assessment = BrowserDownloadRiskAssessment.assess(
-            suggestedFilename: effectiveSuggestedFilename,
-            mimeType: response.mimeType
-        )
-        update(download) { ledger, itemID in
-            ledger.setRiskAssessment(assessment, for: itemID)
-        }
-        let savedDecision: BrowserSitePermissionDecision
-        if let origin = sourceOrigins[key], let spaceID = spaceIDs[key] {
-            savedDecision = permissionCenter.decision(
-                for: .automaticDownloads,
-                origin: origin,
-                in: spaceID
-            )
-        } else {
-            savedDecision = .denyPersistently
-        }
-        let automaticDownloadAction: BrowserAutomaticDownloadAction
-        let isUserInitiated =
-            download.isUserInitiated
-            || userInitiatedOverrideKeys.contains(key)
-        if let origin = sourceOrigins[key],
-            let webViewID = sourceWebViewIDs[key],
-            let spaceID = spaceIDs[key]
-        {
-            let scope = AutomaticDownloadScope(
-                webViewID: webViewID,
-                origin: origin,
-                spaceID: spaceID
-            )
-            var sequence =
-                automaticDownloadSequences[scope]
-                ?? BrowserAutomaticDownloadSequence()
-            automaticDownloadAction = sequence.action(
-                isUserInitiated: isUserInitiated,
-                savedDecision: savedDecision,
-                isUserApprovedRetry: approvedRetryKeys.contains(key)
-            )
-            automaticDownloadSequences[scope] = sequence
-        } else {
-            automaticDownloadAction = BrowserAutomaticDownloadPolicy.action(
-                isUserInitiated: isUserInitiated,
-                savedDecision: savedDecision,
-                isUserApprovedRetry: approvedRetryKeys.contains(key)
-            )
-        }
-        switch automaticDownloadAction {
-        case .allow:
-            break
-        case .deny:
-            update(download) { ledger, itemID in
-                ledger.blockAutomaticDownload(itemID)
-            }
-            release(download)
-            return nil
-        case .requestPermission:
-            guard
-                await approveAutomaticDownloadIfNeeded(download)
-            else {
-                update(download) { ledger, itemID in
-                    ledger.blockAutomaticDownload(itemID)
-                }
-                release(download)
-                return nil
-            }
-        }
-        if assessment.requiresConfirmation(
-            isUserInitiated: isUserInitiated
-        ) {
-            let approved = await approveRiskyDownload(
-                assessment,
-                response.url ?? download.originalRequest?.url,
-                spaceNames[key] ?? "this"
-            )
-            guard approved else {
-                update(download) { ledger, itemID in
-                    ledger.cancel(itemID, message: "Canceled before downloading a potentially dangerous file.")
-                }
-                release(download)
-                return nil
-            }
-        }
-
-        guard let spaceID = spaceIDs[key] else {
-            fail(download, message: "The download no longer belongs to a Space.")
-            release(download)
-            return nil
-        }
-        let resolution = await resolveDownloadDestination(
-            assessment.sanitizedFilename,
-            spaceID,
-            forceDestinationPromptKeys.contains(key)
-        )
-        let destination: URL
-        let securityScopedURL: URL?
-        switch resolution {
-        case .destination(let url, let resourceURL):
-            destination = url
-            securityScopedURL = resourceURL
-        case .cancelled:
-            update(download) { ledger, itemID in
-                ledger.cancel(itemID, message: "Canceled.")
-            }
-            release(download)
-            return nil
-        case .unavailable:
-            #if os(macOS)
-                fail(
-                    download,
-                    message:
-                        "The download folder is unavailable. Open Crest Settings > General > System Permissions to check folder access or choose another folder."
-                )
-            #else
-                fail(download, message: "The Downloads folder is unavailable.")
-            #endif
-            release(download)
-            return nil
-        }
-        if let securityScopedURL,
-            securityScopedURL.startAccessingSecurityScopedResource()
-        {
-            securityScopedResources[key] = securityScopedURL
-        }
-        let downloadsDirectory = destination.deletingLastPathComponent()
-        let stagingDirectory =
-            applicationSupportDirectory
-            .appendingPathComponent(ProductIdentity.storageDirectoryName, isDirectory: true)
-            .appendingPathComponent("Download Staging", isDirectory: true)
-
-        do {
-            try fileManager.createDirectory(
-                at: downloadsDirectory,
-                withIntermediateDirectories: true
-            )
-            try fileManager.createDirectory(
-                at: stagingDirectory,
-                withIntermediateDirectories: true
-            )
-        } catch {
-            fail(download, message: error.localizedDescription)
-            release(download)
-            return nil
-        }
-
-        let staging = BrowserDownloadTransfer.stagingURL(
-            itemID: itemID,
-            suggestedFilename: effectiveSuggestedFilename,
-            directory: stagingDirectory
-        )
-        stagingURLs[key] = staging
-        destinationURLs[key] = destination
-        update(download) { ledger, itemID in
-            ledger.setDestination(destination, for: itemID)
-        }
-        return staging
-    }
-
-    func finish(_ download: WKDownload) {
-        let key = ObjectIdentifier(download)
-        var authenticationSucceeded = false
-        defer {
-            release(download, authenticationSucceeded: authenticationSucceeded)
-        }
-
-        guard let staging = stagingURLs[key], let destination = destinationURLs[key] else {
-            fail(download, message: "The completed download has no destination.")
-            return
-        }
-
-        do {
-            let finalByteCount = try? staging.resourceValues(
-                forKeys: [.fileSizeKey]
-            ).fileSize.map(Int64.init)
-            let quarantine = BrowserDownloadQuarantine(sourceURL: download.originalRequest?.url)
-            try BrowserDownloadTransfer.finish(
-                from: staging,
-                to: destination,
-                quarantine: quarantine
-            )
-            update(download) { ledger, itemID in
-                ledger.finish(itemID, finalByteCount: finalByteCount)
-            }
-            authenticationSucceeded = true
-        } catch {
-            fail(download, message: error.localizedDescription)
-        }
-    }
-
-    func handleFailure(
-        for download: WKDownload,
-        error: any Error,
-        resumeData: Data?
-    ) {
-        fail(download, message: error.localizedDescription)
-        release(download)
-    }
-
-    func handleAuthenticationChallenge(
-        _ challenge: URLAuthenticationChallenge,
-        for download: WKDownload,
-        completionHandler:
-            @escaping @MainActor @Sendable (
-                URLSession.AuthChallengeDisposition,
-                URLCredential?
-            ) -> Void
-    ) {
-        let key = ObjectIdentifier(download)
-        guard let authenticationSession = authenticationSessions[key] else {
-            completionHandler(.performDefaultHandling, nil)
-            return
-        }
-        let spaceName = spaceNames[key] ?? "this"
-        Task {
-            let resolution = await authenticationSession.response(
-                to: challenge
-            ) { [promptForCredentials, spaceName] prompt in
-                await promptForCredentials(prompt, spaceName)
-            }
-            completionHandler(resolution.disposition, resolution.credential)
-        }
-    }
-
-    private func fail(_ download: WKDownload, message: String) {
-        removeStagingFile(for: ObjectIdentifier(download))
-        update(download) { ledger, itemID in
-            ledger.fail(itemID, message: message)
-        }
-    }
-
-    private func removeStagingFile(for key: ObjectIdentifier) {
-        guard let stagingURL = stagingURLs[key] else { return }
-        try? FileManager.default.removeItem(at: stagingURL)
-    }
-
-    private func update(
-        _ download: WKDownload,
-        mutation: (inout BrowserDownloadLedger, UUID) -> Void
-    ) {
-        let key = ObjectIdentifier(download)
-        guard let itemID = itemIDs[key] else { return }
-        mutation(&ledger, itemID)
-    }
-
-    private func approveAutomaticDownloadIfNeeded(
-        _ download: WKDownload
-    ) async -> Bool {
-        let key = ObjectIdentifier(download)
-        guard let spaceID = spaceIDs[key],
-            let origin = sourceOrigins[key]
-        else {
-            return false
-        }
-
-        switch permissionCenter.decision(
-            for: .automaticDownloads,
-            origin: origin,
-            in: spaceID
-        ) {
-        case .grantForSession, .grantPersistently:
-            return true
-        case .denyForSession, .denyPersistently:
-            return false
-        case .ask:
-            update(download) { ledger, itemID in
-                ledger.markAwaitingApproval(itemID)
-            }
-            guard let request = permissionRequests[key],
-                request.generation == request.controller.generation
-            else { return false }
-            let response = await request.controller.response(
-                to: .automaticDownloads, origin: origin, topLevelOrigin: origin,
-                spaceName: spaceNames[key] ?? "this"
-            )
-            guard itemIDs[key] != nil, request.generation == request.controller.generation else { return false }
-            let latest = permissionCenter.decision(for: .automaticDownloads, origin: origin, in: spaceID)
-            guard latest != .denyPersistently, latest != .denyForSession else { return false }
-            switch response {
-            case .denyOnce:
-                return false
-            case .allowOnce:
-                return true
-            case .grantPersistently:
-                permissionCenter.setDecision(
-                    .grantPersistently,
-                    for: .automaticDownloads,
-                    origin: origin,
-                    in: spaceID
-                )
-                return true
-            case .denyPersistently:
-                permissionCenter.setDecision(
-                    .denyPersistently,
-                    for: .automaticDownloads,
-                    origin: origin,
-                    in: spaceID
-                )
-                return false
-            }
-        }
-    }
-
-    private func release(
-        _ download: WKDownload,
-        authenticationSucceeded: Bool = false
-    ) {
-        let key = ObjectIdentifier(download)
-        let authenticationSession = authenticationSessions.removeValue(forKey: key)
-        if authenticationSucceeded {
-            Task {
-                await authenticationSession?.authenticationSucceeded()
-            }
-        } else {
-            authenticationSession?.authenticationFailed()
-        }
-        downloads.removeValue(forKey: key)
-        itemIDs.removeValue(forKey: key)
-        progressObservations.removeValue(forKey: key)
-        transferEstimators.removeValue(forKey: key)
-        stagingURLs.removeValue(forKey: key)
-        destinationURLs.removeValue(forKey: key)
-        securityScopedResources.removeValue(forKey: key)?
-            .stopAccessingSecurityScopedResource()
-        spaceNames.removeValue(forKey: key)
-        spaceIDs.removeValue(forKey: key)
-        sourceOrigins.removeValue(forKey: key)
-        sourceWebViewIDs.removeValue(forKey: key)
-        permissionRequests.removeValue(forKey: key)
-        approvedRetryKeys.remove(key)
-        userInitiatedOverrideKeys.remove(key)
-        requestedFilenames.removeValue(forKey: key)
-        forceDestinationPromptKeys.remove(key)
-    }
+    // MARK: - Actions - Feedback
 
     func dismissFeedback(_ eventID: UUID) {
         feedbackEvents.removeAll { $0.id == eventID }
         feedbackExpirationTasks.removeValue(forKey: eventID)?.cancel()
     }
 
-    private func presentFeedback(_ event: BrowserDownloadFeedbackEvent) {
+    /// Shows a download leaving where it started. Every window over the page
+    /// hears its start, so an event already shown is shown once.
+    func presentFeedback(_ event: BrowserDownloadFeedbackEvent) {
+        guard !feedbackEvents.contains(where: { $0.id == event.id }) else { return }
         let previousIDs = Set(feedbackEvents.map(\.id))
         feedbackEvents = BrowserDownloadFeedbackPolicy.bounded(
             feedbackEvents,

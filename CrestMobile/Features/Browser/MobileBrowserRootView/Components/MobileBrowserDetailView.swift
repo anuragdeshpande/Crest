@@ -8,6 +8,9 @@ struct MobileBrowserDetailView: View {
     @Binding var isAddressEditing: Bool
     let addressFocusRequest: Int
     let isCommandPalettePresented: Bool
+    /// The window's commands, which the Start Page's palette offers once what
+    /// is typed matches one.
+    var commands: BrowserCommandPaletteCommandRegistry?
     let isCompact: Bool
     let obscuresSystemSafeAreas: Bool
     let showsCompactToolbar: Bool
@@ -19,7 +22,7 @@ struct MobileBrowserDetailView: View {
     let hideCompactToolbar: () -> Void
     let showCompactToolbar: () -> Void
     let handleToolbarSwipe: (BrowserSpaceSwipeDirection) -> Void
-    let selectSplitCard: (TabID) -> Void
+    let selectSplitCard: (UUID) -> Void
     let compactTransitionEnded: (CGSize) -> Void
     var transientBrowsing: BrowserTransientBrowsingCoordinator?
     var didPromoteTransientPage: () -> Void = {}
@@ -39,14 +42,14 @@ struct MobileBrowserDetailView: View {
             spaceAccess: spaceAccess
         )
         let page = selectedSpaceIsLocked ? nil : pageActions?.activePage
-        let pagePresentation = pagePresentation(for: page)
+        let pagePresentation = PagePresentation.of(browser.shownTab?.surface, page: page, restoresUnloaded: isCompact)
         let viewport = pageViewport
         Group {
             if selectedSpaceIsLocked {
                 unloadedPageSurface
             } else if let splitCardSpace,
                 let splitCardMembers,
-                let focusedTabID = browser.selectedTab?.id
+                let focusedTabID = browser.shownTab?.id
             {
                 MobileSplitCardPager(
                     members: splitCardMembers,
@@ -62,17 +65,18 @@ struct MobileBrowserDetailView: View {
             } else {
                 switch pagePresentation {
                 case .nativeContent:
-                    if let tab = browser.selectedTab, let space = browser.selectedSpace {
+                    if let tab = browser.shownTab, let space = browser.shownSpace {
                         BrowserNativeTabHost(tab: tab, space: space, bottomChromeHeight: viewport.bottomChromeHeight)
                     }
                 case .unloaded:
                     unloadedPageSurface
                 case .noSelection, .startPage:
-                    if browser.selectedSpace != nil {
+                    if let space = browser.shownSpace {
                         BrowserStartPage(
-                            space: browser.selectedSpace,
+                            browser: browser,
+                            space: space,
                             isPrivateBrowsing: browser.isPrivateBrowsing,
-                            selectedTabID: browser.selectedSpace?.selectedTabID,
+                            selectedTabID: browser.shownTab?.id,
                             isSourceAvailable: isPaletteSourceAvailable,
                             selectTab: selectStartPageTab,
                             openURL: openStartPageURL,
@@ -80,7 +84,8 @@ struct MobileBrowserDetailView: View {
                             layout: isCompact ? .mobileCompactPage : .mobileRegularPage,
                             focusRequest: addressFocusRequest,
                             headerColorScheme: startPageHeaderColorScheme,
-                            emptySelectionActions: emptySelectionPaletteActions
+                            emptySelectionActions: emptySelectionPaletteActions,
+                            commands: commands
                         )
                         .onChange(of: isCompact, initial: true) { _, compact in
                             if compact { address = "" }
@@ -100,10 +105,10 @@ struct MobileBrowserDetailView: View {
                         unloadedPageSurface
                     }
                 case .navigationFailure:
-                    if let page, let failure = page.navigationFailure {
+                    if let page, let failure = page.live.failure {
                         BrowserNavigationFailureView(
                             failure: failure,
-                            branding: browser.selectedSpace?.branding,
+                            branding: shownBranding,
                             layout: isCompact ? .compact : .regular,
                             canGoBack: page.canReturnFromNavigationFailure,
                             canProceed: page.canProceedAfterCertificateFailure,
@@ -114,26 +119,13 @@ struct MobileBrowserDetailView: View {
                     } else {
                         unloadedPageSurface
                     }
-                case .processFailure:
-                    if let page {
-                        BrowserNavigationFailureView(
-                            failure: .webContentProcessStopped(url: page.displayURL),
-                            branding: browser.selectedSpace?.branding,
-                            layout: isCompact ? .compact : .regular,
-                            canGoBack: false,
-                            canProceed: false,
-                            retry: page.retryAfterProcessFailure,
-                            goBack: {},
-                            proceed: {}
-                        )
-                    } else {
-                        unloadedPageSurface
-                    }
                 case .automaticRestore:
                     unloadedPageSurface
                         .onAppear {
                             restoreSelectedTab()
                         }
+                default:
+                    unloadedPageSurface
                 }
             }
         }
@@ -164,13 +156,13 @@ struct MobileBrowserDetailView: View {
         }
         .overlay(alignment: .bottom) {
             if isCompact, showsCompactToolbar {
-                if browser.selectedTab?.isStartPage != false {
+                if browser.shownTab.map({ $0.surface == .startPage }) ?? true {
                     MobileCompactStartPageToolbar(showTabViewer: showTabViewer)
                         .safeAreaPadding(.bottom, 0)
                         .zIndex(1)
                 } else if compactToolbarIsHidden {
                     MobileCompactDomainChip(
-                        url: page?.url,
+                        url: page?.live.documentURL,
                         showToolbar: showCompactToolbar
                     )
                     .safeAreaPadding(.bottom, 0)
@@ -278,18 +270,11 @@ struct MobileBrowserDetailView: View {
     }
 
     private var compactDownloadsAccess: MobileDownloadsMenuAccess? {
-        guard isCompact,
-            let selectedSpace = browser.selectedSpace,
-            let space = BrowserSidebarAccessPolicy.selectedUnlockedSpace(
-                matching: BrowserSpaceRuntimeAssignment(space: selectedSpace),
-                in: browser,
-                accessController: spaceAccess
-            )
-        else { return nil }
-        let items = pages.downloadCenter.items(for: space.profile.id)
+        guard isCompact, let space = browser.shownSpace, !spaceAccess.isLocked(space) else { return nil }
+        let items = pages.downloadCenter.items(for: space.profileID)
         return MobileDownloadsMenuAccess(
             newItemCount: pages.downloadCenter
-                .unacknowledgedItems(for: space.profile.id).count,
+                .unacknowledgedItems(for: space.profileID).count,
             activeProgress: BrowserDownloadNotificationPolicy.progress(
                 in: items
             ),
@@ -298,15 +283,9 @@ struct MobileBrowserDetailView: View {
     }
 
     private func presentCompactDownloads() {
-        guard let selectedSpace = browser.selectedSpace,
-            let space = BrowserSidebarAccessPolicy.selectedUnlockedSpace(
-                matching: BrowserSpaceRuntimeAssignment(space: selectedSpace),
-                in: browser,
-                accessController: spaceAccess
-            )
-        else { return }
+        guard let space = browser.shownSpace, !spaceAccess.isLocked(space) else { return }
         let assignment = BrowserSpaceRuntimeAssignment(space: space)
-        _ = pages.downloadCenter.acknowledgeItems(for: space.profile.id)
+        _ = pages.downloadCenter.acknowledgeItems(for: space.profileID)
         downloadsAssignment = assignment
     }
 
@@ -356,7 +335,8 @@ struct MobileBrowserDetailView: View {
                 try await BrowserSystemPasswordWriteThroughSystem.offer(
                     candidate: candidate,
                     title: title,
-                    anchor: page.webView.window
+                    anchor: page.webView.window,
+                    availability: browser.systemPasswordWriteThroughAvailability
                 )
             }
         )
@@ -395,18 +375,15 @@ struct MobileBrowserDetailView: View {
     /// locked Space is excluded outright — the page store has already dropped
     /// every card, so a carousel there would page through empty placeholders of
     /// content the lock exists to put away.
-    private var splitCardSpace: BrowserSpace? {
-        guard isCompact,
-            let space = browser.selectedSpace,
-            !spaceAccess.isLocked(space)
-        else { return nil }
+    private var splitCardSpace: SpaceModel? {
+        guard isCompact, let space = browser.shownSpace, !spaceAccess.isLocked(space) else { return nil }
         return space
     }
 
     /// The presented run when it is long enough to page, otherwise `nil`.
-    private var splitCardMembers: [BrowserTab]? {
+    private var splitCardMembers: [TabStateModel]? {
         guard let space = splitCardSpace else { return nil }
-        let members = space.presentedSplitMembers(for: browser.selectedTab?.id)
+        let members = browser.cards(in: space)
         let isRenderableRun = MobileSplitCardPagerPolicy.isPagerPresented(
             memberCount: members.count
         )
@@ -415,29 +392,13 @@ struct MobileBrowserDetailView: View {
 
     /// Builds the page a carousel cell is about to show. Called as the cell
     /// materializes, so a group only ever holds the cards near the viewport.
-    private func prepareSplitCardPage(_ tabID: TabID) {
-        pages.prepareResidentPage(for: tabID, in: browser.session)
+    private func prepareSplitCardPage(_ tabID: UUID) {
+        pages.prepareResidentPage(for: tabID)
     }
 
-    private func pagePresentation(
-        for page: MobileBrowserPage?
-    ) -> BrowserPagePresentation {
-        BrowserPagePresentationPolicy.resolve(
-            BrowserPagePresentationInput(
-                selection: selectionPresentation,
-                hasActivePage: page != nil,
-                hasNavigationFailure: page?.navigationFailure != nil,
-                hasProcessFailure: page?.showsProcessFailure == true,
-                unloadedBehavior: isCompact
-                    ? .restoreAutomatically
-                    : .remainUnloaded
-            )
-        )
-    }
-
-    private var selectionPresentation: BrowserPagePresentationSelection {
-        guard let tab = browser.selectedTab else { return .none }
-        return tab.pagePresentationSelection
+    /// The look of the Space this window shows, or nil for none.
+    private var shownBranding: SpaceBranding? {
+        browser.shownSpace.map(\.settings.look)
     }
 
     /// The appearance the start page's header reads its text tone from.
@@ -450,9 +411,9 @@ struct MobileBrowserDetailView: View {
             MobileStartPageAppearancePolicy.foregroundTone(
                 usesCommandPalette: !isCompact
             ) == .onBrand,
-            let space = browser.selectedSpace
+            let branding = shownBranding
         else { return nil }
-        return BrowserSpaceForegroundPolicy.colorScheme(for: space.branding)
+        return BrowserSpaceForegroundPolicy.colorScheme(for: branding)
     }
 
     private var unloadedPageSurface: some View {
@@ -468,27 +429,25 @@ struct MobileBrowserDetailView: View {
     }
 
     private var selectedSpaceIsLocked: Bool {
-        browser.selectedSpace.map(spaceAccess.isLocked) ?? false
+        browser.shownSpace.map(spaceAccess.isLocked) ?? false
     }
 
     private func restoreSelectedTab() {
         // The floating detail remains mounted behind the sidebar's lock view.
         // Relocking deactivates its page; that must never trigger auto-restore.
-        guard let space = browser.selectedSpace,
-            !spaceAccess.isLocked(space)
-        else { return }
-        pages.select(session: browser.session)
+        guard let space = browser.shownSpace, !spaceAccess.isLocked(space) else { return }
+        pages.select()
     }
 
     private var emptySelectionPaletteActions: BrowserEmptySelectionPaletteActions? {
-        guard let space = browser.selectedSpace, browser.selectedTab == nil else { return nil }
+        guard let space = browser.shownSpace, browser.shownTab == nil else { return nil }
         return BrowserEmptySelectionPaletteActions(
             source: BrowserSpaceRuntimeAssignment(space: space),
             browser: browser,
             accessController: spaceAccess,
             didSelectTab: {
-                pages.select(session: browser.session)
-                address = browser.selectedTab?.url?.absoluteString ?? ""
+                pages.select()
+                address = browser.shownTab?.url ?? ""
             }
         )
     }
@@ -504,8 +463,8 @@ struct MobileBrowserDetailView: View {
                 reduceMotion: reduceMotion
             )
         ) {
-            browser.navigateSelectedTab(to: url)
-            pages.selectAndLoad(url, in: browser.session)
+            browser.navigateSelectedTab(to: url.absoluteString)
+            pages.selectAndNavigate(to: url.absoluteString)
         }
         return true
     }
@@ -524,7 +483,7 @@ struct MobileBrowserDetailView: View {
         else { return false }
         browser.selectSpace(destination.space.id)
         browser.selectTab(destination.tab.id)
-        pages.select(session: browser.session)
+        pages.select()
         return true
     }
 

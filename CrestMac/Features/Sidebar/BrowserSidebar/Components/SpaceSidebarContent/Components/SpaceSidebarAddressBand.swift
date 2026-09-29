@@ -3,7 +3,12 @@ import SwiftUI
 /// Fixed address controls. The pager owns the changing extension-strip seam
 /// so semantic selection cannot resize the viewport during a Space transition.
 struct SpaceSidebarAddressBand: View {
-    let space: BrowserSpace
+    let space: SpaceModel
+    /// Whether the site controls act for `space`; they offer nothing while it
+    /// is being deleted.
+    let offersSiteControls: Bool
+    /// The tab this window shows in `space`.
+    let selectedTabID: UUID?
     let pages: BrowserPagePool
     let capabilities: BrowserInteractionCapabilities
     let address: Binding<String>
@@ -12,7 +17,7 @@ struct SpaceSidebarAddressBand: View {
     let activateAddress: () -> Void
     let submitAddress: () -> Void
     let commandSurfaceNamespace: Namespace.ID
-    let showExtensions: () -> Void
+    let commandPaletteHandoff: BrowserCommandPaletteHandoff
     let siteControlPresentationChanged: (Bool) -> Void
     let siteControlContextMenuPresentationChanged: (Bool) -> Void
 
@@ -48,49 +53,45 @@ struct SpaceSidebarAddressBand: View {
             focusRequest: addressFocusRequest,
             isSecure: isSecure,
             progress: displayedPage?.estimatedProgress ?? 0,
-            isLoading: displayedPage?.isLoading == true,
+            isLoading: displayedPage?.live.isLoading == true,
             hasResidentPage: displayedPage != nil,
             hasActiveSite: siteControl != nil,
             capabilities: capabilities,
             activate: activateAddress,
             submit: submitAddress,
             morphNamespace: commandSurfaceNamespace,
-            morphID: "crest-address-command-\(space.id)",
-            branding: space.branding
+            spaceID: space.id,
+            commandPaletteHandoff: commandPaletteHandoff,
+            branding: space.settings.look
         )
     }
 
-    private var selectedTab: BrowserTab? {
-        guard let selectedTabID = space.selectedTabID else { return nil }
-        return space.tabs.first { $0.id == selectedTabID }
+    private var selectedTab: TabStateModel? {
+        selectedTabID.flatMap { space.tabs.model($0) }
     }
 
     private var displayedPage: BrowserPage? {
-        guard let selectedTabID = space.selectedTabID else { return nil }
+        guard let selectedTabID else { return nil }
         let assignment = BrowserTabRuntimeAssignment(
-            tabID: selectedTabID, spaceID: space.id, profileID: space.profile.id
+            tabID: selectedTabID, spaceID: space.id, profileID: space.profileID
         )
         return pages.activePage(matching: assignment)
     }
 
     private var isSecure: Bool {
-        if let page = displayedPage { return page.hasOnlySecureContent }
-        return selectedTab?.url?.scheme?.lowercased() == "https"
+        if let page = displayedPage { return page.live.security.isSecure }
+        return selectedTab?.url.flatMap(URL.init(string:))?.scheme?.lowercased() == "https"
     }
 
     private var siteControl: BrowserSiteControlConfiguration? {
-        guard let page = displayedPage,
-            page.displayURL != nil
-        else {
+        guard offersSiteControls, let page = displayedPage, page.live.displayURL != nil else {
             return nil
         }
         return BrowserSiteControlConfiguration(
             page: page,
             space: space,
-            selectedTabID: space.selectedTabID,
-            extensionControllerPool: pages.extensionControllerPool,
+            selectedTabID: selectedTabID,
             permissionCenter: pages.permissionCenter,
-            manageExtensions: showExtensions,
             presentationChanged: siteControlPresentationChanged,
             contextMenuPresentationChanged:
                 siteControlContextMenuPresentationChanged

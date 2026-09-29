@@ -2,12 +2,12 @@ import SwiftUI
 
 struct CrestSpaceSelectionRepair: ViewModifier {
     let browser: BrowserStore
-    @Binding var selection: SpaceID?
+    @Binding var selection: UUID?
 
     func body(content: Content) -> some View {
         content
             .onAppear(perform: repair)
-            .onChange(of: browser.session.spaces.map(\.id)) {
+            .onChange(of: browser.spaceModels.map(\.id)) {
                 repair()
             }
     }

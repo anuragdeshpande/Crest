@@ -3,10 +3,10 @@
 
     /// Setup drafts and live Settings use the same touch editor and adaptive preview.
     struct BrowserMobileSpaceAppearanceWorkspace: View {
-        @Binding var branding: BrowserSpaceBranding
+        @Binding var branding: SpaceBranding
         @Binding var symbol: String
         @Binding var name: String
-        var space: BrowserSpace? = nil
+        var space: BrowserSpaceAppearance? = nil
         var spacePicker: BrowserSpaceCustomizationPicker? = nil
         @Environment(\.browserSettingsUsesLiveSidebar) private var usesLiveSidebar
         @Environment(\.horizontalSizeClass) private var horizontalSizeClass

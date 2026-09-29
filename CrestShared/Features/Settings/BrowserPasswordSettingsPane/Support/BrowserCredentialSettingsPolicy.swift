@@ -14,7 +14,8 @@ enum BrowserCredentialSettingsPolicy {
         matching query: String
     ) -> [CredentialDescriptor] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let matches = query.isEmpty
+        let matches =
+            query.isEmpty
             ? descriptors
             : descriptors.filter {
                 $0.username.localizedCaseInsensitiveContains(query)
@@ -62,6 +63,6 @@ enum BrowserCredentialSettingsPolicy {
         if usernameOrder != .orderedSame {
             return usernameOrder == .orderedAscending
         }
-        return lhs.id.rawValue.uuidString < rhs.id.rawValue.uuidString
+        return lhs.id.uuidString < rhs.id.uuidString
     }
 }

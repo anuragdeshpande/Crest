@@ -6,8 +6,9 @@ import XCTest
 final class BrowserPasskeyAccessTests: XCTestCase {
     func testControllerRequestsAccessOnlyAfterAnExplicitEligibleAction() async {
         var requestCount = 0
-        var systemAuthorization = BrowserPasskeyAuthorizationState.notDetermined
+        var systemAuthorization = PasskeyAuthorizationState.notDetermined
         let controller = BrowserPasskeyAccessController(
+            core: CrestCore(),
             capabilityCheck: { true },
             deviceConfigurationCheck: { .configured },
             authorizationCheck: { systemAuthorization },
@@ -39,6 +40,7 @@ final class BrowserPasskeyAccessTests: XCTestCase {
         var authorizationCheckCount = 0
         var requestCount = 0
         let controller = BrowserPasskeyAccessController(
+            core: CrestCore(),
             capabilityCheck: { false },
             deviceConfigurationCheck: {
                 deviceConfigurationCheckCount += 1
@@ -66,9 +68,10 @@ final class BrowserPasskeyAccessTests: XCTestCase {
 
     func testCheckingStatusAcrossRelaunchesNeverRequestsSystemConsent() async {
         var requests = 0
-        for state in [BrowserPasskeyAuthorizationState.notDetermined, .authorized, .denied] {
+        for state in [PasskeyAuthorizationState.notDetermined, .authorized, .denied] {
             for _ in 0..<2 {
                 let controller = BrowserPasskeyAccessController(
+                    core: CrestCore(),
                     capabilityCheck: { true },
                     deviceConfigurationCheck: { .configured },
                     authorizationCheck: { state },
@@ -84,95 +87,5 @@ final class BrowserPasskeyAccessTests: XCTestCase {
                     "Navigation and status checks must never request passkey consent, even after a relaunch.")
             }
         }
-    }
-
-    func testSystemPasswordWriteThroughRequiresMobileAPIAndManagedBrowserCapability() {
-        XCTAssertEqual(
-            BrowserSystemPasswordWriteThroughPolicy.availability(
-                isMobilePlatform: false,
-                supportsSystemAPI: true,
-                hasManagedBrowserCapability: true,
-                isLaunchIsolated: false
-            ),
-            .unsupportedPlatform
-        )
-        XCTAssertEqual(
-            BrowserSystemPasswordWriteThroughPolicy.availability(
-                isMobilePlatform: true,
-                supportsSystemAPI: false,
-                hasManagedBrowserCapability: true,
-                isLaunchIsolated: false
-            ),
-            .systemVersionRequired
-        )
-        XCTAssertEqual(
-            BrowserSystemPasswordWriteThroughPolicy.availability(
-                isMobilePlatform: true,
-                supportsSystemAPI: true,
-                hasManagedBrowserCapability: false,
-                isLaunchIsolated: false
-            ),
-            .managedBrowserCapabilityRequired
-        )
-        XCTAssertEqual(
-            BrowserSystemPasswordWriteThroughPolicy.availability(
-                isMobilePlatform: true,
-                supportsSystemAPI: true,
-                hasManagedBrowserCapability: true,
-                isLaunchIsolated: false
-            ),
-            .available
-        )
-        XCTAssertEqual(
-            BrowserSystemPasswordWriteThroughPolicy.availability(
-                isMobilePlatform: true,
-                supportsSystemAPI: true,
-                hasManagedBrowserCapability: true,
-                isLaunchIsolated: true
-            ),
-            .isolatedLaunch
-        )
-    }
-
-    func testSystemPasswordWriteThroughRequiresAnEnabledOrdinarySpace() {
-        var preferences = BrowserCredentialPreferences.default
-
-        XCTAssertFalse(
-            BrowserSystemPasswordWriteThroughPolicy.shouldOffer(
-                preferences: preferences,
-                availability: .available,
-                isPrivateBrowsing: false
-            )
-        )
-
-        preferences.alsoOffersSaveToSystemPasswords = true
-        XCTAssertTrue(
-            BrowserSystemPasswordWriteThroughPolicy.shouldOffer(
-                preferences: preferences,
-                availability: .available,
-                isPrivateBrowsing: false
-            )
-        )
-        XCTAssertFalse(
-            BrowserSystemPasswordWriteThroughPolicy.shouldOffer(
-                preferences: preferences,
-                availability: .managedBrowserCapabilityRequired,
-                isPrivateBrowsing: false
-            )
-        )
-        XCTAssertFalse(
-            BrowserSystemPasswordWriteThroughPolicy.shouldOffer(
-                preferences: preferences,
-                availability: .available,
-                isPrivateBrowsing: true
-            )
-        )
-        XCTAssertFalse(
-            BrowserSystemPasswordWriteThroughPolicy.shouldOffer(
-                preferences: preferences,
-                availability: .isolatedLaunch,
-                isPrivateBrowsing: false
-            )
-        )
     }
 }

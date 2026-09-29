@@ -11,8 +11,8 @@ import SwiftUI
 struct BrowserTransientSurface<WebContent: View>: View {
     let state: BrowserTransientPresentationState
     let pageStatus: BrowserTransientPageStatus
-    let spaces: [BrowserSpace]
-    let selectedSpaceID: SpaceID
+    let spaces: [BrowserSpaceIdentity]
+    let selectedSpaceID: UUID
     let vocabulary: BrowserTransientOverlayVocabulary
     let actions: BrowserTransientCardActions
     @ViewBuilder let webContent: () -> WebContent

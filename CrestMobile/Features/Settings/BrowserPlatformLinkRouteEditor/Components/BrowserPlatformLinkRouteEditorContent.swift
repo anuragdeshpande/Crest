@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct BrowserPlatformLinkRouteEditorContent: View {
-    let route: BrowserLinkRoute
-    let spaces: [BrowserSpace]
+    let route: LinkRoute
+    let spaces: [SpaceModel]
     let canMoveUp: Bool
     let canMoveDown: Bool
     let update: (BrowserLinkRouteFieldUpdate) -> Void
@@ -34,17 +34,17 @@ struct BrowserPlatformLinkRouteEditorContent: View {
             Button {
                 presentsMatchChoices = true
             } label: {
-                routeChoiceLabel(title: "Match", value: route.match.title)
+                routeChoiceLabel(title: "Match", value: String(localized: route.match.title))
             }
             .buttonStyle(.plain)
-            .accessibilityValue(route.match.title)
+            .accessibilityValue(Text(route.match.title))
             .accessibilityIdentifier("route-match-\(identifierSuffix)")
             .confirmationDialog(
                 "Match",
                 isPresented: $presentsMatchChoices,
                 titleVisibility: .visible
             ) {
-                ForEach(BrowserLinkRouteMatch.allCases) { match in
+                ForEach(LinkRouteMatch.all, id: \.self) { match in
                     Button(match.title) {
                         update(.match(match))
                     }
@@ -84,7 +84,7 @@ struct BrowserPlatformLinkRouteEditorContent: View {
                 titleVisibility: .visible
             ) {
                 ForEach(spaces) { space in
-                    Button(space.name) {
+                    Button(space.settings.name) {
                         update(.destinationSpaceID(space.id))
                     }
                 }
@@ -124,7 +124,7 @@ struct BrowserPlatformLinkRouteEditorContent: View {
     }
 
     private var destinationName: String {
-        spaces.first { $0.id == route.destinationSpaceID }?.name
+        spaces.first { $0.id == route.destinationSpaceID }?.settings.name
             ?? "Missing Space"
     }
 

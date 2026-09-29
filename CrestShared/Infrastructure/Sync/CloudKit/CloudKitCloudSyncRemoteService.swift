@@ -15,28 +15,40 @@ actor CloudKitBrowserCloudSyncRemoteService: BrowserCloudSyncRemoteService {
         )
     }
 
-    func accountState() async throws -> BrowserCloudAccountState {
+    func accountState() async throws -> CloudAccountState {
         let container = cloudContainer()
         database = container.privateCloudDatabase
         let status = try await container.accountStatus()
         return Self.accountState(for: status)
     }
 
-    func loadSnapshot() async throws -> [BrowserSyncRecord] {
+    /// Every record in Crest's zone the core may read. One whose envelope is
+    /// not Crest's is left out, as the core leaves out one whose payload it
+    /// cannot read.
+    func loadSnapshot() async throws -> [SyncRecord] {
         let database = database ?? cloudContainer().privateCloudDatabase
         self.database = database
         do {
-            return try await BrowserCloudSnapshotLoader(database: database).load()
+            return try await BrowserCloudSnapshotLoader(
+                database: database,
+                codec: BrowserCloudRecordCodec(zoneName: configuration.zoneName)
+            ).load().records
         } catch let error as CKError where error.code == .zoneNotFound {
             return []
         }
     }
 
     nonisolated func message(for error: any Error) -> String {
-        if let syncError = error as? BrowserSyncError,
-            case .remoteChangeNotApplied = syncError
-        {
-            return "Crest couldn’t apply the latest changes from iCloud."
+        if let syncError = error as? BrowserCloudSyncError {
+            switch syncError {
+            case .remoteChangeNotApplied:
+                return "Crest couldn’t apply the latest changes from iCloud."
+            case .accountCheckUnanswered:
+                return "iCloud didn’t respond in time. Crest will retry automatically."
+            }
+        }
+        if let rejection = error as? Rejection {
+            return rejection.explanation
         }
         guard let cloudError = error as? CKError else {
             return String(describing: error)
@@ -66,7 +78,7 @@ actor CloudKitBrowserCloudSyncRemoteService: BrowserCloudSyncRemoteService {
         return result
     }
 
-    private static func accountState(for status: CKAccountStatus) -> BrowserCloudAccountState {
+    private static func accountState(for status: CKAccountStatus) -> CloudAccountState {
         switch status {
         case .available: .available
         case .noAccount: .noAccount

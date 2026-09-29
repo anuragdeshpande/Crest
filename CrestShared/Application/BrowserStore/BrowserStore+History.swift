@@ -3,109 +3,46 @@ import Foundation
 // MARK: - History and Cleanup
 
 extension BrowserStore {
-    func recordVisit(url: URL, title: String?) {
-        guard selectedSpace != nil else { return }
-        let spaceID = session.selectedSpaceID
-        session.recordVisit(url: url, title: title)
-        persist(syncUrgency: .coalesced, scope: .history(in: spaceID))
-    }
-
-    func recordVisit(url: URL, title: String?, in spaceID: SpaceID) {
-        session.recordVisit(url: url, title: title, in: spaceID)
-        persist(syncUrgency: .coalesced, scope: .history(in: spaceID))
-    }
-
+    /// Keeps a Quick Window's page, `pageID`, in the archive of the Space it
+    /// lived in, at the address and title the core holds for it, and answers
+    /// whether the core kept it. The page may already be gone, as one memory
+    /// pressure took back is; the core keeps what it showed last.
     @discardableResult
-    func recordVisit(
-        url: URL,
-        title: String?,
-        matching assignment: BrowserSpaceRuntimeAssignment
-    ) -> Bool {
-        guard space(matching: assignment) != nil else { return false }
-        session.recordVisit(url: url, title: title, in: assignment.spaceID)
-        persist(
-            syncUrgency: .coalesced,
-            scope: .history(in: assignment.spaceID)
-        )
-        return true
-    }
-
-    func archiveTransientPage(url: URL, title: String?, in spaceID: SpaceID) {
-        session.archiveTransientPage(url: url, title: title, in: spaceID)
-        persist(syncUrgency: .coalesced, scope: .core)
-    }
-
-    @discardableResult
-    func archiveTransientPage(
-        url: URL,
-        title: String?,
-        matching assignment: BrowserSpaceRuntimeAssignment
-    ) -> Bool {
-        guard space(matching: assignment) != nil else { return false }
-        session.archiveTransientPage(
-            url: url,
-            title: title,
-            in: assignment.spaceID
-        )
-        persist(syncUrgency: .coalesced, scope: .core)
-        return true
+    func archiveTransientPage(_ pageID: UUID, matching assignment: BrowserSpaceRuntimeAssignment) -> Bool {
+        let archive = ArchiveTransientPage(workspaceID: family.workspaceID, pageID: pageID, spaceID: assignment.spaceID)
+        // The core archives a page once, and never one kept as a tab.
+        guard spaceModel(matching: assignment) != nil, family.canSend(archive, from: self) else { return false }
+        return family.perform(archive, from: self) != nil
     }
 
     func clearHistory() {
-        guard selectedSpace != nil else { return }
-        clearHistory(in: session.selectedSpaceID)
+        guard shownSpace != nil else { return }
+        clearHistory(in: selectedSpaceID)
     }
 
-    func clearHistory(in spaceID: SpaceID) {
-        guard session.clearHistory(in: spaceID) else { return }
-        persist(deletionReason: .explicitDelete, scope: .history(in: spaceID))
+    func clearHistory(in spaceID: UUID) {
+        sendRecords(ClearHistory(workspaceID: family.workspaceID, spaceID: spaceID))
     }
 
     @discardableResult
     func clearHistory(
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard space(matching: assignment) != nil,
-            session.clearHistory(in: assignment.spaceID)
-        else { return false }
-        persist(
-            deletionReason: .explicitDelete,
-            scope: .history(in: assignment.spaceID)
-        )
-        return true
+        guard spaceModel(matching: assignment) != nil else { return false }
+        return sendRecords(ClearHistory(workspaceID: family.workspaceID, spaceID: assignment.spaceID))
     }
 
     func cleanupCurrentTabs() {
-        session.cleanupCurrentTabsUsingSpacePreferences()
-        persist(deletionReason: .retention, scope: .core)
+        sendRecords(CleanUpCurrentTabs(workspaceID: family.workspaceID, spaceID: nil))
     }
 
     /// Applies every Space's tab and stored-record retention policies to a
-    /// session that is already running, rather than only at launch.
-    ///
-    /// Returns whether this call performed the sweep: windows share a store
-    /// family, so the first requester inside
-    /// `BrowserCurrentTabCleanupSchedule.minimumSweepSpacing` sweeps and the rest
-    /// no-op. The sweep only touches the session when a tab actually expired, so
-    /// a quiet scene never persists or stages sync traffic on its account.
-    @discardableResult
-    func sweepExpiredBrowsingData(now: Date = .now) -> Bool {
-        guard family.beginCleanupSweep(at: now) else { return false }
-        var swept = session
-        swept.cleanupCurrentTabsUsingSpacePreferences(now: now)
-        let removedStoredRecords = swept.applyDataRetentionPolicies(now: now)
-        guard swept != session else { return true }
-        session = swept
-        persist(
-            deletionReason: .retention,
-            scope: removedStoredRecords ? .everything : .core
-        )
-        return true
-    }
-
-    @discardableResult
-    func sweepExpiredCurrentTabs(now: Date = .now) -> Bool {
-        sweepExpiredBrowsingData(now: now)
+    /// session that is already running, rather than only at launch. Windows
+    /// share one session, and the core sweeps it at most once a minute unless
+    /// a Space's retention changed, so every window may ask whenever it
+    /// becomes active. A sweep that expires nothing changes nothing.
+    func sweepExpiredBrowsingData() {
+        sendRecords(SweepExpiredRecords(workspaceID: family.workspaceID))
     }
 
     /// Sweeps once for the scene that just became active, then keeps sweeping on
@@ -132,101 +69,66 @@ extension BrowserStore {
         }
     }
 
-    func cleanupCurrentTabs(in spaceID: SpaceID) {
-        guard session.space(id: spaceID) != nil else { return }
-        session.cleanupCurrentTabs(in: spaceID)
-        persist(deletionReason: .retention, scope: .core)
+    func cleanupCurrentTabs(in spaceID: UUID) {
+        guard spaceModel(spaceID) != nil else { return }
+        sendRecords(CleanUpCurrentTabs(workspaceID: family.workspaceID, spaceID: spaceID))
     }
 
-    func restoreArchivedTab(_ id: TabID) {
-        guard selectedSpace != nil else { return }
-        session.restoreArchivedTab(id)
-        persist(deletionReason: .superseded, scope: .core)
+    func restoreArchivedTab(_ id: UUID) {
+        guard shownSpace != nil else { return }
+        sendRecords(
+            RestoreArchivedTab(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: selectedSpaceID,
+                tabID: id))
     }
 
     @discardableResult
     func restoreArchivedTab(
-        _ id: TabID,
+        _ id: UUID,
         matching assignment: BrowserSpaceRuntimeAssignment
     ) -> Bool {
-        guard let space = space(matching: assignment),
-            session.selectedSpaceID == assignment.spaceID,
-            space.archivedTabs.contains(where: { $0.id == id })
+        guard let space = spaceModel(matching: assignment),
+            selectedSpaceID == assignment.spaceID,
+            space.archive.contains(tabID: id)
         else { return false }
-        session.restoreArchivedTab(id)
-        persist(deletionReason: .superseded, scope: .core)
-        return true
-    }
-}
-
-// MARK: - Deletion
-
-/// Space-exact targeted history removal.
-///
-/// Every entry point takes a ``BrowserSpaceRuntimeAssignment`` rather than a
-/// bare `SpaceID`, matching the rest of the deletion surface: a Space that was
-/// replaced or is mid-deletion must not have its successor's history erased by
-/// a request captured against the old one.
-extension BrowserStore {
-    @discardableResult
-    func deleteHistory(
-        for url: URL,
-        matching assignment: BrowserSpaceRuntimeAssignment
-    ) -> Bool {
-        guard space(matching: assignment) != nil,
-            session.removeHistory(for: url, in: assignment.spaceID)
-        else {
-            return false
-        }
-        persist(
-            deletionReason: .explicitDelete,
-            scope: .history(in: assignment.spaceID)
-        )
-        return true
+        return sendRecords(
+            RestoreArchivedTab(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: assignment.spaceID,
+                tabID: id))
     }
 
+    /// Reopens the tab the Space this window shows archived last, which the
+    /// core chooses, and shows it here. False when it keeps none.
     @discardableResult
-    func deleteHistory(
-        from startDate: Date,
-        until endDate: Date,
-        matching assignment: BrowserSpaceRuntimeAssignment
-    ) -> Bool {
-        guard space(matching: assignment) != nil,
-            session.removeHistory(
-                from: startDate,
-                until: endDate,
-                in: assignment.spaceID
-            )
-        else {
-            return false
-        }
-        persist(
-            deletionReason: .explicitDelete,
-            scope: .history(in: assignment.spaceID)
-        )
-        return true
+    func reopenClosedTab() -> Bool {
+        guard let space = shownSpace else { return false }
+        return sendRecords(ReopenClosedTab(workspaceID: family.workspaceID, windowID: windowID, spaceID: space.id))
+    }
+
+    /// Runs a history, archive or retention intent from this window, and
+    /// answers whether it changed the session.
+    @discardableResult
+    private func sendRecords(_ intent: some Intent) -> Bool {
+        family.send(intent, from: self, failure: "Core record command failed")
     }
 }
 
 // MARK: - Data Retention
 
 extension BrowserStore {
+    /// Sets how long a Space keeps what it browses. The core sweeps the Space
+    /// under the new retention as it accepts it, so a changed retention is
+    /// never held back by the last sweep.
     func updateDataRetentionPreferences(
-        _ retention: BrowserSpaceDataRetentionPreferences,
-        in spaceID: SpaceID,
-        now: Date = .now
+        _ retention: DataRetentionPreferences,
+        in spaceID: UUID
     ) {
-        guard var preferences = session.space(id: spaceID)?.browsingPreferences,
+        guard var preferences = spaceModel(spaceID)?.settings.browsingPreferences,
             preferences.dataRetention != retention
         else {
             return
         }
         preferences.dataRetention = retention
-        session.updateBrowsingPreferences(preferences, in: spaceID)
-        let removedRecords = session.applyDataRetentionPolicies(now: now)
-        persist(
-            deletionReason: removedRecords ? .retention : .superseded,
-            scope: removedRecords ? .everything : .core
-        )
+        updateBrowsingPreferences(preferences, in: spaceID)
     }
 }

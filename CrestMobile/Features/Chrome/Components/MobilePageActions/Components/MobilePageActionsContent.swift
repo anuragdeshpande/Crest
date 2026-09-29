@@ -24,14 +24,13 @@ struct MobilePageActionsContent: View {
 
         if let notice = pages.blockedPopupNotice {
             Section("Automatic Pop-ups") {
-                switch notice.status {
-                case .blocked:
+                if notice.status.offersAllow {
                     Button {
                         pages.allowAutomaticPopupsForBlockedSite()
                     } label: {
                         Label(
                             "Allow Automatic Pop-ups",
-                            systemImage: "macwindow.badge.plus"
+                            systemImage: notice.status.symbol
                         )
                     }
                     .accessibilityLabel(
@@ -41,8 +40,8 @@ struct MobilePageActionsContent: View {
                         notice.allowActionAccessibilityHint
                     )
                     .accessibilityIdentifier("allow-blocked-automatic-popups")
-                case .allowedAwaitingRetry:
-                    Label(notice.title, systemImage: "checkmark.circle")
+                } else {
+                    Label(notice.title, systemImage: notice.status.symbol)
                         .accessibilityLabel(
                             Text(verbatim: "\(notice.title). \(notice.guidance)")
                         )
@@ -64,8 +63,8 @@ struct MobilePageActionsContent: View {
             }
 
             Button(
-                pages.activePage?.isLoading == true ? "Stop" : "Reload",
-                systemImage: pages.activePage?.isLoading == true ? "xmark" : "arrow.clockwise"
+                pages.activePage?.live.isLoading == true ? "Stop" : "Reload",
+                systemImage: pages.activePage?.live.isLoading == true ? "xmark" : "arrow.clockwise"
             ) {
                 pages.reloadOrStop()
             }
@@ -186,23 +185,23 @@ struct MobilePageActionsContent: View {
 
     @ViewBuilder
     private func sitePermissions(for page: MobileBrowserPage) -> some View {
-        if let origin = page.url.flatMap(BrowserSiteOrigin.init(url:)) {
+        if let origin = page.live.documentURL.flatMap(SiteOrigin.init(url:)) {
             Menu("Site Permissions", systemImage: "slider.horizontal.3") {
-                ForEach(BrowserSitePermission.allCases, id: \.self) { permission in
+                // A page on iOS cannot share the screen, so that choice is
+                // not offered here.
+                ForEach(SitePermission.all.filter { $0 != .screenSharing }, id: \.self) { permission in
                     Picker(
-                        permission.settingsLabel,
+                        permission.title,
                         selection: Binding {
                             page.permissionCenter.decision(for: permission, origin: origin, in: page.spaceID)
                         } set: { decision in
                             page.permissionCenter.setDecision(
                                 decision, for: permission, origin: origin, in: page.spaceID)
-                            if permission == .popups { page.synchronizePopupPermission() }
-                            if permission == .location { page.geolocationCoordinator?.synchronizeMainFramePermission() }
                         }
                     ) {
-                        Text(permission.defaultDecisionLabel).tag(BrowserSitePermissionDecision.ask)
-                        Text("Allow").tag(BrowserSitePermissionDecision.grantPersistently)
-                        Text("Block").tag(BrowserSitePermissionDecision.denyPersistently)
+                        Text(permission.askChoiceTitle).tag(SitePermissionDecision.ask)
+                        Text("Allow").tag(SitePermissionDecision.grantPersistently)
+                        Text("Block").tag(SitePermissionDecision.denyPersistently)
                     }
                     .pickerStyle(.menu)
                 }
@@ -215,9 +214,6 @@ struct MobilePageActionsContent: View {
     }
 
     private var contentBlockingActionTitle: LocalizedStringResource {
-        MobileContentBlockingActionTitle.resolve(
-            policy: browser.selectedSpace?.browsingPreferences
-                .contentBlockingPolicy
-        )
+        ContentBlockingPolicy.switchTitle(for: browser.shownSpace?.settings.browsingPreferences.contentBlocking)
     }
 }

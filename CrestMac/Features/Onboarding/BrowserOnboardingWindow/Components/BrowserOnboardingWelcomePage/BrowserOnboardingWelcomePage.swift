@@ -1,22 +1,12 @@
 import SwiftUI
 
 struct BrowserOnboardingWelcomePage: View {
-    let progressIsChecking: Bool
-    let cloudPhase: BrowserCloudSyncPhase
+    let action: BrowserOnboardingWelcomeAction
     let hasCompletedSetup: Bool
-    let entryPoint: BrowserOnboardingEntryPoint
     let hasDisposableSeedState: Bool
     let continueSetup: () -> Void
+    let setUpWithoutCloud: () -> Void
     let openCrest: () -> Void
-
-    private var action: BrowserOnboardingWelcomeAction {
-        BrowserOnboardingWelcomePolicy.action(
-            progressIsChecking: progressIsChecking,
-            cloudPhase: cloudPhase,
-            hasCompletedSetup: hasCompletedSetup,
-            entryPoint: entryPoint
-        )
-    }
 
     private var cloudStatusDetail: String {
         if hasCompletedSetup {
@@ -25,7 +15,7 @@ struct BrowserOnboardingWelcomePage: View {
         if !hasDisposableSeedState {
             return "Your existing Spaces are ready to customize."
         }
-        if case .failed = cloudPhase {
+        if action.reportsCloudUnavailable {
             return "iCloud is unavailable right now; you can still set up this Mac."
         }
         return "No existing setup was found."
@@ -54,7 +44,8 @@ struct BrowserOnboardingWelcomePage: View {
                 BrowserOnboardingWelcomeCallToAction(
                     action: action,
                     cloudStatusDetail: cloudStatusDetail,
-                    perform: performAction
+                    perform: performAction,
+                    setUpWithoutCloud: setUpWithoutCloud
                 )
                 Spacer()
             }
@@ -65,7 +56,7 @@ struct BrowserOnboardingWelcomePage: View {
             ZStack {
                 BrowserOnboardingPalette.parchment
                 BrowserSpaceAppearanceHero(
-                    branding: .house(.winter, symbol: ""), symbol: "", name: String(localized: "Personal")
+                    branding: BrowserSpaceHousePalette.winter.look, symbol: "", name: String(localized: "Personal")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(38)
@@ -74,13 +65,11 @@ struct BrowserOnboardingWelcomePage: View {
     }
 
     private func performAction() {
-        switch action {
-        case .checking:
-            break
-        case .setup:
-            continueSetup()
-        case .open:
+        guard !action.waitsOnCloud else { return }
+        if action.opensCrest {
             openCrest()
+        } else {
+            continueSetup()
         }
     }
 }

@@ -1,22 +1,26 @@
+import Foundation
+
 /// Produces stable spoken state for Crest's custom browser chrome. The views
 /// remain native controls; this policy only supplies values and one-step Space
 /// navigation that SwiftUI cannot infer from the custom horizontal pager.
 enum BrowserChromeAccessibility {
+    @MainActor
     static func spaceValue(
-        spaces: [BrowserSpace],
-        selectedSpaceID: SpaceID
+        spaces: [SpaceModel],
+        selectedSpaceID: UUID
     ) -> String {
         guard let index = spaces.firstIndex(where: { $0.id == selectedSpaceID }) else {
             return "No Space selected"
         }
-        return "\(spaces[index].name), \(index + 1) of \(spaces.count)"
+        return "\(spaces[index].settings.name), \(index + 1) of \(spaces.count)"
     }
 
+    @MainActor
     static func adjacentSpaceID(
-        spaces: [BrowserSpace],
-        selectedSpaceID: SpaceID,
+        spaces: [SpaceModel],
+        selectedSpaceID: UUID,
         direction: BrowserChromeAccessibilityDirection
-    ) -> SpaceID? {
+    ) -> UUID? {
         guard let index = spaces.firstIndex(where: { $0.id == selectedSpaceID }) else {
             return nil
         }

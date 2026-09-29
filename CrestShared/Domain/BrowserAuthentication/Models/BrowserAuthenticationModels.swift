@@ -1,5 +1,5 @@
 struct BrowserAuthenticationChallenge: Equatable, Sendable {
-    let authenticationMethod: BrowserAuthenticationMethod
+    let authenticationMethod: AuthenticationMethod
     let isProxy: Bool
     let previousFailureCount: Int
     let protectionSpace: BrowserHTTPAuthenticationProtectionSpace?
@@ -7,22 +7,19 @@ struct BrowserAuthenticationChallenge: Equatable, Sendable {
     let proposedUsername: String?
 }
 
-enum BrowserAuthenticationHandling: Equatable {
-    case promptForCredentials
-    case performDefaultHandling
-    case cancel
-}
-
-enum BrowserAuthenticationMethod: Equatable, Sendable {
-    case httpBasic
-    case httpDigest
-    case other
-}
-
 enum BrowserHTTPAuthenticationDecision: Sendable {
     case performDefaultHandling
     case cancel
     case useCredential(username: String, password: String)
+
+    /// The credential the decision answers a server with, if any.
+    var credential: AuthenticationCredential? {
+        switch self {
+        case .useCredential(let username, let password):
+            AuthenticationCredential(username: username, password: password)
+        case .cancel, .performDefaultHandling: nil
+        }
+    }
 }
 
 struct BrowserHTTPAuthenticationDescriptor: Equatable, Sendable {

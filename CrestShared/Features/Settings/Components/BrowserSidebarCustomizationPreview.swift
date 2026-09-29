@@ -8,7 +8,7 @@ import SwiftUI
 /// nothing else — the sidebar here is for looking at, so it declines to be
 /// rearranged or organized.
 struct BrowserSidebarCustomizationPreview: View {
-    var space: BrowserSpace? = nil
+    var space: BrowserSpaceAppearance? = nil
     var showsPins = true
     var showsCurrentTabs = true
     var followsHighlightPreference = true
@@ -18,7 +18,6 @@ struct BrowserSidebarCustomizationPreview: View {
     var showsBackground = true
     @Environment(\.browserInteractionCapabilities) private var hostCapabilities
     @State private var sample = BrowserAppearancePreviewState()
-    @State private var editingFolder: BrowserFolderRuntimeAssignment?
 
     private var capabilities: BrowserInteractionCapabilities {
         var value = hostCapabilities
@@ -28,41 +27,32 @@ struct BrowserSidebarCustomizationPreview: View {
     }
 
     var body: some View {
-        let preview = sample.space
-        let tabSections = BrowserTabSections(tabs: preview.tabs)
+        let context = sample.listContext(capabilities: capabilities)
+        let branding = context.map(\.space.settings.look) ?? sample.fallbackBranding
         VStack(spacing: 8) {
-            if showsPins {
-                PinnedTabGrid(
-                    tabs: preview.pinnedTabs, assignment: sample.assignment,
-                    selectedTabID: preview.selectedTabID,
-                    select: { sample.browser.selectTab($0.tabID) },
-                    browser: sample.browser, spaceAccess: sample.spaceAccess,
-                    siteThemeAccent: sample.siteThemeAccent,
-                    capabilities: capabilities
-                )
-                .padding(.horizontal, 8)
-            }
-            BrowserSavedTabsDropSection(
-                space: preview, tabSections: tabSections,
-                browser: sample.browser, spaceAccess: sample.spaceAccess,
-                pageAccess: sample.pageAccess, tabActions: sample.tabActions,
-                capabilities: capabilities, restoreSavedLocation: { _ in },
-                select: sample.browser.selectTab, editingFolderRequest: $editingFolder)
-            if showsCurrentTabs {
-                BrowserCurrentTabsDropSection(
-                    space: preview, tabSections: tabSections,
-                    browser: sample.browser, spaceAccess: sample.spaceAccess,
-                    pageAccess: sample.pageAccess, tabActions: sample.tabActions,
-                    capabilities: capabilities,
-                    select: sample.browser.selectTab, openNewTab: {})
+            if let context {
+                if showsPins {
+                    let space = context.space
+                    PinnedTabGrid(
+                        tabs: space.sidebar.section(.pinned).rows.compactMap { space.tabs.model($0.id) },
+                        favicons: context.favicons, assignment: context.assignment, window: context.window,
+                        select: { sample.browser.selectTab($0.tabID) }, context: context,
+                        siteThemeAccent: sample.siteThemeAccent, capabilities: capabilities
+                    )
+                    .padding(.horizontal, 8)
+                }
+                BrowserSavedTabsDropSection(context: context)
+                if showsCurrentTabs {
+                    BrowserCurrentTabsDropSection(context: context, openNewTab: {})
+                }
             }
         }
         .padding(.vertical, 12)
         .frame(maxWidth: BrowserChromeLayout.sidebarMaximumWidth)
-        .background { background(for: preview.branding) }
+        .background { background(for: branding) }
         .clipShape(.rect(cornerRadius: showsBackground ? 14 : 0))
-        .environment(\.colorScheme, BrowserSpaceForegroundPolicy.colorScheme(for: preview.branding))
-        .environment(\.sidebarSpacePresentation, SidebarSpacePresentation(space: preview, isUnlocked: true))
+        .environment(\.colorScheme, BrowserSpaceForegroundPolicy.colorScheme(for: branding))
+        .environment(\.sidebarSpacePresentation, context.map { presentation(of: $0) })
         .environment(\.browserInteractionCapabilities, capabilities)
         .environment(sample.sidebarInteraction)
         .environment(\.folderPreviewShowsHighlight, !followsHighlightPreference)
@@ -72,8 +62,12 @@ struct BrowserSidebarCustomizationPreview: View {
         .onChange(of: space, initial: true) { _, space in sample.applyTheme(space) }
     }
 
+    private func presentation(of context: BrowserSidebarListContext) -> SidebarSpacePresentation {
+        SidebarSpacePresentation(space: context.space, isUnlocked: true)
+    }
+
     @ViewBuilder
-    private func background(for branding: BrowserSpaceBranding) -> some View {
+    private func background(for branding: SpaceBranding) -> some View {
         if showsBackground {
             BrowserSpaceBannerBackground(branding: branding)
         }
@@ -81,25 +75,26 @@ struct BrowserSidebarCustomizationPreview: View {
 }
 
 @MainActor
+@Observable
 private final class BrowserAppearancePreviewState {
     let sidebarInteraction: BrowserSidebarInteractionState
     let browser: BrowserStore
     let spaceAccess = BrowserSpaceAccessController()
     let downloads = BrowserDownloadCenter(
-        permissionCenter: BrowserSitePermissionCenter(persistence: InMemoryBrowserSitePermissionPersistence()))
+        permissionCenter: BrowserSitePermissionCenter())
     /// The color each sample site would hand its pin, keyed the way the shipping
     /// sidebar asks for it.
-    private let siteAccents: [TabID: BrowserTabIconAccent]
+    private let siteAccents: [UUID: BrowserTabIconAccent]
 
     init() {
-        let folder = BrowserFolder(title: String(localized: "Example folder"), symbol: "book.closed")
-        let reading = BrowserTab(
+        let folder = FolderState.Seed(title: String(localized: "Example folder"), symbol: "book.closed")
+        let reading = TabState.Seed(
             title: String(localized: "Reading list"), url: URL(string: "https://preview.invalid/reading"),
             symbol: "book.closed", placement: .saved, folderID: folder.id)
-        let plans = BrowserTab(
+        let plans = TabState.Seed(
             title: String(localized: "Weekend plans"), url: URL(string: "https://preview.invalid/plans"),
             symbol: "sun.max", placement: .saved, folderID: folder.id)
-        let recipes = BrowserTab(
+        let recipes = TabState.Seed(
             title: String(localized: "Recipes"), url: URL(string: "https://preview.invalid/recipes"),
             symbol: "fork.knife", placement: .saved)
         let pinSources: [(String, String, BrowserTabIconAccent)] = [
@@ -109,45 +104,64 @@ private final class BrowserAppearancePreviewState {
             ("Books", "book.fill", BrowserTabIconAccent(red: 0.96, green: 0.60, blue: 0.14)),
         ]
         let pins = pinSources.map { title, symbol, accent in
-            BrowserTab(
-                title: title, url: URL(string: "https://preview.invalid/" + title.lowercased()),
-                symbol: symbol, iconAccent: accent, placement: .pinned)
+            TabState.Seed(
+                title: title, url: URL(string: "https://preview.invalid/" + title.lowercased()), symbol: symbol,
+                iconAccent: TabIconAccent(red: accent.red, green: accent.green, blue: accent.blue), placement: .pinned)
         }
-        let notes = BrowserTab(
+        let notes = TabState.Seed(
             title: String(localized: "Meeting notes"), url: URL(string: "https://preview.invalid/notes"),
             symbol: "note.text", placement: .current)
-        let tickets = BrowserTab(
+        let tickets = TabState.Seed(
             title: String(localized: "Flight tickets"), url: URL(string: "https://preview.invalid/tickets"),
             symbol: "airplane", placement: .current)
-        let splitGroupID = SplitGroupID()
-        let docs = BrowserTab(
+        let split = SplitGroupState.Seed()
+        let docs = TabState.Seed(
             title: String(localized: "Draft"), url: URL(string: "https://preview.invalid/draft"),
-            symbol: "doc.text", placement: .current, splitGroupID: splitGroupID)
-        let research = BrowserTab(
+            symbol: "doc.text", placement: .current, splitGroupID: split.id)
+        let research = TabState.Seed(
             title: String(localized: "Research"), url: URL(string: "https://preview.invalid/research"),
-            symbol: "magnifyingglass", placement: .current, splitGroupID: splitGroupID)
-        var space = BrowserSpace(
-            id: SpaceID(), profile: BrowsingProfile(), name: "Preview", symbol: "paintpalette",
-            accent: .indigo, branding: .house(.winter, symbol: "paintpalette"),
+            symbol: "magnifyingglass", placement: .current, splitGroupID: split.id)
+        let space = SpaceState.Seed(
+            name: "Preview", symbol: "paintpalette", accent: .indigo, branding: SpaceAccent.indigo.house,
             folders: [folder], tabs: pins + [reading, plans, recipes, notes, tickets, docs, research],
-            selectedTabID: notes.id)
-        space.splitGroups = [BrowserSplitGroupMetadata(id: splitGroupID)]
+            splitGroups: [split])
         siteAccents = Dictionary(uniqueKeysWithValues: zip(pins.map(\.id), pinSources.map(\.2)))
         browser = BrowserStore(
-            session: BrowserSession(spaces: [space], selectedSpaceID: space.id),
-            persistence: InMemoryBrowserSessionPersistence(), browsingMode: .privateBrowsing)
+            seed: SessionState.Seed(spaces: [space]), showing: space.id, tabs: [space.id: notes.id],
+            browsingMode: .privateBrowsing)
         sidebarInteraction = BrowserSidebarInteractionState.connected(to: browser)
     }
 
-    var space: BrowserSpace { browser.session.spaces[0] }
-    var assignment: BrowserSpaceRuntimeAssignment { BrowserSpaceRuntimeAssignment(space: space) }
+    /// The sample Space as the read model holds it, and what its rows act
+    /// through, in this preview's own memory-only store.
+    func listContext(capabilities: BrowserInteractionCapabilities) -> BrowserSidebarListContext? {
+        guard let space = browser.workspaceModel?.spaces.models.first, let window = browser.windowModel else {
+            return nil
+        }
+        return BrowserSidebarListContext(
+            space: space, window: window, favicons: browser.core.state.favicons, browser: browser,
+            spaceAccess: spaceAccess, pageAccess: pageAccess, tabActions: tabActions, capabilities: capabilities,
+            select: { [browser] in browser.selectTab($0) })
+    }
 
-    func applyTheme(_ source: BrowserSpace?) {
-        guard let source else { return }
-        browser.session.spaces[0].branding = source.branding
-        if let folder = source.folders.first {
-            browser.session.spaces[0].folders[0].color = folder.color
-            browser.session.spaces[0].folders[0].symbol = folder.symbol
+    /// The look before the sample Space reaches the read model.
+    var fallbackBranding: SpaceBranding { BrowserSpaceHousePalette.winter.look }
+
+    var assignment: BrowserSpaceRuntimeAssignment {
+        guard let space = browser.workspaceModel?.spaces.models.first else {
+            return BrowserSpaceRuntimeAssignment(spaceID: UUID(), profileID: UUID())
+        }
+        return BrowserSpaceRuntimeAssignment(spaceID: space.id, profileID: space.profileID)
+    }
+
+    /// Wears the look and first folder's color and icon of `source`, the Space
+    /// being edited, by changing this preview's own memory-only Space.
+    func applyTheme(_ source: BrowserSpaceAppearance?) {
+        guard let source, let space = browser.workspaceModel?.spaces.models.first else { return }
+        browser.updateSpaceBranding(source.branding, in: space.id)
+        if let folder = source.leadingFolder, let sample = space.folders.models.first {
+            browser.setFolderColor(sample.id, in: space.id, color: folder.displayColor)
+            browser.setFolderSymbol(sample.id, in: space.id, symbol: folder.displaySymbol)
         }
     }
 

@@ -27,12 +27,7 @@
                     VStack(alignment: .leading, spacing: 24) {
                         masthead
                         chapterPicker
-                        if chapter == 2 {
-                            heading
-                            BrowserGettingStartedExtensions(openURL: openURL)
-                        } else {
-                            practiceStage(wide: wide, height: max(560, min(680, geometry.size.height - 175)))
-                        }
+                        practiceStage(wide: wide, height: max(560, min(680, geometry.size.height - 175)))
                         footer
                     }
                     .padding(geometry.size.width < 600 ? 20 : 30)
@@ -44,6 +39,7 @@
                 .background(CrestBrandTheme.canvas)
             }
             .environment(practice.sidebarInteraction)
+            .onAppear { chapter = min(max(chapter, 0), 1) }
             .onDisappear { practice.sidebarInteraction.cancel() }
             .font(CrestTypography.sans(14))
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: chapter)
@@ -107,7 +103,6 @@
             HStack(spacing: 8) {
                 chapterButton("01", "Tabs & folders", index: 0)
                 chapterButton("02", "Split View", index: 1)
-                chapterButton("03", "Extensions", index: 2)
             }
         }
 
@@ -131,16 +126,14 @@
         private var title: LocalizedStringKey {
             switch chapter {
             case 0: "Tabs and folders"
-            case 1: "Split View"
-            default: "Extensions"
+            default: "Split View"
             }
         }
 
         private var introduction: LocalizedStringKey {
             switch chapter {
             case 0: "Pinned apps stay at the top, saved tabs above the line, and open tabs below it."
-            case 1: "View pages side by side, change focus, and rearrange cards."
-            default: "Install compatible Safari, Chrome, and Firefox extensions on Mac."
+            default: "View pages side by side, change focus, and rearrange cards."
             }
         }
 
@@ -194,11 +187,15 @@
         @ViewBuilder private var lessonActions: some View {
             switch lesson {
             case 0:
-                Button("Pin Gmail", systemImage: "pin.fill") { practice.browser.pinTab(practice.mailID) }
-                    .buttonStyle(.crestPrimary(tint: CrestBrandPalette.butter))
+                Button("Pin Gmail", systemImage: "pin.fill") {
+                    if let mail = practice.tabID(.mail) { practice.browser.pinTab(mail) }
+                }
+                .buttonStyle(.crestPrimary(tint: CrestBrandPalette.butter))
             case 1:
-                Button("Save this tab", systemImage: "bookmark.fill") { practice.browser.saveTab(practice.trailID) }
-                    .buttonStyle(.crestPrimary(tint: CrestBrandPalette.butter))
+                Button("Save this tab", systemImage: "bookmark.fill") {
+                    if let trail = practice.tabID(.trail) { practice.browser.saveTab(trail) }
+                }
+                .buttonStyle(.crestPrimary(tint: CrestBrandPalette.butter))
             case 2:
                 HStack {
                     Button("Add folder", systemImage: "folder.badge.plus") { practice.addFolder(nested: false) }
@@ -222,7 +219,7 @@
 
         private func selectChapter(_ index: Int) {
             if index == 1 && chapter != 1 { practice.reset() }
-            chapter = index
+            chapter = min(max(index, 0), 1)
         }
 
         private var footer: some View {
@@ -230,7 +227,7 @@
                 Text("Practice changes affect only this example Space.").font(CrestTypography.sans(12)).foregroundStyle(
                     .secondary)
                 Spacer()
-                if chapter < 2 {
+                if chapter < 1 {
                     Button("Next chapter", systemImage: "arrow.right") { selectChapter(chapter + 1) }.buttonStyle(
                         .plain)
                 } else {

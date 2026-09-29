@@ -1,15 +1,15 @@
 import SwiftUI
 
 struct BrowserSourceImportContent: View {
-    let application: BrowserImportApplication?
+    let application: ImportSource?
     let review: BrowserImportSpaceReview
     let sections: BrowserSourceImportPreviewSections
-    let overflowTabIDs: Set<TabID>
-    let duplicateTabIDs: Set<TabID>
+    let overflowTabIDs: Set<UUID>
+    let duplicateTabIDs: Set<UUID>
     let duplicateDestinationName: String?
-    let setIncluded: (TabID, Bool) -> Void
-    let setSectionIncluded: (Set<TabID>, Bool) -> Void
-    let setPlacement: (TabID, TabPlacement) -> Void
+    let setIncluded: (UUID, Bool) -> Void
+    let setSectionIncluded: (Set<UUID>, Bool) -> Void
+    let setPlacement: (UUID, TabPlacement) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -42,7 +42,7 @@ struct BrowserSourceImportContent: View {
                 space: review.sourceSpace
             )
 
-            if application == .arc, sections.currentTabs.isEmpty {
+            if application?.listsNewTab == true, sections.currentTabs.isEmpty {
                 Label("New Tab", systemImage: "plus")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -99,18 +99,11 @@ struct BrowserSourceImportContent: View {
         }
     }
 
-    private var pinnedTitle: String {
-        switch application {
-        case .arc: "FAVORITES"
-        case .zen: "ESSENTIALS"
-        default: "PINNED"
-        }
+    private var pinnedTitle: LocalizedStringResource {
+        application?.pinnedSectionTitle ?? "PINNED"
     }
 
-    private var savedTitle: String {
-        switch application {
-        case .chrome, .safari: "BOOKMARKS"
-        default: "SAVED"
-        }
+    private var savedTitle: LocalizedStringResource {
+        application?.savedSectionTitle ?? "SAVED"
     }
 }

@@ -10,10 +10,9 @@ final class MobileBrowserRootModel {
     let pages: MobileBrowserPageStore
     let navigation: MobileBrowserNavigationState
     let spaceAccess: BrowserSpaceAccessController
-    private let pageSession: BrowserPageSessionSynchronizer
     let windowState: BrowserWindowStateStore?
     private let layoutPersistence: BrowserWindowLayoutPersistence
-    let startupBehavior: BrowserStartupBehavior
+    let startupBehavior: StartupBehavior
 
     var address = ""
     var hasPreparedBrowser = false
@@ -35,7 +34,7 @@ final class MobileBrowserRootModel {
         navigation: MobileBrowserNavigationState,
         spaceAccess: BrowserSpaceAccessController,
         windowState: BrowserWindowStateStore?,
-        startupBehavior: BrowserStartupBehavior,
+        startupBehavior: StartupBehavior,
         persistedSidebarWidth: CGFloat
     ) {
         self.browser = browser
@@ -45,7 +44,6 @@ final class MobileBrowserRootModel {
         settings = MobileBrowserSettingsPresentation(
             browser: browser, pages: pages, navigation: navigation, spaceAccess: spaceAccess)
         self.spaceAccess = spaceAccess
-        pageSession = BrowserPageSessionSynchronizer(browser: browser, spaceAccess: spaceAccess)
         self.windowState = windowState
         layoutPersistence = BrowserWindowLayoutPersistence(windowState: windowState)
         self.startupBehavior = startupBehavior
@@ -80,46 +78,35 @@ extension MobileBrowserRootModel {
 
     /// Releases moved pages and discards archived state for removed tabs.
     func reconcileResidentPages() {
-        pages.reconcile(session: browser.session)
+        pages.reconcile()
     }
 
     func reconcileTabIcons() {
-        pages.reconcileTabIcons(in: browser.session)
+        pages.reconcileTabIcons()
     }
 
     /// Applies current Space credential preferences to resident pages.
     func reconcileCredentialAccess() {
-        pages.reconcileCredentialAccess(in: browser.session)
+        pages.reconcileCredentialAccess()
     }
 
     func reconcileContentBlocking() {
         guard hasPreparedBrowser else { return }
-        let session = browser.session
-        Task { await pages.reconcileContentBlocking(in: session) }
+        Task { await pages.reconcileContentBlocking() }
     }
 
     func reloadContentBlocking() {
         guard hasPreparedBrowser else { return }
-        let session = browser.session
-        Task { await pages.reloadContentBlocking(in: session) }
+        Task { await pages.reloadContentBlocking() }
     }
 
-    func relockProtectedSpaces(_ spaceIDs: Set<SpaceID>) {
+    func relockProtectedSpaces(_ spaceIDs: Set<UUID>) {
         // The Space itself, not just its ID: relocking has to reach the
         // profile its archived tab state is filed under, and that state
         // outlives the resident pages an ID alone can find.
-        for space in browser.session.spaces where spaceIDs.contains(space.id) {
+        for space in browser.spaceModels where spaceIDs.contains(space.id) {
             pages.relockProtectedSpace(space)
         }
-    }
-
-    func recordRenderedSelection(_ selection: BrowserTabRuntimeAssignment?) {
-        guard let selection else { return }
-        windowState?.recordRenderedTab(
-            selection.tabID,
-            in: selection.spaceID,
-            session: browser.session
-        )
     }
 
     func regularSidebarPresentationChanged(
@@ -149,18 +136,11 @@ extension MobileBrowserRootModel {
 // MARK: - Page Synchronization
 
 extension MobileBrowserRootModel {
+    /// Shows the address the selected page reads in the core in the address
+    /// field, unless the person is editing it or the Space is locked.
     func synchronizePageMetadata(isAddressEditing: Bool) {
-        guard let page = selectedPage, let source = selectedTabAssignment,
-            let updatedAddress = pageSession.synchronize(page.metadata, matching: source)
-        else { return }
-        if !isAddressEditing { address = updatedAddress }
-    }
-
-    func recordCompletedNavigation(isAddressEditing: Bool) {
-        guard let page = selectedPage, page.url != nil, let source = selectedTabAssignment else { return }
-        synchronizePageMetadata(isAddressEditing: isAddressEditing)
-        guard let space = pageSession.recordCompletedNavigation(page.metadata, matching: source) else { return }
-        Task { await pages.styleVisitedLinks(in: space) }
+        guard !isAddressEditing, !selectedSpaceIsLocked, let page = selectedPage else { return }
+        address = (page.live.displayURL ?? browser.shownTab?.address)?.absoluteString ?? ""
     }
 
 }
@@ -168,48 +148,44 @@ extension MobileBrowserRootModel {
 // MARK: - Navigation
 
 extension MobileBrowserRootModel {
-    func selectTab(_ id: TabID) {
-        guard let space = browser.selectedSpace, !spaceAccess.isLocked(space),
-            let tab = space.tabs.first(where: { $0.id == id })
-        else { return }
+    func selectTab(_ id: UUID) {
+        guard let space = browser.shownSpace, !spaceAccess.isLocked(space), let tab = space.tabs.model(id) else {
+            return
+        }
         if settings.destination(for: tab) == .settings {
             presentSettings(
-                matching: BrowserTabRuntimeAssignment(
-                    tabID: tab.id, spaceID: space.id, profileID: space.profile.id))
+                matching: BrowserTabRuntimeAssignment(tabID: tab.id, spaceID: space.id, profileID: space.profileID))
             return
         }
         browser.selectTab(id)
-        pages.select(session: browser.session)
-        address = browser.selectedTab?.url?.absoluteString ?? ""
+        pages.select()
+        address = browser.shownTab?.url ?? ""
         navigation.selectTab()
     }
 
+    /// Loads what the person typed, which the core resolves by the Space's
+    /// address rules. A native Settings or Getting Started tab takes the
+    /// address first, so a page can open for it. False when a rule refused it.
     @discardableResult
     func submitAddress() -> Bool {
-        guard
-            let url = AddressResolver.resolve(
-                address,
-                searchProvider: browser.selectedSpace?.browsingPreferences.searchProvider
-                    ?? .google
-            )
-        else { return false }
-        browser.navigateSelectedTab(to: url)
-        pages.selectAndLoad(url, in: browser.session)
-        address = url.absoluteString
+        let input = address
+        browser.navigateSelectedTab(to: input)
+        guard pages.selectAndNavigate(to: input) else { return false }
+        address = (selectedPage?.live.displayURL ?? browser.shownTab?.address)?.absoluteString ?? input
         navigation.selectTab()
         return true
     }
 
     func openURL(_ url: URL) {
         browser.openNewTab(url: url)
-        pages.select(session: browser.session)
+        pages.select()
         address = url.absoluteString
         navigation.selectTab()
     }
 
     func beginCompactNewTab() {
         browser.openNewTab()
-        pages.select(session: browser.session)
+        pages.select()
         address = ""
         navigation.selectTab()
         if navigation.regularSidebarPresentation == .floating {
@@ -223,8 +199,8 @@ extension MobileBrowserRootModel {
 
     func activateSelectedTab() {
         if routeSelectedSettingsAction() { return }
-        pages.select(session: browser.session)
-        address = browser.selectedTab?.url?.absoluteString ?? ""
+        pages.select()
+        address = browser.shownTab?.url ?? ""
         navigation.selectTab()
     }
 
@@ -248,8 +224,8 @@ extension MobileBrowserRootModel {
     ) {
         withAnimation(accessibleAnimation(CrestMotion.navigation, reduceMotion)) {
             guard browser.selectAdjacentSpace(direction) != nil else { return }
-            pages.select(session: browser.session)
-            address = browser.selectedTab?.url?.absoluteString ?? ""
+            pages.select()
+            address = browser.shownTab?.url ?? ""
         }
     }
 
@@ -265,17 +241,9 @@ extension MobileBrowserRootModel {
     var selectionSnapshot: MobileBrowserRootSelectionSnapshot {
         MobileBrowserRootSelectionSnapshot(
             sessionRevision: browser.sessionRevision,
-            selectedSpaceID: browser.session.selectedSpaceID,
-            selectedProfileID: browser.selectedSpace?.profile.id,
-            assignment: browser.selectedSpace.flatMap { space in
-                browser.selectedTab.map { tab in
-                    BrowserTabRuntimeAssignment(
-                        tabID: tab.id,
-                        spaceID: space.id,
-                        profileID: space.profile.id
-                    )
-                }
-            }
+            selectedSpaceID: browser.selectedSpaceID,
+            selectedProfileID: browser.shownSpace?.profileID,
+            assignment: browser.shownTabAssignment
         )
     }
 
@@ -284,8 +252,8 @@ extension MobileBrowserRootModel {
     ) -> MobileBrowserRootLockSnapshot {
         MobileBrowserRootLockSnapshot(
             sessionRevision: browser.sessionRevision,
-            selectedSpaceID: browser.session.selectedSpaceID,
-            selectedProfileID: browser.selectedSpace?.profile.id,
+            selectedSpaceID: browser.selectedSpaceID,
+            selectedProfileID: browser.shownSpace?.profileID,
             isLocked: selectedSpaceIsLocked,
             presentation: presentation
         )
@@ -299,26 +267,13 @@ extension MobileBrowserRootModel {
         selectedPageActions?.activePage
     }
 
-    var renderedPageSelection: BrowserTabRuntimeAssignment? {
-        guard let page = selectedPage else { return nil }
-        return BrowserTabRuntimeAssignment(
-            tabID: page.tabID,
-            spaceID: page.spaceID,
-            profileID: page.profileID
-        )
-    }
-
     var selectedSpaceIsLocked: Bool {
-        guard let space = browser.selectedSpace else { return false }
+        guard let space = browser.shownSpace else { return false }
         return spaceAccess.isLocked(space)
     }
 
-    var lockedSpaceIDs: Set<SpaceID> {
-        Set(
-            browser.session.spaces.compactMap { space in
-                spaceAccess.isLocked(space) ? space.id : nil
-            }
-        )
+    var lockedSpaceIDs: Set<UUID> {
+        Set(browser.spaceModels.filter(spaceAccess.isLocked).map(\.id))
     }
 
     @discardableResult
@@ -351,7 +306,7 @@ extension MobileBrowserRootModel {
         case .tabViewer:
             navigation.prepareForSpaceSwitch()
             pages.deactivatePagePresentation()
-            address = browser.selectedTab?.url?.absoluteString ?? ""
+            address = browser.shownTab?.url ?? ""
         case .selectedPage:
             activateSelectedTab()
         }
@@ -364,8 +319,8 @@ extension MobileBrowserRootModel {
             address = ""
             return
         }
-        pages.select(session: browser.session)
-        address = browser.selectedTab?.url?.absoluteString ?? ""
+        pages.select()
+        address = browser.shownTab?.url ?? ""
     }
 }
 
@@ -423,8 +378,8 @@ extension MobileBrowserRootModel {
             let revealsPage =
                 navigation.compactSidebarPresentation == .docked
             if revealsPage {
-                pages.select(session: browser.session)
-                address = browser.selectedTab?.url?.absoluteString ?? ""
+                pages.select()
+                address = browser.shownTab?.url ?? ""
             }
             withAnimation(accessibleAnimation(CrestMotion.chrome, reduceMotion)) {
                 navigation.toggleCompactSidebar()
@@ -445,26 +400,17 @@ extension MobileBrowserRootModel {
 // MARK: - Split Layout
 
 extension MobileBrowserRootModel {
-    /// The cards the content area presents for the current selection.
-    ///
-    /// Derived from the session rather than read out of
-    /// `MobileBrowserPageStore.presentedTabIDs`: both answer the same
-    /// `presentedSplitMembers(for:)` question, and taking the session's answer is
-    /// what keeps SwiftUI observing the thing that actually changes when
-    /// membership does.
-    var presentedSplitMembers: [BrowserTab] {
-        guard let space = browser.selectedSpace else { return [] }
-        return space.presentedSplitMembers(for: browser.selectedTab?.id)
+    /// The cards the content area presents, as the window's read model
+    /// publishes them, so SwiftUI observes what changes when membership does.
+    var presentedSplitMembers: [TabStateModel] {
+        browser.shownCards
     }
 
     /// The group the presented cards belong to, or `nil` when one tab presents
     /// alone. Column fractions are stored per group, so a lone tab has no layout
     /// to store.
-    var presentedSplitGroupID: SplitGroupID? {
-        guard let space = browser.selectedSpace,
-            let selectedTabID = browser.selectedTab?.id
-        else { return nil }
-        return space.splitGroup(containing: selectedTabID)
+    var presentedSplitGroupID: UUID? {
+        browser.shownSpace.flatMap(browser.shownSplitGroupID(in:))
     }
 
     var splitWidthTransactionBinding: Binding<BrowserSplitWidthTransaction> {
@@ -485,20 +431,19 @@ extension MobileBrowserRootModel {
         layoutPersistence.commitSplitLayout(fractions, groupID: presentedSplitGroupID)
     }
 
-    func focusSplitCard(_ tabID: TabID) {
-        guard tabID != browser.selectedTab?.id,
+    func focusSplitCard(_ tabID: UUID) {
+        guard tabID != browser.shownTab?.id,
             let member = presentedSplitMembers.first(where: { $0.id == tabID }),
-            let space = browser.selectedSpace, !spaceAccess.isLocked(space)
+            let space = browser.shownSpace, !spaceAccess.isLocked(space)
         else { return }
         if settings.destination(for: member) == .settings {
             presentSettings(
-                matching: BrowserTabRuntimeAssignment(
-                    tabID: tabID, spaceID: space.id, profileID: space.profile.id))
+                matching: BrowserTabRuntimeAssignment(tabID: tabID, spaceID: space.id, profileID: space.profileID))
             return
         }
         browser.selectTab(tabID)
-        pages.select(session: browser.session)
-        address = browser.selectedTab?.url?.absoluteString ?? ""
+        pages.select()
+        address = browser.shownTab?.url ?? ""
     }
 
     /// Builds a page for every column of an iPad split.
@@ -508,7 +453,7 @@ extension MobileBrowserRootModel {
     /// one card at a time, not of the platform.
     func prepareSplitCardPages() {
         for member in presentedSplitMembers {
-            pages.prepareResidentPage(for: member.id, in: browser.session)
+            pages.prepareResidentPage(for: member.id)
         }
     }
 
@@ -521,19 +466,14 @@ extension MobileBrowserRootModel {
     @discardableResult
     func selectAdjacentSplitCard(
         _ direction: BrowserSpaceSwipeDirection
-    ) -> TabID? {
-        guard let selectedTabID = browser.selectedTab?.id,
-            let space = browser.selectedSpace,
-            space.splitGroup(containing: selectedTabID) != nil,
+    ) -> UUID? {
+        guard let selectedTabID = browser.shownTab?.id, presentedSplitGroupID != nil,
             let target = MobileSplitCardPagerPolicy.adjacentMember(
-                of: selectedTabID,
-                in: space.presentedSplitMembers(for: selectedTabID).map(\.id),
-                direction: direction
-            )
+                of: selectedTabID, in: presentedSplitMembers.map(\.id), direction: direction)
         else { return nil }
         browser.selectTab(target)
-        pages.select(session: browser.session)
-        address = browser.selectedTab?.url?.absoluteString ?? ""
+        pages.select()
+        address = browser.shownTab?.url ?? ""
         return target
     }
 }
@@ -542,14 +482,7 @@ extension MobileBrowserRootModel {
 
 extension MobileBrowserRootModel {
     var selectedTabAssignment: BrowserTabRuntimeAssignment? {
-        guard let space = browser.selectedSpace, let tab = browser.selectedTab else {
-            return nil
-        }
-        return BrowserTabRuntimeAssignment(
-            tabID: tab.id,
-            spaceID: space.id,
-            profileID: space.profile.id
-        )
+        browser.shownTabAssignment
     }
 
     func isPaletteSourceAvailable(
@@ -581,8 +514,8 @@ extension MobileBrowserRootModel {
         }
         browser.selectSpace(destination.space.id)
         browser.selectTab(destination.tab.id)
-        pages.select(session: browser.session)
-        address = browser.selectedTab?.url?.absoluteString ?? ""
+        pages.select()
+        address = browser.shownTab?.url ?? ""
         return true
     }
 
@@ -601,23 +534,11 @@ extension MobileBrowserRootModel {
         else { return false }
         switch mode {
         case .editLocation:
-            browser.navigateSelectedTab(to: url)
+            browser.navigateSelectedTab(to: url.absoluteString)
         case .newTab:
-            if browser.selectedTab?.isStartPage == true {
-                browser.navigateSelectedTab(to: url)
-            } else {
-                guard
-                    browser.openNewTab(
-                        url: url,
-                        matching: BrowserSpaceRuntimeAssignment(
-                            spaceID: source.spaceID,
-                            profileID: source.profileID
-                        )
-                    ) != nil
-                else { return false }
-            }
+            guard browser.openAddress(url, in: source.spaceID) else { return false }
         }
-        pages.selectAndLoad(url, in: browser.session)
+        pages.selectAndNavigate(to: url.absoluteString)
         address = url.absoluteString
         return true
     }
@@ -640,13 +561,13 @@ extension MobileBrowserRootModel {
 // MARK: - Downloads
 
 extension MobileBrowserRootModel {
-    var selectedUtilityDownloads: [BrowserDownloadItem] {
-        guard let profileID = browser.selectedSpace?.profile.id else { return [] }
+    var selectedUtilityDownloads: [DownloadState] {
+        guard let profileID = browser.shownSpace?.profileID else { return [] }
         return pages.downloadCenter.items(for: profileID)
     }
 
-    var newUtilityDownloads: [BrowserDownloadItem] {
-        guard let profileID = browser.selectedSpace?.profile.id else { return [] }
+    var newUtilityDownloads: [DownloadState] {
+        guard let profileID = browser.shownSpace?.profileID else { return [] }
         return pages.downloadCenter.unacknowledgedItems(for: profileID)
     }
 }

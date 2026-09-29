@@ -4,7 +4,7 @@ struct BrowserLinkSettingsContent: View {
     let browser: BrowserStore
     let spaceAccess: BrowserSpaceAccessController
 
-    @Bindable var links: BrowserLinkPreferenceStore
+    let links: BrowserLinkPreferenceStore
 
     var body: some View {
         BrowserExternalLinkDestinationSection(
@@ -50,79 +50,67 @@ struct BrowserLinkSettingsContent: View {
         }
     }
 
-    private var availableSpaces: [BrowserSpace] {
-        browser.session.spaces.filter {
-            !browser.deletingSpaceIDs.contains($0.id)
-        }
+    private var availableSpaces: [SpaceModel] {
+        browser.spaceModels.filter { !browser.isDeleting($0.id) }
     }
 
-    private var resolvedSelectedSpaceID: SpaceID {
+    private var resolvedSelectedSpaceID: UUID {
         BrowserLinkSettingsSpacePolicy.resolvedExternalSpaceID(
-            preferredSpaceID: browser.session.selectedSpaceID,
-            spaces: browser.session.spaces,
-            selectedSpaceID: browser.session.selectedSpaceID,
-            unavailableSpaceIDs: browser.deletingSpaceIDs
+            preferredSpaceID: browser.selectedSpaceID,
+            spaces: availableSpaces,
+            selectedSpaceID: browser.selectedSpaceID
         )
     }
 
-    private var lockedRouteDestinationSpaces: [BrowserSpace] {
-        BrowserSettingsPrivacyPolicy.lockedRouteDestinationSpaces(
-            for: links.preferences.routes,
-            in: browser.session.spaces,
-            accessController: spaceAccess
-        )
+    /// The locked Spaces some route opens links in: while one is locked, the
+    /// routes stay hidden, since their patterns name the sites it is used for.
+    private var lockedRouteDestinationSpaces: [SpaceModel] {
+        let destinationIDs = Set(links.preferences.routes.map(\.destinationSpaceID))
+        return browser.spaceModels.filter { destinationIDs.contains($0.id) && spaceAccess.isLocked($0) }
     }
 
-    private var externalDestinationBinding: Binding<BrowserExternalLinkDestination> {
+    private var externalDestinationBinding: Binding<ExternalLinkDestination> {
         Binding {
-            links.preferences.externalLinkDestination
+            links.preferences.destination
         } set: { value in
-            links.update { $0.externalLinkDestination = value }
+            links.chooseExternalDestination(value)
         }
     }
 
-    private var archivePolicyBinding: Binding<BrowserQuickWindowArchivePolicy> {
+    private var archivePolicyBinding: Binding<QuickWindowArchivePolicy> {
         Binding {
-            links.preferences.quickWindowArchivePolicy
+            links.preferences.archivePolicy
         } set: { value in
-            links.update { $0.quickWindowArchivePolicy = value }
+            links.chooseArchivePolicy(value)
         }
     }
 
-    private var externalSpaceBinding: Binding<SpaceID?> {
+    private var externalSpaceBinding: Binding<UUID?> {
         Binding {
             BrowserLinkSettingsSpacePolicy.resolvedExternalSpaceID(
-                preferredSpaceID: links.preferences.externalLinkSpaceID,
-                spaces: browser.session.spaces,
-                selectedSpaceID: browser.session.selectedSpaceID,
-                unavailableSpaceIDs: browser.deletingSpaceIDs
+                preferredSpaceID: links.preferences.destinationSpaceID,
+                spaces: availableSpaces,
+                selectedSpaceID: browser.selectedSpaceID
             )
         } set: { value in
-            links.update { $0.externalLinkSpaceID = value }
+            guard let value else { return }
+            links.chooseExternalDestination(links.preferences.destination, spaceID: value)
         }
     }
 
     private var rememberSpaceBinding: Binding<Bool> {
-        Binding {
-            links.preferences.remembersQuickWindowSpaceBySite
-        } set: { value in
-            links.update { $0.remembersQuickWindowSpaceBySite = value }
-        }
+        links.binding(.remembersSpaceBySite, reading: \.remembersSpaceBySite)
     }
 
     private var automaticPeekBinding: Binding<Bool> {
-        Binding {
-            links.preferences.automaticallyOpensPeek
-        } set: { value in
-            links.update { $0.automaticallyOpensPeek = value }
-        }
+        links.binding(.opensPeekAutomatically, reading: \.opensPeekAutomatically)
     }
 
-    private var peekClickModifierBinding: Binding<BrowserLinkClickModifier> {
+    private var peekClickModifierBinding: Binding<LinkPeekModifier> {
         Binding {
-            links.preferences.peekClickModifier
+            links.preferences.peekModifier
         } set: { value in
-            links.update { $0.peekClickModifier = value }
+            links.choosePeekModifier(value)
         }
     }
 

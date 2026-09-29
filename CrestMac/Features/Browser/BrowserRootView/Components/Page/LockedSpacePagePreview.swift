@@ -1,17 +1,18 @@
 import CoreImage
 import SwiftUI
-import WebKit
 
 /// Only processed pixels reach the locked surface. It never mounts a WebKit
 /// view, and a missing snapshot leaves the opaque access screen in place.
 struct LockedSpacePagePreview: View {
-    let space: BrowserSpace
+    let space: SpaceModel
+    /// The tabs the window shows side by side in `space`.
+    let cards: [TabStateModel]
     let pages: BrowserPagePool
-    @State private var images: [TabID: CGImage] = [:]
+    @State private var images: [UUID: CGImage] = [:]
 
     var body: some View {
         HStack(spacing: BrowserChromeLayout.pageBrandSeamWidth) {
-            ForEach(space.presentedSplitMembers(for: space.selectedTabID)) { tab in
+            ForEach(cards) { tab in
                 GeometryReader { geometry in
                     if let image = images[tab.id] {
                         Image(decorative: image, scale: 1)
@@ -26,14 +27,14 @@ struct LockedSpacePagePreview: View {
         .allowsHitTesting(false)
         .accessibilityHidden(true)
         .task(id: BrowserSpaceRuntimeAssignment(space: space)) {
-            var obscured: [TabID: CGImage] = [:]
-            for tab in space.presentedSplitMembers(for: space.selectedTabID) {
+            var obscured: [UUID: CGImage] = [:]
+            for tab in cards {
                 guard !Task.isCancelled else { return }
                 guard
                     let page = pages.residentPage(
                         matching: BrowserTabRuntimeAssignment(
-                            tabID: tab.id, spaceID: space.id, profileID: space.profile.id)),
-                    let image = await snapshot(page.webView)
+                            tabID: tab.id, spaceID: space.id, profileID: space.profileID)),
+                    let image = await snapshot(page)
                 else { continue }
                 let blurred = await Task.detached(priority: .utility) { Self.obscure(image) }.value
                 guard !Task.isCancelled else { return }
@@ -43,12 +44,9 @@ struct LockedSpacePagePreview: View {
         }
     }
 
-    private func snapshot(_ webView: WKWebView) async -> CGImage? {
-        let configuration = WKSnapshotConfiguration()
-        configuration.afterScreenUpdates = false
-        configuration.snapshotWidth = 256
+    private func snapshot(_ page: BrowserPage) async -> CGImage? {
         return await withCheckedContinuation { continuation in
-            webView.takeSnapshot(with: configuration) { image, _ in
+            page.captureViewport(width: 256) { image in
                 continuation.resume(returning: image?.cgImage(forProposedRect: nil, context: nil, hints: nil))
             }
         }

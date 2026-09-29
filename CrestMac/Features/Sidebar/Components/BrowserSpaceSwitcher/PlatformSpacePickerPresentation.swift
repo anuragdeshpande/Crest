@@ -6,9 +6,10 @@ import SwiftUI
 /// scroll viewport with the page layers' actual presentation.
 struct PlatformSpacePickerPresentation: NSViewRepresentable {
     let presentation: SpacePagerPresentation
-    let spaces: [BrowserSpace]
-    let selectedSpaceID: SpaceID?
-    let frames: [SpaceID: CGRect]
+    let style: CrestSpaceIconPickerStyle
+    let spaces: [BrowserSpaceIdentity]
+    let selectedSpaceID: UUID?
+    let frames: [UUID: CGRect]
     let selectionTint: Color?
 
     func makeNSView(context: Context) -> SpacePickerPresentationView {
@@ -17,7 +18,7 @@ struct PlatformSpacePickerPresentation: NSViewRepresentable {
 
     func updateNSView(_ view: SpacePickerPresentationView, context: Context) {
         view.update(
-            presentation: presentation, spaces: spaces,
+            presentation: presentation, style: style, spaces: spaces,
             selectedSpaceID: selectedSpaceID, frames: frames, selectionTint: selectionTint)
     }
 
@@ -31,10 +32,11 @@ final class SpacePickerPresentationView: NSView {
 
     private let highlight = CAShapeLayer()
     private var presentation: SpacePagerPresentation?
+    private var style = CrestSpaceIconPickerStyle.compact
     private weak var clipView: NSClipView?
-    private var spaceIDs: [SpaceID] = []
-    private var frames: [SpaceID: CGRect] = [:]
-    private var colors: [SpaceID: NSColor] = [:]
+    private var spaceIDs: [UUID] = []
+    private var frames: [UUID: CGRect] = [:]
+    private var colors: [UUID: NSColor] = [:]
     private var lastSnapshot: SpacePagerPresentation.Snapshot?
     private var scrollSegment: SpacePickerScrollProgress?
     private var activeTransition: SpacePagerSettlement?
@@ -76,13 +78,14 @@ final class SpacePickerPresentationView: NSView {
     }
 
     func update(
-        presentation: SpacePagerPresentation, spaces: [BrowserSpace],
-        selectedSpaceID: SpaceID?, frames: [SpaceID: CGRect], selectionTint: Color?
+        presentation: SpacePagerPresentation, style: CrestSpaceIconPickerStyle, spaces: [BrowserSpaceIdentity],
+        selectedSpaceID: UUID?, frames: [UUID: CGRect], selectionTint: Color?
     ) {
         if self.presentation !== presentation {
             disconnect()
             self.presentation = presentation
         }
+        self.style = style
         let ids = spaces.map(\.id)
         if spaceIDs != ids {
             lastSnapshot = nil
@@ -235,10 +238,11 @@ final class SpacePickerPresentationView: NSView {
         highlight.isHidden = false
         highlight.frame = frame
         let stroke = CrestLayout.hairline
-        highlight.path = CGPath(
-            roundedRect: CGRect(origin: .zero, size: frame.size).insetBy(dx: stroke / 2, dy: stroke / 2),
-            cornerWidth: CrestSpaceIconPickerMetrics.cornerRadius,
-            cornerHeight: CrestSpaceIconPickerMetrics.cornerRadius, transform: nil)
+        highlight.path =
+            CrestSpaceIconPickerShape(style: style)
+            .inset(by: stroke / 2)
+            .path(in: CGRect(origin: .zero, size: frame.size))
+            .cgPath
         highlight.fillColor =
             color.withAlphaComponent(
                 color.alphaComponent * CrestSpaceIconPickerMetrics.selectionFillOpacity
@@ -247,7 +251,7 @@ final class SpacePickerPresentationView: NSView {
         highlight.lineWidth = stroke
     }
 
-    private func interpolation(at position: CGFloat) -> (SpaceID, SpaceID, CGFloat)? {
+    private func interpolation(at position: CGFloat) -> (UUID, UUID, CGFloat)? {
         guard let sample = SpacePagerInterpolation(position: position, count: spaceIDs.count) else { return nil }
         return (spaceIDs[sample.lower], spaceIDs[sample.upper], sample.fraction)
     }

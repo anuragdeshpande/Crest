@@ -1,14 +1,21 @@
 import Foundation
 
 enum BrowserNavigationFailurePreviewFixture {
-    static let branding = BrowserSpaceBranding(colors: [.ink, .ocean, .gold])
+    /// The Indigo accent's legacy colors on a readable diagonal banner.
+    static let branding: SpaceBranding = {
+        var look = SpaceAccent.indigo.house
+        look.colors = ColorPalette(colors: SpaceAccent.indigo.legacyColors)
+        look.readabilityFade = SpaceBranding.legacyReadabilityFade
+        look.iconStyle = .simpleSymbol
+        return look
+    }()
     static let offline = makeFailure(
         error: URLError(.notConnectedToInternet),
-        phase: .provisional
+        replacedDocument: false
     )
     static let certificate = makeFailure(
         error: URLError(.secureConnectionFailed),
-        phase: .committed
+        replacedDocument: true
     )
 
     private static let fallbackURL: URL = {
@@ -24,12 +31,12 @@ enum BrowserNavigationFailurePreviewFixture {
 
     private static func makeFailure(
         error: URLError,
-        phase: BrowserNavigationFailurePhase
-    ) -> BrowserNavigationFailure {
+        replacedDocument: Bool
+    ) -> PageFailure {
         guard
-            let failure = BrowserNavigationFailure(
+            let failure = PageFailure(
                 error: error,
-                phase: phase,
+                replacedDocument: replacedDocument,
                 fallbackURL: fallbackURL
             )
         else {

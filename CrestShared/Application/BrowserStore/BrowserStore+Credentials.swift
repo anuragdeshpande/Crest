@@ -5,7 +5,7 @@ import Foundation
 extension BrowserStore: BrowserCredentialSuggestionLoading {
     func credentialSuggestions(
         for origin: CredentialOrigin,
-        in spaceID: SpaceID
+        in spaceID: UUID
     ) async throws -> [CredentialDescriptor] {
         guard let url = URL(string: origin.description) else {
             throw CredentialVaultError.invalidOrigin
@@ -18,14 +18,14 @@ extension BrowserStore: BrowserCredentialSuggestionLoading {
 
 extension BrowserStore {
     func credentialSuggestions(for url: URL) async throws -> [CredentialDescriptor] {
-        guard let spaceID = selectedSpace?.id else {
+        guard let spaceID = shownSpace?.id else {
             throw CredentialVaultError.missingSpace
         }
         return try await credentialSuggestions(for: url, in: spaceID)
     }
 
-    func savedCredentialDescriptors(in spaceID: SpaceID) async throws -> [CredentialDescriptor] {
-        guard session.space(id: spaceID) != nil else {
+    func savedCredentialDescriptors(in spaceID: UUID) async throws -> [CredentialDescriptor] {
+        guard spaceModel(spaceID) != nil else {
             throw CredentialVaultError.missingSpace
         }
         return try await credentialVault.descriptors(in: spaceID)
@@ -33,12 +33,12 @@ extension BrowserStore {
 
     func credentialSuggestions(
         for url: URL,
-        in spaceID: SpaceID
+        in spaceID: UUID
     ) async throws -> [CredentialDescriptor] {
-        guard let space = session.space(id: spaceID) else {
+        guard let space = spaceModel(spaceID) else {
             throw CredentialVaultError.missingSpace
         }
-        guard space.credentialPreferences.isEnabled else { return [] }
+        guard space.settings.credentialPreferences.isEnabled else { return [] }
         guard let origin = CredentialOrigin(url: url) else {
             throw CredentialVaultError.invalidOrigin
         }
@@ -46,22 +46,22 @@ extension BrowserStore {
         return try await credentialVault.descriptors(matching: origin, in: spaceID)
     }
 
-    func credential(id: CredentialID) async throws -> BrowserCredential? {
-        guard let spaceID = selectedSpace?.id else {
+    func credential(id: UUID) async throws -> BrowserCredential? {
+        guard let spaceID = shownSpace?.id else {
             throw CredentialVaultError.missingSpace
         }
         return try await credential(id: id, in: spaceID)
     }
 
-    func credential(id: CredentialID, in spaceID: SpaceID) async throws -> BrowserCredential? {
-        guard session.space(id: spaceID) != nil else {
+    func credential(id: UUID, in spaceID: UUID) async throws -> BrowserCredential? {
+        guard spaceModel(spaceID) != nil else {
             throw CredentialVaultError.missingSpace
         }
         return try await credentialVault.credential(id: id, in: spaceID)
     }
 
-    func credentialInventory(in spaceID: SpaceID) async throws -> [BrowserCredential] {
-        guard session.space(id: spaceID) != nil else {
+    func credentialInventory(in spaceID: UUID) async throws -> [BrowserCredential] {
+        guard spaceModel(spaceID) != nil else {
             throw CredentialVaultError.missingSpace
         }
         let descriptors = try await credentialVault.descriptors(in: spaceID)
@@ -85,25 +85,52 @@ extension BrowserStore {
 
     func httpAuthenticationCredential(
         for protectionSpace: BrowserHTTPAuthenticationProtectionSpace,
-        in spaceID: SpaceID
+        in spaceID: UUID
     ) async throws -> BrowserCredential? {
-        guard let space = session.space(id: spaceID) else {
+        guard let space = spaceModel(spaceID) else {
             throw CredentialVaultError.missingSpace
         }
-        guard space.credentialPreferences.isEnabled else { return nil }
+        guard space.settings.credentialPreferences.isEnabled else { return nil }
         guard protectionSpace.origin.isSecure else { return nil }
         let descriptors = try await credentialVault.descriptors(
             matching: protectionSpace,
             in: spaceID
         )
-        guard
-            let descriptor = descriptors.max(
-                by: BrowserCredentialRecencyPolicy.isLessRecent
-            )
-        else {
+        // Without a recency answer from the core, nothing is filled.
+        guard let descriptor = try? core.mostRecentCredential(descriptors) else {
             return nil
         }
         return try await credentialVault.credential(id: descriptor.id, in: spaceID)
+    }
+}
+
+// MARK: - Generated passwords and system Passwords
+
+extension BrowserStore {
+    /// How to compose a generated password. The password itself is drawn
+    /// natively, so it never enters the core.
+    func strongPasswordRecipe() throws -> StrongPasswordRecipe {
+        do {
+            return try core.query(StrongPassword(length: nil))
+        } catch {
+            throw BrowserStrongPasswordGenerationError.unavailable
+        }
+    }
+
+    /// Whether this launch can offer saved passwords to the system's Passwords
+    /// app. A core that refuses the platform's facts reports it unsupported.
+    var systemPasswordWriteThroughAvailability: SystemPasswordWriteThroughAvailability {
+        (try? core.query(BrowserSystemPasswordWriteThroughSystem.facts()))?.availability ?? .unsupportedPlatform
+    }
+
+    /// Whether a save prompt in a Space with these preferences goes on to
+    /// offer the password to the system's Passwords app. A core that cannot
+    /// answer does not offer it.
+    func offersSystemPasswordWriteThrough(for preferences: CredentialPreferences) -> Bool {
+        let offer = SystemPasswordOffer(
+            spaceOffersSystemPasswords: preferences.alsoOffersSaveToSystemPasswords,
+            availability: systemPasswordWriteThroughAvailability, isPrivateBrowsing: isPrivateBrowsing)
+        return (try? core.query(offer))?.offers ?? false
     }
 }
 
@@ -111,44 +138,48 @@ extension BrowserStore {
 
 extension BrowserStore {
     func updateCredentialPreferences(
-        _ preferences: BrowserCredentialPreferences,
-        in spaceID: SpaceID
+        _ preferences: CredentialPreferences,
+        in spaceID: UUID
     ) {
-        if isTemporaryWorkspace {
-            temporaryProfileSettingsAuthority(in: spaceID)?.updateCredentialPreferences(preferences, in: spaceID)
-            return
-        }
-        guard session.space(id: spaceID) != nil else { return }
-        session.updateCredentialPreferences(preferences, in: spaceID)
-        persist(scope: .core)
+        sendSpaceSettings(
+            SetCredentialPreferences(
+                workspaceID: profileSettingsBrowser.family.workspaceID, spaceID: spaceID, preferences: preferences))
     }
 
     func setCrestPasswordSynchronization(
         _ isSynchronizable: Bool,
-        in spaceID: SpaceID
+        in spaceID: UUID
     ) async throws {
-        if isTemporaryWorkspace {
-            guard let source = temporaryProfileSettingsAuthority(in: spaceID) else {
-                throw CredentialVaultError.missingSpace
-            }
-            try await source.setCrestPasswordSynchronization(isSynchronizable, in: spaceID)
+        // The vault write and its preference belong to the store that owns
+        // the Space's credential settings, which may be a borrowed source.
+        let owner = profileSettingsBrowser
+        guard owner === self else {
+            try await owner.setCrestPasswordSynchronization(isSynchronizable, in: spaceID)
             return
         }
-        guard let space = session.space(id: spaceID) else {
+        guard let space = spaceModel(spaceID) else {
             throw CredentialVaultError.missingSpace
         }
-        guard space.credentialPreferences.syncsCrestPasswordsWithICloud != isSynchronizable else {
+        guard space.settings.credentialPreferences.syncsCrestPasswordsWithICloud != isSynchronizable else {
             return
         }
+        let assignment = BrowserSpaceRuntimeAssignment(space: space)
 
         try await credentialVault.setSynchronizable(isSynchronizable, in: spaceID)
-        guard let current = self.space(matching: BrowserSpaceRuntimeAssignment(space: space)) else {
+        guard let current = spaceModel(matching: assignment)?.settings.credentialPreferences else {
             throw CredentialVaultError.missingSpace
         }
-        var preferences = current.credentialPreferences
-        preferences.syncsCrestPasswordsWithICloud = isSynchronizable
-        session.updateCredentialPreferences(preferences, in: spaceID)
-        persist(scope: .core)
+        let preferences = CredentialPreferences(
+            isEnabled: current.isEnabled, syncsCrestPasswordsWithICloud: isSynchronizable,
+            alsoOffersSaveToSystemPasswords: current.alsoOffersSaveToSystemPasswords)
+        // The native credential operation completed for this profile. Persist
+        // its corresponding policy through the same session authority.
+        let sent = SetCredentialPreferences(workspaceID: family.workspaceID, spaceID: spaceID, preferences: preferences)
+        if !family.send(sent, from: self, failure: "Core Space command failed"),
+            spaceModel(spaceID)?.settings.credentialPreferences != preferences
+        {
+            throw CredentialVaultError.preferenceUpdateFailed
+        }
     }
 
 }
@@ -156,9 +187,12 @@ extension BrowserStore {
 // MARK: - Saving
 
 extension BrowserStore {
+    /// The core matches the account and plans the save from descriptors
+    /// alone. The stored password is compared here and only the answer is
+    /// passed on. A core that cannot answer fails the plan: nothing is saved.
     func credentialSavePlan(
         for candidate: BrowserCredentialSaveCandidate,
-        in spaceID: SpaceID,
+        in spaceID: UUID,
         now: Date = .now
     ) async throws -> BrowserCredentialSavePlan {
         try validateCredentialSaveCandidate(candidate, in: spaceID, now: now)
@@ -167,33 +201,40 @@ extension BrowserStore {
             in: spaceID
         )
         try validateCredentialSaveCandidate(candidate, in: spaceID, now: now)
-        let matchingDescriptors = descriptors.filter {
-            $0.username.caseInsensitiveCompare(candidate.username) == .orderedSame
+        let descriptor: CredentialDescriptor?
+        do {
+            descriptor = try core.credentialSaveMatch(username: candidate.username, in: descriptors)
+        } catch {
+            throw CredentialVaultError.saveDecisionUnavailable
         }
-        guard
-            let descriptor = matchingDescriptors.max(
-                by: BrowserCredentialRecencyPolicy.isLessRecent
-            )
-        else {
-            return .create
-        }
-        guard
+        var storedPasswordMatches: Bool?
+        if let descriptor {
             let credential = try await credentialVault.credential(
                 id: descriptor.id,
                 in: spaceID
             )
-        else {
-            return .create
+            try validateCredentialSaveCandidate(candidate, in: spaceID, now: now)
+            storedPasswordMatches = credential.map { $0.password == candidate.password }
         }
-        try validateCredentialSaveCandidate(candidate, in: spaceID, now: now)
-        return credential.password == candidate.password
-            ? .alreadyStored(descriptor)
-            : .update(descriptor)
+        let stored = descriptor.flatMap { descriptor in
+            storedPasswordMatches.map {
+                CredentialStoredComparison(id: descriptor.id, passwordMatches: $0)
+            }
+        }
+        guard let plan = try? core.query(CredentialSave(matchID: descriptor?.id, stored: stored)),
+            plan.kind == .create || plan.id == descriptor?.id
+        else { throw CredentialVaultError.saveDecisionUnavailable }
+        switch (plan.kind, descriptor) {
+        case (.create, _): return .create
+        case (.update, let descriptor?): return .update(descriptor)
+        case (.alreadyStored, let descriptor?): return .alreadyStored(descriptor)
+        default: throw CredentialVaultError.saveDecisionUnavailable
+        }
     }
 
     func commitCredentialSave(
         _ candidate: BrowserCredentialSaveCandidate,
-        in spaceID: SpaceID,
+        in spaceID: UUID,
         now: Date = .now
     ) async throws -> BrowserCredentialSaveResult {
         try validateCredentialSaveCandidate(candidate, in: spaceID, now: now)
@@ -234,7 +275,7 @@ extension BrowserStore {
         isSynchronizable: Bool? = nil,
         now: Date = Date()
     ) async throws -> CredentialDescriptor {
-        guard let spaceID = selectedSpace?.id else {
+        guard let spaceID = shownSpace?.id else {
             throw CredentialVaultError.missingSpace
         }
         return try await saveCredential(
@@ -254,24 +295,24 @@ extension BrowserStore {
         username: String,
         password: String,
         for url: URL,
-        in spaceID: SpaceID,
+        in spaceID: UUID,
         displayName: String? = nil,
         replacing existing: CredentialDescriptor? = nil,
         isSynchronizable: Bool? = nil,
         now: Date = Date()
     ) async throws -> CredentialDescriptor {
-        guard let space = session.space(id: spaceID) else {
+        guard let space = spaceModel(spaceID) else {
             throw CredentialVaultError.missingSpace
         }
         guard !isPrivateBrowsing else {
             throw CredentialVaultError.unavailableInPrivateBrowsing
         }
-        guard space.credentialPreferences.isEnabled else {
+        guard space.settings.credentialPreferences.isEnabled else {
             throw CredentialVaultError.credentialManagerDisabled
         }
         let resolvedSynchronization =
             isSynchronizable
-            ?? space.credentialPreferences.syncsCrestPasswordsWithICloud
+            ?? space.settings.credentialPreferences.syncsCrestPasswordsWithICloud
         guard let origin = CredentialOrigin(url: url) else {
             throw CredentialVaultError.invalidOrigin
         }
@@ -317,17 +358,17 @@ extension BrowserStore {
         username: String,
         password: String,
         protectionSpace: BrowserHTTPAuthenticationProtectionSpace,
-        in spaceID: SpaceID,
+        in spaceID: UUID,
         replacing existing: CredentialDescriptor? = nil,
         now: Date = Date()
     ) async throws -> CredentialDescriptor {
-        guard let space = session.space(id: spaceID) else {
+        guard let space = spaceModel(spaceID) else {
             throw CredentialVaultError.missingSpace
         }
         guard !isPrivateBrowsing else {
             throw CredentialVaultError.unavailableInPrivateBrowsing
         }
-        guard space.credentialPreferences.isEnabled else {
+        guard space.settings.credentialPreferences.isEnabled else {
             throw CredentialVaultError.credentialManagerDisabled
         }
         guard protectionSpace.origin.isSecure else {
@@ -351,7 +392,7 @@ extension BrowserStore {
             existing.updatedAt = now
             existing.lastUsedAt = now
             existing.isSynchronizable =
-                space.credentialPreferences.syncsCrestPasswordsWithICloud
+                space.settings.credentialPreferences.syncsCrestPasswordsWithICloud
             descriptor = existing
         } else {
             descriptor = CredentialDescriptor(
@@ -362,7 +403,7 @@ extension BrowserStore {
                 createdAt: now,
                 lastUsedAt: now,
                 isSynchronizable:
-                    space.credentialPreferences.syncsCrestPasswordsWithICloud
+                    space.settings.credentialPreferences.syncsCrestPasswordsWithICloud
             )
         }
         try await credentialVault.save(
@@ -372,15 +413,15 @@ extension BrowserStore {
         return descriptor
     }
 
-    func deleteCredential(id: CredentialID) async throws {
-        guard let spaceID = selectedSpace?.id else {
+    func deleteCredential(id: UUID) async throws {
+        guard let spaceID = shownSpace?.id else {
             throw CredentialVaultError.missingSpace
         }
         try await deleteCredential(id: id, in: spaceID)
     }
 
-    func deleteCredential(id: CredentialID, in spaceID: SpaceID) async throws {
-        guard session.space(id: spaceID) != nil else {
+    func deleteCredential(id: UUID, in spaceID: UUID) async throws {
+        guard spaceModel(spaceID) != nil else {
             throw CredentialVaultError.missingSpace
         }
         try await credentialVault.delete(id: id, in: spaceID)
@@ -388,9 +429,9 @@ extension BrowserStore {
 
     func replaceCredentialInventory(
         _ credentials: [BrowserCredential],
-        in spaceID: SpaceID
+        in spaceID: UUID
     ) async throws {
-        guard session.space(id: spaceID) != nil else {
+        guard spaceModel(spaceID) != nil else {
             throw CredentialVaultError.missingSpace
         }
         guard !isPrivateBrowsing else {
@@ -409,7 +450,7 @@ extension BrowserStore {
 
     private func performCredentialSave(
         _ candidate: BrowserCredentialSaveCandidate,
-        in spaceID: SpaceID,
+        in spaceID: UUID,
         now: Date
     ) async throws -> BrowserCredentialSaveResult {
         let plan = try await credentialSavePlan(
@@ -450,7 +491,7 @@ extension BrowserStore {
 
     private func saveCredential(
         _ candidate: BrowserCredentialSaveCandidate,
-        in spaceID: SpaceID,
+        in spaceID: UUID,
         replacing existing: CredentialDescriptor?,
         now: Date
     ) async throws -> CredentialDescriptor {
@@ -469,28 +510,26 @@ extension BrowserStore {
 
     private func validateCredentialSaveCandidate(
         _ candidate: BrowserCredentialSaveCandidate,
-        in spaceID: SpaceID,
+        in spaceID: UUID,
         now: Date
     ) throws {
-        guard let space = session.space(id: spaceID) else {
+        guard let space = spaceModel(spaceID) else {
             throw CredentialVaultError.missingSpace
         }
         guard !isPrivateBrowsing else {
             throw CredentialVaultError.unavailableInPrivateBrowsing
         }
-        guard space.credentialPreferences.isEnabled else {
+        guard space.settings.credentialPreferences.isEnabled else {
             throw CredentialVaultError.credentialManagerDisabled
         }
-        guard
-            BrowserCredentialCapturePolicy.accepts(
-                frameOrigin: candidate.origin,
-                topLevelOrigin: candidate.topLevelOrigin
-            )
-        else {
-            throw CredentialVaultError.insecureOrigin
-        }
-        guard BrowserCredentialCapturePolicy.isCurrent(candidate, now: now) else {
-            throw CredentialVaultError.staleSaveCandidate
+        let check = CredentialSaveCheck(
+            origin: candidate.origin, topLevelOrigin: candidate.topLevelOrigin,
+            submittedAt: candidate.submittedAt.timeIntervalSince1970, now: now.timeIntervalSince1970)
+        switch (try? core.query(check))?.validity {
+        case .accepted: return
+        case .insecureOrigin: throw CredentialVaultError.insecureOrigin
+        case .stale: throw CredentialVaultError.staleSaveCandidate
+        case nil: throw CredentialVaultError.saveDecisionUnavailable
         }
     }
 }

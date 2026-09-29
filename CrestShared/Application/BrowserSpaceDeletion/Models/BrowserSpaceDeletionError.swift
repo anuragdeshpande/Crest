@@ -2,23 +2,18 @@ import Foundation
 
 enum BrowserSpaceDeletionError: LocalizedError, Equatable {
     case missingSpace
-    case cannotDeleteLastSpace
     case alreadyDeleting
-    case spaceChangedDuringDeletion
-    case borrowedProfile
+    /// An engine could not erase everything it keeps for the Space's profile.
+    case dataNotErased
 
     var errorDescription: String? {
         switch self {
         case .missingSpace:
             "That Space no longer exists."
-        case .cannotDeleteLastSpace:
-            "Crest needs at least one Space."
         case .alreadyDeleting:
             "Crest is already deleting that Space."
-        case .spaceChangedDuringDeletion:
-            "The Space changed while Crest was deleting its data. No Space record was removed."
-        case .borrowedProfile:
-            "Manage this Space in Settings to delete its shared profile."
+        case .dataNotErased:
+            "Crest couldn’t finish removing this Space’s browser data. Try again."
         }
     }
 }

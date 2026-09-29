@@ -1,38 +1,43 @@
 import Foundation
 
-/// Promotes an authorized transient URL and delegates live-page adoption to its adapter.
+/// Keeps a Quick Window's or Peek's page as a tab. The core checks both Spaces
+/// and whether the tab may take the live page; the adapter moves it when this
+/// platform can.
 struct BrowserTransientPagePromotion {
-    let url: URL
-    let sourceAssignment: BrowserSpaceRuntimeAssignment
-    let leaseAssignment: BrowserSpaceRuntimeAssignment
+    /// The transient page, or nil when there is none to keep.
+    let page: CorePage?
+    /// Where the page is, or nil when it has not been anywhere worth keeping.
+    let url: URL?
     let destinationAssignment: BrowserSpaceRuntimeAssignment
+    /// Whether this platform can move the live page into the tab's window.
+    var supportsLiveAdoption = true
 
     enum Outcome {
         case adoptedLivePage
         case openedNewPage
+        case selectedSpace
     }
 
+    /// Keeps the page, or with no address to keep only shows the destination
+    /// Space. `adoptPage` moves the live page into the new tab.
     @MainActor
     func perform(
         in browser: BrowserStore,
-        isLocked: @MainActor (BrowserSpace) -> Bool,
-        adoptPage: (TabID, BrowserSpace) -> Bool
+        isLocked: @MainActor (SpaceModel) -> Bool,
+        adoptPage: (UUID, SpaceModel) -> Bool
     ) -> Outcome? {
-        guard leaseAssignment == sourceAssignment,
-            let promotion = BrowserTransientSessionPolicy.promotionSpaces(
-                source: browser.space(matching: sourceAssignment),
-                destination: browser.space(matching: destinationAssignment),
-                isLocked: isLocked
-            ),
-            let tabID = browser.openNewTab(url: url, matching: destinationAssignment),
-            let currentDestination = browser.space(
-                matching: BrowserSpaceRuntimeAssignment(space: promotion.destination))
+        guard let destination = browser.spaceModel(matching: destinationAssignment) else { return nil }
+        guard let url else {
+            guard !isLocked(destination) else { return nil }
+            browser.selectSpace(destination.id)
+            return .selectedSpace
+        }
+        guard let page, let promoted = browser.promoteTransientPage(page, into: destination.id),
+            let currentDestination = browser.spaceModel(matching: destinationAssignment)
         else { return nil }
-
         let adoptedLivePage =
-            BrowserTransientSessionPolicy.adoptsLivePage(
-                leaseAssignment: leaseAssignment, destination: currentDestination)
-            && adoptPage(tabID, currentDestination)
+            supportsLiveAdoption && promoted.adoptsPage
+            && adoptPage(promoted.tabID, currentDestination)
         return adoptedLivePage ? .adoptedLivePage : .openedNewPage
     }
 }

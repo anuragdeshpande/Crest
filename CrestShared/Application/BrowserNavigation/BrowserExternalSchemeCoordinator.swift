@@ -7,19 +7,19 @@ import Foundation
 final class BrowserExternalSchemeCoordinator {
     typealias Prompt =
         @MainActor (
-            BrowserSiteOrigin,
+            SiteOrigin,
             URL,
             String
         ) async -> BrowserExternalSchemePromptResponse
 
-    private let spaceID: SpaceID
+    private let spaceID: UUID
     private let spaceName: String
     private let permissionCenter: BrowserSitePermissionCenter
     private let prompt: Prompt
     private let opensExternalURL: (URL) -> Void
 
     init(
-        spaceID: SpaceID,
+        spaceID: UUID,
         spaceName: String,
         permissionCenter: BrowserSitePermissionCenter,
         prompt: @escaping Prompt,
@@ -37,7 +37,7 @@ final class BrowserExternalSchemeCoordinator {
     func handOff(
         destinationURL: URL,
         trigger: BrowserPopupTrigger,
-        origin: BrowserSiteOrigin?
+        origin: SiteOrigin?
     ) {
         Task { [weak self] in
             await self?.resolve(
@@ -53,7 +53,7 @@ final class BrowserExternalSchemeCoordinator {
     func resolve(
         destinationURL: URL,
         trigger: BrowserPopupTrigger,
-        origin: BrowserSiteOrigin?
+        origin: SiteOrigin?
     ) async {
         // Without an origin there is nothing to attribute or remember a choice
         // against, so the safe answer is to do nothing at all.
@@ -62,20 +62,16 @@ final class BrowserExternalSchemeCoordinator {
             !scheme.isEmpty
         else { return }
 
-        switch BrowserExternalSchemeConsent.resolve(
-            trigger: trigger,
-            decision: permissionCenter.decision(
-                for: .externalApplications,
-                origin: origin,
-                detail: scheme,
-                in: spaceID
-            )
-        ) {
-        case .open:
+        // A hand-off launches another application, so an unapproved request
+        // always pauses at Crest's prompt, whether or not a click started it.
+        let decision = permissionCenter.decision(
+            for: .externalApplications, origin: origin, detail: scheme, in: spaceID)
+        switch decision.verdict {
+        case .grant:
             opensExternalURL(destinationURL)
-        case .block:
+        case .deny:
             return
-        case .prompt:
+        case .ask:
             switch await prompt(origin, destinationURL, spaceName) {
             case .open:
                 opensExternalURL(destinationURL)

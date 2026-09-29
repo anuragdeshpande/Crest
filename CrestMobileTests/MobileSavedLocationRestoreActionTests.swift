@@ -7,7 +7,7 @@ final class MobileSavedLocationRestoreActionTests: XCTestCase {
     func testStaleSpaceSelectionCannotRestoreOrNavigateEitherPage() throws {
         let context = makeContext()
         let sourcePage = try XCTUnwrap(context.pages.activePage)
-        let sourcePageURL = sourcePage.url
+        let sourcePageURL = sourcePage.live.documentURL
         context.browser.selectSpace(context.destination.id)
         var activationCount = 0
         let action = MobileSavedLocationRestoreAction(
@@ -21,11 +21,11 @@ final class MobileSavedLocationRestoreActionTests: XCTestCase {
         XCTAssertFalse(restored)
         XCTAssertEqual(activationCount, 0)
         XCTAssertEqual(
-            context.browser.session.space(id: context.source.id)?
-                .tabs.first?.url,
+            context.browser.spaceModel(context.source.id)?
+                .tabs.models.first?.address,
             context.awayURL
         )
-        XCTAssertEqual(sourcePage.url, sourcePageURL)
+        XCTAssertEqual(sourcePage.live.documentURL, sourcePageURL)
     }
 
     func testExactAssignmentRestoresAndActivatesItsOwnPage() throws {
@@ -35,7 +35,7 @@ final class MobileSavedLocationRestoreActionTests: XCTestCase {
             pages: context.pages,
             selectTab: { tabID in
                 context.browser.selectTab(tabID)
-                context.pages.select(session: context.browser.session)
+                context.pages.select()
             }
         )
 
@@ -43,8 +43,8 @@ final class MobileSavedLocationRestoreActionTests: XCTestCase {
 
         XCTAssertTrue(restored)
         XCTAssertEqual(
-            context.browser.session.space(id: context.source.id)?
-                .tabs.first?.url,
+            context.browser.spaceModel(context.source.id)?
+                .tabs.models.first?.address,
             context.savedURL
         )
         XCTAssertEqual(context.pages.activePage?.tabID, context.assignment.tabID)
@@ -55,51 +55,47 @@ final class MobileSavedLocationRestoreActionTests: XCTestCase {
     private func makeContext() -> Context {
         let savedURL = URL(string: "about:blank#saved")!
         let awayURL = URL(string: "about:blank#away")!
-        let tab = BrowserTab(
-            id: TabID(rawValue: Self.uuid(3)),
+        let tab = TabState.Seed(
+            id: Self.uuid(3),
             title: "Saved",
             url: awayURL,
             savedURL: savedURL,
             placement: .saved
         )
-        let source = BrowserSpace(
-            id: SpaceID(rawValue: Self.uuid(1)),
-            profile: BrowsingProfile(id: Self.uuid(2)),
+        let source = SpaceState.Seed(
+            id: Self.uuid(1),
+            profileID: Self.uuid(2),
             name: "Source",
             symbol: "1.circle",
             accent: .indigo,
             folders: [],
-            tabs: [tab],
-            selectedTabID: tab.id
+            tabs: [tab]
         )
-        let destinationTab = BrowserTab(
-            id: TabID(rawValue: Self.uuid(6)),
+        let destinationTab = TabState.Seed(
+            id: Self.uuid(6),
             title: "Destination",
             url: URL(string: "about:blank#destination"),
             placement: .current
         )
-        let destination = BrowserSpace(
-            id: SpaceID(rawValue: Self.uuid(4)),
-            profile: BrowsingProfile(id: Self.uuid(5)),
+        let destination = SpaceState.Seed(
+            id: Self.uuid(4),
+            profileID: Self.uuid(5),
             name: "Destination",
             symbol: "2.circle",
             accent: .teal,
             folders: [],
-            tabs: [destinationTab],
-            selectedTabID: destinationTab.id
+            tabs: [destinationTab]
         )
-        let browser = BrowserStore(
-            session: BrowserSession(
-                spaces: [source, destination],
-                selectedSpaceID: source.id
-            ),
-            persistence: InMemoryBrowserSessionPersistence(),
+        let browser = BrowserStore.hostingPages(
+            SessionState.Seed(spaces: [source, destination]),
+            showing: source.id, tabs: [source.id: tab.id, destination.id: destinationTab.id],
             browsingMode: .privateBrowsing
         )
         let pages = MobileBrowserPageStore(
+            browser: browser,
             usesEphemeralWebsiteDataStores: true
         )
-        pages.select(session: browser.session)
+        pages.select()
         return Context(
             browser: browser,
             pages: pages,
@@ -108,7 +104,7 @@ final class MobileSavedLocationRestoreActionTests: XCTestCase {
             assignment: BrowserTabRuntimeAssignment(
                 tabID: tab.id,
                 spaceID: source.id,
-                profileID: source.profile.id
+                profileID: source.profileID
             ),
             savedURL: savedURL,
             awayURL: awayURL
@@ -127,8 +123,8 @@ final class MobileSavedLocationRestoreActionTests: XCTestCase {
     private struct Context {
         let browser: BrowserStore
         let pages: MobileBrowserPageStore
-        let source: BrowserSpace
-        let destination: BrowserSpace
+        let source: SpaceState.Seed
+        let destination: SpaceState.Seed
         let assignment: BrowserTabRuntimeAssignment
         let savedURL: URL
         let awayURL: URL

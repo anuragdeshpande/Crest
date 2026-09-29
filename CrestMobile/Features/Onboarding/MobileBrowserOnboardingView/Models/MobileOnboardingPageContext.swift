@@ -1,29 +1,24 @@
 import SwiftUI
 
 struct MobileOnboardingPageContext {
-    let step: MobileBrowserOnboardingStep
+    let step: SetupStep
     let welcomeAction: BrowserOnboardingWelcomeAction
     let welcomePrimaryTitle: String
     let welcomeStatus: String
     let previewWidth: CGFloat
-    let personalSpace: BrowserSpace
-    let workSpace: BrowserSpace
+    let personalSpace: SpaceModel
+    let workSpace: SpaceModel
     let featureCloseTitle: String?
     let featureCloseAction: (() -> Void)?
-    let plan: Binding<BrowserManualSetupPlan>
-    let selectedSpaceID: Binding<SpaceID?>
-    let existingSession: BrowserSession
-    let horizontalSizeClass: UserInterfaceSizeClass?
+    let setup: BrowserManualSetupModel
+    let selectedSpaceID: Binding<UUID?>
     let errorMessage: String?
     var opensGettingStarted = false
-    let setupSecondaryTitle: String
     let welcomePrimaryAction: () -> Void
+    let welcomeSetupWithoutCloudAction: () -> Void
     let advance: () -> Void
     let setupSecondaryAction: () -> Void
     let finish: () -> Void
-    let addSpace: () -> Void
-    let customize: (SpaceID) -> Void
-    let remove: (SpaceID) -> Void
     let close: () -> Void
     let reviewFeatures: () -> Void
 }

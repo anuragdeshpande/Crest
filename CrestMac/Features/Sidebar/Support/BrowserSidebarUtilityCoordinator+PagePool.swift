@@ -22,15 +22,15 @@ extension BrowserSidebarUtilityCoordinator {
                 openHistoryEntry: { url, assignment in
                     guard browser.openNewTab(url: url, matching: assignment) != nil
                     else { return }
-                    pages.select(session: browser.session)
-                    pages.load(url)
+                    pages.select()
+                    pages.navigate(to: url.absoluteString)
                 },
                 selectRestoredTab: { tabID in
                     browser.selectTab(tabID)
-                    pages.select(session: browser.session)
+                    pages.select()
                 },
                 openFinishedDownload: { item, destination in
-                    guard item.state == .finished,
+                    guard item.phase.isComplete,
                         let destinationURL = item.destinationURL
                     else { return }
                     switch destination {

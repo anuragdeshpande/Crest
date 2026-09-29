@@ -2,12 +2,12 @@ import SwiftUI
 
 struct BrowserSourceImportTabRow: View {
     let review: BrowserImportSpaceReview
-    let tab: BrowserTab
-    let overflowTabIDs: Set<TabID>
-    let duplicateTabIDs: Set<TabID>
+    let tab: TabStateModel
+    let overflowTabIDs: Set<UUID>
+    let duplicateTabIDs: Set<UUID>
     let duplicateDestinationName: String?
-    let setIncluded: (TabID, Bool) -> Void
-    let setPlacement: (TabID, TabPlacement) -> Void
+    let setIncluded: (UUID, Bool) -> Void
+    let setPlacement: (UUID, TabPlacement) -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -15,8 +15,8 @@ struct BrowserSourceImportTabRow: View {
                 setIncluded(tab.id, !included)
             } label: {
                 TabFaviconView(
-                    tab: tab,
-                    profileID: review.sourceSpace.profile.id,
+                    subject: BrowserTabFaviconSubject(tab: tab, image: nil),
+                    profileID: review.sourceSpace.profileID,
                     size: 18
                 )
                 Text(tab.title)

@@ -1,148 +1,31 @@
 import CloudKit
 import Foundation
 
+// MARK: - Types
+
+enum BrowserCloudRecordCodecError: Error, Equatable {
+    /// The server's last copy of a record is another record's.
+    case mismatchedBaseRecord(String)
+    /// A newer build wrote the server's last copy for a schema this build
+    /// does not know, so this build must not write over it.
+    case newerSchema(Int)
+}
+
+/// Maps the core's synced records to CloudKit records and back. It writes and
+/// reads the envelope, the fields every client places a record by, and copies
+/// the payload or tombstone the core spelled into the encrypted values as
+/// bytes; it never reads what they hold.
 struct BrowserCloudRecordCodec: Sendable {
-    /// Cloud payload compatibility is independent of the local journal format.
+    // MARK: - Static Variables
+
+    /// The newest schema this build writes, which a base record from a newer
+    /// build exceeds.
     static let currentSchemaVersion = 3
 
-    static let zoneName = "CrestPrivate"
+    static let zoneName = BrowserCloudSyncConfiguration.defaultZoneName
     static let zoneID = CKRecordZone.ID(zoneName: zoneName)
-    static let recordZone = CKRecordZone(zoneID: zoneID)
 
-    func encode(
-        _ source: BrowserSyncRecord,
-        reusing baseRecord: CKRecord? = nil
-    ) throws -> CKRecord {
-        try source.validate()
-        let recordID = CKRecord.ID(recordName: source.id.recordName, zoneID: Self.zoneID)
-        let recordType = Self.recordType(for: source.id.kind)
-        let record: CKRecord
-        if let baseRecord {
-            guard baseRecord.recordID == recordID, baseRecord.recordType == recordType else {
-                throw BrowserCloudRecordCodecError.mismatchedBaseRecord(source.id.recordName)
-            }
-            if let schema = (baseRecord[Field.schemaVersion] as? NSNumber)?.intValue,
-                schema > Self.currentSchemaVersion
-            {
-                throw BrowserSyncError.unsupportedSchema(schema)
-            }
-            record = baseRecord
-        } else {
-            record = CKRecord(recordType: recordType, recordID: recordID)
-        }
-
-        record[Field.schemaVersion] = NSNumber(value: Self.requiredSchemaVersion(for: source))
-        record[Field.spaceID] = source.spaceID.rawValue.uuidString.lowercased() as CKRecordValue
-        record[Field.logicalClock] = NSNumber(value: source.version.logicalClock)
-        record[Field.deviceID] = source.version.deviceID.uuidString.lowercased() as CKRecordValue
-
-        if source.id.kind == .space {
-            record[Field.spaceReference] = nil
-        } else {
-            let spaceRecordID = CKRecord.ID(
-                recordName: BrowserSyncRecordID(
-                    kind: .space,
-                    value: source.spaceID.rawValue
-                ).recordName,
-                zoneID: Self.zoneID
-            )
-            record[Field.spaceReference] = CKRecord.Reference(recordID: spaceRecordID, action: .none)
-        }
-
-        do {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys]
-            encoder.dateEncodingStrategy = .secondsSince1970
-            if let payload = source.payload {
-                record.encryptedValues[Field.payload] = try encoder.encode(payload) as CKRecordValue
-                record.encryptedValues[Field.tombstone] = nil
-            } else if let tombstone = source.tombstone {
-                record.encryptedValues[Field.payload] = nil
-                record.encryptedValues[Field.tombstone] = try encoder.encode(tombstone) as CKRecordValue
-            }
-        } catch {
-            throw BrowserCloudRecordCodecError.payloadEncodingFailed
-        }
-        return record
-    }
-
-    func decode(_ record: CKRecord) throws -> BrowserSyncRecord {
-        guard record.recordID.zoneID == Self.zoneID else {
-            throw BrowserCloudRecordCodecError.unexpectedZone(record.recordID.zoneID.zoneName)
-        }
-        guard let kind = Self.kind(for: record.recordType) else {
-            throw BrowserCloudRecordCodecError.unexpectedRecordType(record.recordType)
-        }
-        let id = try Self.recordID(from: record.recordID.recordName, expectedKind: kind)
-        guard let schema = (record[Field.schemaVersion] as? NSNumber)?.intValue else {
-            throw BrowserCloudRecordCodecError.missingField(Field.schemaVersion)
-        }
-        // A record written by an older schema still decodes. Only a newer one is
-        // refused, and the engine skips just that record rather than losing the
-        // batch it arrived in, so one record from a newer build cannot stop an
-        // older build from syncing.
-        guard (1...Self.currentSchemaVersion).contains(schema) else {
-            throw BrowserSyncError.unsupportedSchema(schema)
-        }
-        guard let spaceIDString = record[Field.spaceID] as? String,
-            let spaceUUID = UUID(uuidString: spaceIDString)
-        else {
-            throw BrowserCloudRecordCodecError.invalidField(Field.spaceID)
-        }
-        guard let clock = (record[Field.logicalClock] as? NSNumber)?.uint64Value else {
-            throw BrowserCloudRecordCodecError.missingField(Field.logicalClock)
-        }
-        guard let deviceIDString = record[Field.deviceID] as? String,
-            let deviceID = UUID(uuidString: deviceIDString)
-        else {
-            throw BrowserCloudRecordCodecError.invalidField(Field.deviceID)
-        }
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .secondsSince1970
-        let payloadData = record.encryptedValues[Field.payload] as? Data
-        let tombstoneData = record.encryptedValues[Field.tombstone] as? Data
-        guard (payloadData == nil) != (tombstoneData == nil) else {
-            throw BrowserCloudRecordCodecError.invalidField("payload/tombstone")
-        }
-
-        let payload: BrowserSyncPayload?
-        let tombstone: BrowserSyncTombstone?
-        do {
-            payload = try payloadData.map { try decoder.decode(BrowserSyncPayload.self, from: $0) }
-            tombstone = try tombstoneData.map { try decoder.decode(BrowserSyncTombstone.self, from: $0) }
-        } catch {
-            throw BrowserCloudRecordCodecError.payloadDecodingFailed
-        }
-
-        let result = BrowserSyncRecord(
-            id: id,
-            spaceID: SpaceID(rawValue: spaceUUID),
-            version: BrowserSyncVersion(logicalClock: clock, deviceID: deviceID),
-            payload: payload,
-            tombstone: tombstone
-        )
-        try result.validate()
-        return result
-    }
-
-    /// Older clients can keep syncing familiar records while skipping only
-    /// folder locations and memberships they cannot represent. Tombstones use
-    /// schema 1 so those clients can still remove a stale local copy.
-    private static func requiredSchemaVersion(for record: BrowserSyncRecord) -> Int {
-        switch record.payload {
-        case .tab(let tab) where tab.nativeContent != nil:
-            3
-        case .archive(let archive) where archive.tab.nativeContent != nil:
-            3
-        case .folder(let folder) where folder.location == .current:
-            2
-        case .tab(let tab) where tab.placement == .current && tab.folderID != nil:
-            2
-        default:
-            1
-        }
-    }
+    // MARK: - Types
 
     private enum Field {
         static let schemaVersion = "schemaVersion"
@@ -154,36 +37,105 @@ struct BrowserCloudRecordCodec: Sendable {
         static let spaceReference = "space"
     }
 
-    private static func recordType(for kind: BrowserSyncRecordKind) -> CKRecord.RecordType {
-        switch kind {
-        case .space: "CrestSpace"
-        case .folder: "CrestFolder"
-        case .tab: "CrestTab"
-        case .history: "CrestHistory"
-        case .archive: "CrestArchive"
-        }
+    // MARK: - Variables
+
+    let recordZoneID: CKRecordZone.ID
+    var recordZone: CKRecordZone { CKRecordZone(zoneID: recordZoneID) }
+
+    // MARK: - Initializers
+
+    init(zoneName: String = Self.zoneName) {
+        recordZoneID = CKRecordZone.ID(zoneName: zoneName)
     }
 
-    private static func kind(for recordType: CKRecord.RecordType) -> BrowserSyncRecordKind? {
-        switch recordType {
-        case "CrestSpace": .space
-        case "CrestFolder": .folder
-        case "CrestTab": .tab
-        case "CrestHistory": .history
-        case "CrestArchive": .archive
-        default: nil
+    // MARK: - Actions - Records
+
+    /// `source` as the CloudKit record that uploads it, written over
+    /// `baseRecord`, the last copy the server returned, when there is one.
+    /// Throws when the base record is another record's or a newer build wrote
+    /// it for a schema this build does not know.
+    func record(for source: SyncRecord, reusing baseRecord: CKRecord? = nil) throws -> CKRecord {
+        let reference = SyncRecordReference(kind: source.kind, id: source.id)
+        let recordID = recordID(for: reference)
+        let record: CKRecord
+        if let baseRecord {
+            guard baseRecord.recordID == recordID, baseRecord.recordType == source.kind.cloudRecordType else {
+                throw BrowserCloudRecordCodecError.mismatchedBaseRecord(recordID.recordName)
+            }
+            if let schema = (baseRecord[Field.schemaVersion] as? NSNumber)?.intValue, schema > Self.currentSchemaVersion
+            {
+                throw BrowserCloudRecordCodecError.newerSchema(schema)
+            }
+            record = baseRecord
+        } else {
+            record = CKRecord(recordType: source.kind.cloudRecordType, recordID: recordID)
         }
+        record[Field.schemaVersion] = NSNumber(value: source.schema)
+        record[Field.spaceID] = source.spaceID.uuidString.lowercased() as CKRecordValue
+        record[Field.logicalClock] = NSNumber(value: source.version.clock)
+        record[Field.deviceID] = source.version.deviceID.uuidString.lowercased() as CKRecordValue
+        record[Field.spaceReference] =
+            source.kind.namesItsSpace
+            ? nil
+            : CKRecord.Reference(
+                recordID: self.recordID(for: SyncRecordReference(kind: .space, id: source.spaceID)), action: .none)
+        record.encryptedValues[Field.payload] = source.isTombstone ? nil : source.body as CKRecordValue
+        record.encryptedValues[Field.tombstone] = source.isTombstone ? source.body as CKRecordValue : nil
+        return record
     }
 
-    private static func recordID(
-        from recordName: String,
-        expectedKind: BrowserSyncRecordKind
-    ) throws -> BrowserSyncRecordID {
-        guard let id = BrowserSyncRecordID(recordName: recordName),
-            id.kind == expectedKind
-        else {
-            throw BrowserCloudRecordCodecError.malformedRecordName(recordName)
-        }
-        return id
+    /// The synced record `record` carries, or nil when its envelope is not one
+    /// of Crest's: another zone, an unknown type, a name that is not its
+    /// kind's, a missing schema, clock or identity, or both or neither of a
+    /// payload and a tombstone. What the payload holds is the core's to read.
+    func syncRecord(from record: CKRecord) -> SyncRecord? {
+        guard let reference = reference(for: record.recordID), record.recordType == reference.kind.cloudRecordType,
+            let schema = (record[Field.schemaVersion] as? NSNumber)?.intValue,
+            let space = (record[Field.spaceID] as? String).flatMap(UUID.init(uuidString:)),
+            let clock = (record[Field.logicalClock] as? NSNumber)?.uint64Value,
+            let device = (record[Field.deviceID] as? String).flatMap(UUID.init(uuidString:))
+        else { return nil }
+        let payload = record.encryptedValues[Field.payload] as? Data
+        let tombstone = record.encryptedValues[Field.tombstone] as? Data
+        guard let body = payload ?? tombstone, (payload == nil) != (tombstone == nil) else { return nil }
+        return SyncRecord(
+            kind: reference.kind, id: reference.id, spaceID: space,
+            version: SyncVersion(clock: clock, deviceID: device),
+            schema: schema, body: body, isTombstone: tombstone != nil)
+    }
+
+    // MARK: - Actions - Envelopes
+
+    /// How CloudKit names the record `reference` names: its kind, then its
+    /// identity in lowercase.
+    func recordName(of reference: SyncRecordReference) -> String {
+        "\(reference.kind.name):\(reference.id.uuidString.lowercased())"
+    }
+
+    /// The CloudKit identity of the record `reference` names, in this codec's
+    /// zone.
+    func recordID(for reference: SyncRecordReference) -> CKRecord.ID {
+        CKRecord.ID(recordName: recordName(of: reference), zoneID: recordZoneID)
+    }
+
+    /// The record a CloudKit identity in this codec's zone names, or nil for an
+    /// identity no record of Crest's has.
+    func reference(for recordID: CKRecord.ID) -> SyncRecordReference? {
+        guard recordID.zoneID == recordZoneID else { return nil }
+        let parts = recordID.recordName.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 2, let kind = SyncRecordKind.named(String(parts[0])),
+            let id = UUID(uuidString: String(parts[1]))
+        else { return nil }
+        return SyncRecordReference(kind: kind, id: id)
+    }
+
+    /// The record the cloud saved, at the version it saved, read from its
+    /// envelope alone; nil for a record that is not one of Crest's.
+    func uploadedRecord(_ record: CKRecord) -> UploadedRecord? {
+        guard let reference = reference(for: record.recordID), record.recordType == reference.kind.cloudRecordType,
+            let clock = (record[Field.logicalClock] as? NSNumber)?.uint64Value,
+            let device = (record[Field.deviceID] as? String).flatMap(UUID.init(uuidString:))
+        else { return nil }
+        return UploadedRecord(record: reference, version: SyncVersion(clock: clock, deviceID: device))
     }
 }

@@ -2,13 +2,13 @@ import SwiftUI
 
 /// One hover boundary for a folder's header and all of its visible contents.
 struct BrowserFolderSectionSurface: ViewModifier {
-    let color: BrowserSpaceBrandColor
+    let color: BrandColor
     var intensity: Double = 0
-    var textColorMode: BrowserSpaceTextColorMode = .automatic
+    var textColorMode: SpaceTextColorMode = .automatic
     var leadingInset: CGFloat = CrestSpacing.small
     var hasVisibleContents = false
     var isSelected = false
-    let folderID: FolderID
+    let folderID: UUID
     let reorder: BrowserSidebarReorderState
     private var isTargeted: Bool { reorder.isTargetedFolder(folderID) }
 

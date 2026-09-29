@@ -5,7 +5,7 @@ import SwiftUI
 struct BrowserCredentialPromptHeader: View {
     let kind: BrowserCredentialPromptHeaderKind
     let request: BrowserCredentialFillRequest
-    let space: BrowserSpace?
+    let space: BrowserSpaceIdentity?
     let siteIconData: Data?
     let metrics: BrowserCredentialPromptMetrics
     let dismiss: () -> Void
@@ -16,7 +16,7 @@ struct BrowserCredentialPromptHeader: View {
                 kind: kind,
                 iconData: siteIconData,
                 showsSiteIcon: !request.isCrossOriginFrame,
-                tint: space?.accent.color ?? .accentColor
+                tint: space?.accent.tint.color ?? .accentColor
             )
             VStack(
                 alignment: .leading,

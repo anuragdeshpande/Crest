@@ -2,7 +2,7 @@ import SwiftUI
 
 struct MobileBrowserSidebarSpaceSurface: View {
     let configuration: MobileBrowserSidebarContentConfiguration
-    let space: BrowserSpace
+    let space: SpaceModel
     let isSelected: Bool
 
     @Environment(\.colorScheme) private var colorScheme
@@ -16,6 +16,10 @@ struct MobileBrowserSidebarSpaceSurface: View {
             isSelected: isSelected
         )
         .environment(\.colorScheme, spaceColorScheme)
+        // Blur and redaction are drawing effects; rows still run their tasks.
+        // This stops the ones that would otherwise disclose a locked Space's
+        // hostnames to the network.
+        .environment(\.browserSpaceContentIsLocked, isLocked)
         .blur(radius: isLocked ? BrowserSidebarMetrics.lockedSpaceBlurRadius : 0)
         .redacted(reason: isLocked ? .placeholder : [])
         .allowsHitTesting(!isLocked)
@@ -40,14 +44,12 @@ struct MobileBrowserSidebarSpaceSurface: View {
         guard MobileBrowserSidebarAppearancePolicy.usesSpaceForeground() else {
             return colorScheme
         }
-        return BrowserSpaceForegroundPolicy.colorScheme(for: space.branding)
+        return BrowserSpaceForegroundPolicy.colorScheme(for: space.settings.look)
     }
 
     private func selectUnlockedSpace(_ assignment: BrowserSpaceRuntimeAssignment) {
         guard
-            let candidate = configuration.context.browser.space(
-                matching: assignment
-            ),
+            let candidate = configuration.context.browser.spaceModel(matching: assignment),
             !configuration.context.spaceAccess.isLocked(candidate)
         else { return }
         configuration.context.selectSpace(assignment.spaceID)

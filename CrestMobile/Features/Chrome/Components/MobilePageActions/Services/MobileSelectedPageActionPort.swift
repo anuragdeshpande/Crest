@@ -12,19 +12,8 @@ struct MobileSelectedPageActionPort: MobilePageActions {
         pages: MobileBrowserPageStore,
         spaceAccess: BrowserSpaceAccessController
     ) {
-        guard let tab = browser.selectedTab,
-            let space = browser.selectedSpace
-        else { return nil }
-        self.init(
-            browser: browser,
-            pages: pages,
-            spaceAccess: spaceAccess,
-            expectedAssignment: BrowserTabRuntimeAssignment(
-                tabID: tab.id,
-                spaceID: space.id,
-                profileID: space.profile.id
-            )
-        )
+        guard let assignment = browser.shownTabAssignment else { return nil }
+        self.init(browser: browser, pages: pages, spaceAccess: spaceAccess, expectedAssignment: assignment)
     }
 
     init(
@@ -48,12 +37,8 @@ struct MobileSelectedPageActionPort: MobilePageActions {
     }
 
     var activePage: MobileBrowserPage? {
-        guard let tab = browser.selectedTab,
-            let space = browser.selectedSpace,
-            !spaceAccess.isLocked(space),
-            tab.id == expectedAssignment.tabID,
-            space.id == expectedAssignment.spaceID,
-            space.profile.id == expectedAssignment.profileID,
+        guard let space = browser.shownSpace, !spaceAccess.isLocked(space),
+            browser.shownTabAssignment == expectedAssignment,
             let page = pages.activePage,
             page.tabID == expectedAssignment.tabID,
             page.spaceID == expectedAssignment.spaceID,
@@ -63,15 +48,15 @@ struct MobileSelectedPageActionPort: MobilePageActions {
     }
 
     var activeURL: URL? {
-        activePage?.url
+        activePage?.live.displayURL
     }
 
     var canGoBack: Bool {
-        activePage?.canGoBack == true
+        activePage?.live.canGoBack == true
     }
 
     var canGoForward: Bool {
-        activePage?.canGoForward == true
+        activePage?.live.canGoForward == true
     }
 
     var backHistory: [BrowserNavigationHistoryItem] {
@@ -101,7 +86,7 @@ struct MobileSelectedPageActionPort: MobilePageActions {
     }
 
     var blockedPopupNotice: BrowserBlockedPopupNotice? {
-        activePage?.blockedPopupState.notice
+        activePage?.blockedPopupNotice
     }
 
     func goBack() {
@@ -195,7 +180,7 @@ struct MobileSelectedPageActionPort: MobilePageActions {
         activePage?.exportWebArchive(to: destination)
     }
 
-    func reconcileContentBlocking(in session: BrowserSession) async {
-        await pages.reconcileContentBlocking(in: session)
+    func reconcileContentBlocking() async {
+        await pages.reconcileContentBlocking()
     }
 }

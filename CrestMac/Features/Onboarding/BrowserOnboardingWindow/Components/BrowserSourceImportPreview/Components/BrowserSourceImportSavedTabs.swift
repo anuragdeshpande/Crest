@@ -1,15 +1,15 @@
 import SwiftUI
 
 struct BrowserSourceImportSavedTabs: View {
-    let title: String
+    let title: LocalizedStringResource
     let review: BrowserImportSpaceReview
     let sections: BrowserSourceImportPreviewSections
-    let overflowTabIDs: Set<TabID>
-    let duplicateTabIDs: Set<TabID>
+    let overflowTabIDs: Set<UUID>
+    let duplicateTabIDs: Set<UUID>
     let duplicateDestinationName: String?
-    let setIncluded: (TabID, Bool) -> Void
-    let setSectionIncluded: (Set<TabID>, Bool) -> Void
-    let setPlacement: (TabID, TabPlacement) -> Void
+    let setIncluded: (UUID, Bool) -> Void
+    let setSectionIncluded: (Set<UUID>, Bool) -> Void
+    let setPlacement: (UUID, TabPlacement) -> Void
 
     @ViewBuilder
     var body: some View {
@@ -22,7 +22,7 @@ struct BrowserSourceImportSavedTabs: View {
             )
             .padding(.horizontal, 13)
 
-            ForEach(review.sourceSpace.folders) { folder in
+            ForEach(review.sourceSpace.folders.models) { folder in
                 let tabs = sections.savedTabsByFolderID[folder.id, default: []]
                 if !tabs.isEmpty {
                     BrowserImportSidebarFolderRow(folder: folder)
@@ -37,7 +37,7 @@ struct BrowserSourceImportSavedTabs: View {
         }
     }
 
-    private func tabRow(_ tab: BrowserTab) -> some View {
+    private func tabRow(_ tab: TabStateModel) -> some View {
         BrowserSourceImportTabRow(
             review: review,
             tab: tab,

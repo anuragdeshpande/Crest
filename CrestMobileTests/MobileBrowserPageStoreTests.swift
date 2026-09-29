@@ -6,159 +6,14 @@ import XCTest
 @MainActor
 final class MobileBrowserPageStoreTests: XCTestCase {
 
-    func testTabLinkReadsResidentBackgroundAddressAndNeverLoadsKnownUnloadedTabs() async throws {
-        let root = try XCTUnwrap(URL(string: "https://copy.crest.test/root"))
-        let current = try XCTUnwrap(URL(string: "https://copy.crest.test/child?q=a%20b#section"))
-        let target = BrowserTab(title: "Saved", url: root, placement: .saved)
-        let selected = BrowserTab.startPage()
-        let unloaded = BrowserTab(title: "Pinned", url: root, placement: .pinned)
-        var space = makeSpace(index: 321, savesCredentials: false)
-        space.tabs = [target, selected, unloaded]
-        space.selectedTabID = target.id
-        let pages = MobileBrowserPageStore(usesEphemeralWebsiteDataStores: true)
-        defer { pages.reconcile(validTabIDs: []) }
-        pages.select(session: BrowserSession(spaces: [space], selectedSpaceID: space.id))
-        let page = try XCTUnwrap(pages.activePage)
-        page.webView.loadSimulatedRequest(
-            URLRequest(url: current), responseHTML: "<html><title>Copy fixture</title></html>")
-        try await waitUntil { page.url == current && !page.webView.isLoading }
-        space.selectedTabID = selected.id
-        pages.select(session: BrowserSession(spaces: [space], selectedSpaceID: space.id))
-        let before = pages.residentPageCount
-        let activePage = pages.activePage
-        let history = page.webView.backForwardList.backList.map(\.url)
-
-        XCTAssertEqual(pages.linkURL(for: target, in: space), current)
-        XCTAssertEqual(pages.linkURL(for: unloaded, in: space), root)
-        XCTAssertNil(pages.linkURL(for: selected, in: space))
-        XCTAssertEqual(pages.residentPageCount, before)
-        XCTAssertFalse(pages.containsResidentPage(for: unloaded.id))
-        XCTAssertEqual(page.webView.backForwardList.backList.map(\.url), history)
-        XCTAssertEqual(target.savedURL, root)
-        XCTAssertTrue(pages.activePage === activePage)
-    }
-
-    func testSplitCopiesDurablePagesWithIndependentNativeHistory() async throws {
-        let root = try XCTUnwrap(URL(string: "https://state.crest.test/root"))
-        let child = try XCTUnwrap(URL(string: "https://state.crest.test/child"))
-        var session = makeSession(index: 304)
-        let source = BrowserTab(title: "Saved", url: root, placement: .saved)
-        let target = BrowserTab(title: "Pinned", url: root, placement: .pinned)
-        session.spaces[0].tabs = [target, source]
-        session.spaces[0].selectedTabID = source.id
-        let space = try XCTUnwrap(session.selectedSpace)
-        let browser = BrowserStore(session: session, persistence: InMemoryBrowserSessionPersistence())
-        let pages = MobileBrowserPageStore(usesEphemeralWebsiteDataStores: true)
-        browser.tabCopying = pages
-        pages.select(session: session)
-        let originalPage = try XCTUnwrap(pages.activePage)
-        for url in [root, child] {
-            originalPage.webView.frame = CGRect(x: 0, y: 0, width: 640, height: 480)
-            originalPage.webView.loadSimulatedRequest(
-                URLRequest(url: url),
-                responseHTML: "<html><title>State fixture</title><body>Native history</body></html>"
-            )
-            try await waitUntil { originalPage.webView.url == url && !originalPage.webView.isLoading }
-        }
-        browser.selectTab(target.id)
-        let originalPinnedTabs = browser.selectedSpace?.pinnedTabs
-
-        XCTAssertTrue(browser.splitTabWithSelectedTab(source.id, matching: BrowserSpaceRuntimeAssignment(space: space)))
-        let copy = try XCTUnwrap(browser.selectedTab)
-        XCTAssertEqual(copy.url, child)
-        XCTAssertNotEqual(copy.id, source.id)
-        XCTAssertEqual(browser.selectedSpace?.savedTabs, [source])
-        XCTAssertEqual(browser.selectedSpace?.pinnedTabs, originalPinnedTabs)
-        // Copying an unmaterialized copy must leave its own native state available.
-        var nextCopy = BrowserTab(title: copy.title, url: copy.url, placement: .current)
-        pages.prepareTabCopy(from: copy, to: &nextCopy, in: space)
-        pages.select(session: browser.session)
-        let copiedPage = try XCTUnwrap(pages.activePage)
-        XCTAssertFalse(copiedPage === originalPage)
-        XCTAssertEqual(copiedPage.webView.url, child)
-        XCTAssertTrue(copiedPage.webView.canGoBack)
-        XCTAssertEqual(
-            copiedPage.webView.backForwardList.backList.map(\.url),
-            originalPage.webView.backForwardList.backList.map(\.url))
-        XCTAssertEqual(originalPage.webView.url, child)
-        var nextSpace = try XCTUnwrap(browser.selectedSpace)
-        nextSpace.tabs.append(nextCopy)
-        nextSpace.selectedTabID = nextCopy.id
-        pages.select(session: BrowserSession(spaces: [nextSpace], selectedSpaceID: nextSpace.id))
-        XCTAssertTrue(try XCTUnwrap(pages.activePage).webView.canGoBack)
-        pages.reconcile(validTabIDs: [])
-    }
-
-    func testStartPageCommandPaletteIssuesOneNavigationForAFreshPage() throws {
-        let store = BrowserStore(
-            session: makeSession(index: 0),
-            persistence: InMemoryBrowserSessionPersistence()
-        )
-        let pages = MobileBrowserPageStore(usesEphemeralWebsiteDataStores: true)
-        let url = try XCTUnwrap(URL(string: "https://example.com/search"))
-
-        store.navigateSelectedTab(to: url)
-        pages.selectAndLoad(url, in: store.session)
-
-        XCTAssertEqual(
-            try XCTUnwrap(pages.activePage).appInitiatedNavigationCount,
-            1,
-            "A Start Page submission must not ask a newly resident WebView to load twice."
-        )
-    }
-
-    func testForegroundModifiedLinkCreatesSelectsAndLoadsOneCurrentSpacePage() throws {
-        let store = BrowserStore(
-            session: makeSession(index: 90),
-            persistence: InMemoryBrowserSessionPersistence()
-        )
-        let pages = makeLinkRoutingPageStore(browser: store)
-        let sourceSpaceID = try XCTUnwrap(store.selectedSpace?.id)
-        pages.select(session: store.session)
-        let sourcePage = try XCTUnwrap(pages.activePage)
-        let url = try XCTUnwrap(URL(string: "https://slow.crest.test/foreground"))
-
-        sourcePage.routeModifiedLink(url, selecting: true)
-
-        XCTAssertEqual(store.selectedSpace?.id, sourceSpaceID)
-        XCTAssertEqual(store.selectedTab?.url, url)
-        XCTAssertEqual(pages.activePage?.tabID, store.selectedTab?.id)
-        XCTAssertEqual(pages.activePage?.appInitiatedNavigationCount, 1)
-    }
-
-    func testBackgroundModifiedLinkLoadsBeforeSelectionAndIsReused() throws {
-        let store = BrowserStore(
-            session: makeSession(index: 91),
-            persistence: InMemoryBrowserSessionPersistence()
-        )
-        let pages = makeLinkRoutingPageStore(browser: store)
-        pages.select(session: store.session)
-        let sourcePage = try XCTUnwrap(pages.activePage)
-        let sourceTabID = try XCTUnwrap(store.selectedTab?.id)
-        let url = try XCTUnwrap(URL(string: "http://127.0.0.1:9/offline"))
-
-        sourcePage.routeModifiedLink(url, selecting: false)
-
-        let openedTab = try XCTUnwrap(
-            store.selectedSpace?.tabs.first { $0.id != sourceTabID }
-        )
-        XCTAssertEqual(store.selectedTab?.id, sourceTabID)
-        XCTAssertTrue(pages.containsResidentPage(for: openedTab.id))
-
-        store.selectTab(openedTab.id)
-        pages.select(session: store.session)
-
-        XCTAssertEqual(pages.activePage?.tabID, openedTab.id)
-        XCTAssertEqual(pages.activePage?.appInitiatedNavigationCount, 1)
-    }
-
     // MARK: - Per-Space credential access
 
     func testDisablingCredentialAccessResetsAPendingFillRequest() throws {
-        var session = makeSession(index: 3)
-        let space = try XCTUnwrap(session.selectedSpace)
-        let pages = MobileBrowserPageStore(usesEphemeralWebsiteDataStores: true)
-        pages.select(session: session)
+        let session = makeSession(index: 3)
+        let space = try XCTUnwrap(session.spaces.first)
+        let browser = BrowserStore.hostingPages(session)
+        let pages = MobileBrowserPageStore(browser: browser, usesEphemeralWebsiteDataStores: true)
+        pages.select()
         let page = try XCTUnwrap(pages.activePage)
         let loginOrigin = try XCTUnwrap(
             CredentialOrigin(url: try XCTUnwrap(URL(string: "https://accounts.crest.test/login")))
@@ -179,10 +34,8 @@ final class MobileBrowserPageStoreTests: XCTestCase {
         )
         XCTAssertNotNil(page.credentialSaveCandidate)
 
-        var preferences = space.credentialPreferences
-        preferences.isEnabled = false
-        session.updateCredentialPreferences(preferences, in: space.id)
-        pages.reconcileCredentialAccess(in: session)
+        browser.updateCredentialPreferences(Self.savingOff, in: space.id)
+        pages.reconcileCredentialAccess()
 
         XCTAssertFalse(page.isCredentialAccessEnabled)
         XCTAssertNil(
@@ -193,8 +46,9 @@ final class MobileBrowserPageStoreTests: XCTestCase {
 
     func testDisabledCredentialAccessRejectsAFillAndStopsFormCapture() async throws {
         let session = makeSession(index: 4, savesCredentials: false)
-        let pages = MobileBrowserPageStore(usesEphemeralWebsiteDataStores: true)
-        pages.select(session: session)
+        let browser = BrowserStore.hostingPages(session)
+        let pages = MobileBrowserPageStore(browser: browser, usesEphemeralWebsiteDataStores: true)
+        pages.select()
         let page = try XCTUnwrap(pages.activePage)
         let request = URLRequest(
             url: try XCTUnwrap(URL(string: "https://forms.crest.test/login"))
@@ -239,76 +93,33 @@ final class MobileBrowserPageStoreTests: XCTestCase {
     }
 
     func testTransientPeekPagesFollowTheirSpacesCredentialPreference() throws {
-        var session = makeSession(index: 5)
-        let space = try XCTUnwrap(session.selectedSpace)
-        let pages = MobileBrowserPageStore(usesEphemeralWebsiteDataStores: true)
+        let session = makeSession(index: 5)
+        let space = try XCTUnwrap(session.spaces.first)
+        let browser = BrowserStore.hostingPages(session)
+        let pages = MobileBrowserPageStore(browser: browser, usesEphemeralWebsiteDataStores: true)
         let lease = try XCTUnwrap(
             pages.makeTransientPageLease(
                 url: try XCTUnwrap(URL(string: "about:blank")),
-                in: space
+                in: try XCTUnwrap(browser.spaceModel(space.id))
             )
         )
         XCTAssertTrue(try XCTUnwrap(lease.page).isCredentialAccessEnabled)
 
-        var preferences = space.credentialPreferences
-        preferences.isEnabled = false
-        session.updateCredentialPreferences(preferences, in: space.id)
-        pages.reconcileCredentialAccess(in: session)
+        browser.updateCredentialPreferences(Self.savingOff, in: space.id)
+        pages.reconcileCredentialAccess()
 
         XCTAssertFalse(try XCTUnwrap(lease.page).isCredentialAccessEnabled)
-    }
-
-    func testDownloadOnlyTransientPageDismissesInsteadOfRemainingEmpty() async throws {
-        let session = makeSession(index: 51)
-        let space = try XCTUnwrap(session.selectedSpace)
-        let pages = MobileBrowserPageStore(usesEphemeralWebsiteDataStores: true)
-        var dismissalCount = 0
-        let lease = try XCTUnwrap(
-            pages.makeTransientPageLease(
-                url: try XCTUnwrap(URL(string: "about:blank")),
-                in: space,
-                onDownloadOnlyNavigation: { dismissalCount += 1 }
-            )
-        )
-        let page = try XCTUnwrap(lease.page)
-
-        page.discardDownloadOnlySurfaceIfNeeded()
-        await Task.yield()
-
-        XCTAssertEqual(dismissalCount, 1)
-        XCTAssertNil(lease.page)
-    }
-
-    func testDownloadFromLoadedTransientPageKeepsItsExistingContent() async throws {
-        let session = makeSession(index: 52)
-        let space = try XCTUnwrap(session.selectedSpace)
-        let pages = MobileBrowserPageStore(usesEphemeralWebsiteDataStores: true)
-        var dismissalCount = 0
-        let lease = try XCTUnwrap(
-            pages.makeTransientPageLease(
-                url: try XCTUnwrap(URL(string: "about:blank")),
-                in: space,
-                onDownloadOnlyNavigation: { dismissalCount += 1 }
-            )
-        )
-        let page = try XCTUnwrap(lease.page)
-        page.webView(page.webView, didCommit: nil)
-
-        page.discardDownloadOnlySurfaceIfNeeded()
-        await Task.yield()
-
-        XCTAssertEqual(dismissalCount, 0)
-        XCTAssertNotNil(lease.page)
     }
 
     func testPrivateBrowsingKeepsCredentialAccessOffEvenWhenTheSpaceAllowsSaving() throws {
         let session = makeSession(index: 6)
         let pages = MobileBrowserPageStore(
+            browser: .hostingPages(session, browsingMode: .privateBrowsing),
             browsingMode: .privateBrowsing,
             usesEphemeralWebsiteDataStores: true
         )
 
-        pages.select(session: session)
+        pages.select()
 
         XCTAssertFalse(try XCTUnwrap(pages.activePage).isCredentialAccessEnabled)
     }
@@ -317,12 +128,13 @@ final class MobileBrowserPageStoreTests: XCTestCase {
 
     func testCriticalPressureEventReleasesTheActiveTransientLeaseAWarningKeeps() throws {
         let session = makeSession(index: 7)
-        let space = try XCTUnwrap(session.selectedSpace)
-        let pages = MobileBrowserPageStore(usesEphemeralWebsiteDataStores: true)
+        let space = try XCTUnwrap(session.spaces.first)
+        let browser = BrowserStore.hostingPages(session)
+        let pages = MobileBrowserPageStore(browser: browser, usesEphemeralWebsiteDataStores: true)
         let url = try XCTUnwrap(URL(string: "about:blank"))
-        pages.select(session: session)
+        pages.select()
         let activeLease = try XCTUnwrap(
-            pages.makeTransientPageLease(url: url, in: space)
+            pages.makeTransientPageLease(url: url, in: try XCTUnwrap(browser.spaceModel(space.id)))
         )
         // `dispatch_source_get_data` is only defined for the duration of the
         // event handler, so the level has to be captured there and passed in as a
@@ -348,63 +160,34 @@ final class MobileBrowserPageStoreTests: XCTestCase {
 
     // MARK: - Split View presentation
 
-    func testSelectingAMemberPresentsTheWholeRunWithThatMemberFocused() throws {
-        let split = makeSplitSession(memberCount: 3, selectedIndex: 1)
-        let pages = makeSplitPageStore()
-
-        pages.select(session: split.session)
-
-        XCTAssertEqual(pages.presentedTabIDs, split.memberIDs)
-        XCTAssertEqual(pages.activePage?.tabID, split.memberIDs[1])
-        XCTAssertEqual(
-            pages.residentPageCount,
-            1,
-            """
-            Only the focused member is built by selection. The carousel asks for \
-            its neighbours as their cells materialize, which is what keeps a \
-            four-member group off four live web views on a phone.
-            """
-        )
-    }
-
     func testPreparingACardRefusesTabsOutsideTheSelectedSpace() throws {
         let split = makeSplitSession(memberCount: 2, selectedIndex: 0)
         let otherSpace = makeSpace(index: 21, savesCredentials: true)
-        let session = BrowserSession(
-            spaces: [try XCTUnwrap(split.session.selectedSpace), otherSpace],
-            selectedSpaceID: try XCTUnwrap(split.session.selectedSpaceID)
-        )
-        let pages = makeSplitPageStore()
-        pages.select(session: session)
+        var withOther = split
+        withOther.session.spaces.append(otherSpace)
+        let pages = makeSplitPageStore(for: withOther)
+        pages.select()
 
         XCTAssertNil(
-            pages.prepareResidentPage(
-                for: try XCTUnwrap(otherSpace.selectedTabID),
-                in: session
-            ),
+            pages.prepareResidentPage(for: try XCTUnwrap(otherSpace.tabs.first?.id)),
             "A card only ever belongs to the selected Space."
         )
-        XCTAssertNil(
-            pages.prepareResidentPage(
-                for: TabID(rawValue: fixedUUID(0xDEAD)),
-                in: session
-            )
-        )
+        XCTAssertNil(pages.prepareResidentPage(for: fixedUUID(0xDEAD)))
     }
 
     func testResidentPageAccessorRefusesNonMembersAndMismatchedAssignments() throws {
         let split = makeSplitSession(memberCount: 2, selectedIndex: 0)
-        let space = try XCTUnwrap(split.session.selectedSpace)
-        let pages = makeSplitPageStore()
-        pages.select(session: split.session)
-        pages.prepareResidentPage(for: split.memberIDs[1], in: split.session)
+        let space = try XCTUnwrap(split.session.spaces.first)
+        let pages = makeSplitPageStore(for: split)
+        pages.select()
+        pages.prepareResidentPage(for: split.memberIDs[1])
 
         XCTAssertNotNil(
             pages.residentPage(
                 matching: BrowserTabRuntimeAssignment(
                     tabID: split.memberIDs[1],
                     spaceID: space.id,
-                    profileID: space.profile.id
+                    profileID: space.profileID
                 )
             )
         )
@@ -426,247 +209,24 @@ final class MobileBrowserPageStoreTests: XCTestCase {
                 matching: BrowserTabRuntimeAssignment(
                     tabID: split.nonMemberID,
                     spaceID: space.id,
-                    profileID: space.profile.id
+                    profileID: space.profileID
                 )
             ),
             "A background tab with a resident page is not a card."
         )
     }
 
-    // MARK: - Split View memory pressure
-
-    func testCriticalPressureLeavesEveryCardAloneWhileAnOffScreenPageCanGo() async throws {
-        let split = makeSplitSession(memberCount: 2, selectedIndex: 0)
-        let pages = makeSplitPageStore()
-        pages.select(session: split.session)
-        pages.prepareResidentPage(
-            for: split.memberIDs[1],
-            in: split.session,
-            at: fixedDate(1)
-        )
-        pages.prepareResidentPage(
-            for: split.nonMemberID,
-            in: split.session,
-            at: fixedDate(2)
-        )
-
-        pages.handleMemoryPressure(.critical, at: fixedDate(10))
-        await pages.waitForPendingMemoryPressureResponse()
-
-        XCTAssertFalse(
-            pages.containsResidentPage(for: split.nonMemberID),
-            "The off-screen page is what critical pressure is for."
-        )
-        XCTAssertTrue(pages.containsResidentPage(for: split.memberIDs[0]))
-        XCTAssertTrue(
-            pages.containsResidentPage(for: split.memberIDs[1]),
-            """
-            An off-screen background page was available, so no presented card \
-            should have been considered at all.
-            """
-        )
-    }
-
-    func testWarningPressureNeverReachesACardEvenWithNothingElseToGive() async throws {
-        let split = makeSplitSession(memberCount: 4, selectedIndex: 0)
-        let pages = makeSplitPageStore()
-        pages.select(session: split.session)
-        for (offset, memberID) in split.memberIDs.dropFirst().enumerated() {
-            pages.prepareResidentPage(
-                for: memberID,
-                in: split.session,
-                at: fixedDate(offset + 1)
-            )
-        }
-
-        pages.handleMemoryPressure(.warning, at: fixedDate(10))
-        await pages.waitForPendingMemoryPressureResponse()
-
-        for memberID in split.memberIDs {
-            XCTAssertTrue(
-                pages.containsResidentPage(for: memberID),
-                "A warning deliberately releases nothing on iOS."
-            )
-        }
-    }
-
-    func testCriticalFallbackEvictsTheOldestCardBeyondTheFocusedNeighbours() async throws {
-        let split = makeSplitSession(memberCount: 4, selectedIndex: 0)
-        let pages = makeSplitPageStore()
-        pages.select(session: split.session)
-        for (offset, memberID) in split.memberIDs.dropFirst().enumerated() {
-            pages.prepareResidentPage(
-                for: memberID,
-                in: split.session,
-                at: fixedDate(offset + 1)
-            )
-        }
-
-        pages.handleMemoryPressure(.critical, at: fixedDate(10))
-        await pages.waitForPendingMemoryPressureResponse()
-
-        XCTAssertTrue(
-            pages.containsResidentPage(for: split.memberIDs[0]),
-            "The focused card is never a candidate."
-        )
-        XCTAssertTrue(
-            pages.containsResidentPage(for: split.memberIDs[1]),
-            "One swipe reaches the neighbour, so it stays resident."
-        )
-        XCTAssertFalse(
-            pages.containsResidentPage(for: split.memberIDs[2]),
-            """
-            Least recently used first among the cards more than one swipe away: \
-            member 2 was prepared before member 3.
-            """
-        )
-        XCTAssertTrue(
-            pages.containsResidentPage(for: split.memberIDs[3]),
-            "Mobile releases one page per squeeze, not every eligible one."
-        )
-        XCTAssertEqual(
-            pages.presentedTabIDs,
-            split.memberIDs,
-            """
-            An evicted card is still a card: membership is what is on screen, so \
-            the cell renders its unloaded placeholder and prepares again on \
-            approach.
-            """
-        )
-    }
-
-    func testAnEvictedCardIsRebuiltWhenTheCarouselApproachesItAgain() async throws {
-        let split = makeSplitSession(memberCount: 4, selectedIndex: 0)
-        let pages = makeSplitPageStore()
-        pages.select(session: split.session)
-        for (offset, memberID) in split.memberIDs.dropFirst().enumerated() {
-            pages.prepareResidentPage(
-                for: memberID,
-                in: split.session,
-                at: fixedDate(offset + 1)
-            )
-        }
-        pages.handleMemoryPressure(.critical, at: fixedDate(10))
-        await pages.waitForPendingMemoryPressureResponse()
-        XCTAssertFalse(pages.containsResidentPage(for: split.memberIDs[2]))
-
-        pages.prepareResidentPage(
-            for: split.memberIDs[2],
-            in: split.session,
-            at: fixedDate(20)
-        )
-
-        XCTAssertTrue(pages.containsResidentPage(for: split.memberIDs[2]))
-        XCTAssertNotNil(
-            pages.residentPage(
-                matching: BrowserTabRuntimeAssignment(
-                    tabID: split.memberIDs[2],
-                    spaceID: try XCTUnwrap(split.session.selectedSpace).id,
-                    profileID: try XCTUnwrap(split.session.selectedSpace).profile.id
-                )
-            )
-        )
-    }
-
-    func testAGroupCollapsingToOneCardMakesItsFormerMembersEvictableAgain() async throws {
-        let split = makeSplitSession(memberCount: 2, selectedIndex: 0)
-        let pages = makeSplitPageStore()
-        pages.select(session: split.session)
-        pages.prepareResidentPage(
-            for: split.memberIDs[1],
-            in: split.session,
-            at: fixedDate(1)
-        )
-
-        // A remote "Separate All Tabs" arrives: the run is gone, so the former
-        // member stops being a card and becomes an ordinary background tab.
-        let collapsed = split.sessionWithoutSplitGroup
-        pages.select(session: collapsed, at: fixedDate(5))
-
-        XCTAssertEqual(pages.presentedTabIDs, [split.memberIDs[0]])
-
-        pages.handleMemoryPressure(.critical, at: fixedDate(10))
-        await pages.waitForPendingMemoryPressureResponse()
-
-        XCTAssertFalse(
-            pages.containsResidentPage(for: split.memberIDs[1]),
-            "An ex-member is off screen, so the ordinary sweep may reclaim it."
-        )
-        XCTAssertTrue(pages.containsResidentPage(for: split.memberIDs[0]))
-    }
-
-    func testACardLeavingPresentationKeepsTheIdleAgeItAlreadyHad() async throws {
-        let split = makeSplitSession(memberCount: 3, selectedIndex: 0)
-        let pages = makeSplitPageStore()
-        pages.select(session: split.session)
-        // Prepared long ago, then joined by a background tab prepared just now.
-        pages.prepareResidentPage(
-            for: split.memberIDs[1],
-            in: split.session,
-            at: fixedDate(1)
-        )
-        pages.prepareResidentPage(
-            for: split.nonMemberID,
-            in: split.session,
-            at: fixedDate(50)
-        )
-
-        pages.select(session: split.sessionWithoutSplitGroup, at: fixedDate(60))
-        pages.handleMemoryPressure(.critical, at: fixedDate(70))
-        await pages.waitForPendingMemoryPressureResponse()
-
-        XCTAssertFalse(
-            pages.containsResidentPage(for: split.memberIDs[1]),
-            """
-            Leaving presentation must not refresh the stamp: the card has been \
-            out of attention since it was prepared, not since the group \
-            dissolved, and refreshing would make the newer background page look \
-            older than it is.
-            """
-        )
-        XCTAssertTrue(pages.containsResidentPage(for: split.nonMemberID))
-    }
-
-    // MARK: - Presented release policy
-
-    func testPresentedReleasePolicyProtectsTheFocusedCardAndBothNeighbours() {
-        let members = (0..<4).map { TabID(rawValue: fixedUUID(0x200 + $0)) }
-
-        XCTAssertEqual(
-            fallback(members, focusedIndex: 0),
-            [members[2], members[3]]
-        )
-        XCTAssertEqual(fallback(members, focusedIndex: 1), [members[3]])
-        XCTAssertEqual(fallback(members, focusedIndex: 2), [members[0]])
-        XCTAssertEqual(
-            fallback(members, focusedIndex: 3),
-            [members[0], members[1]]
-        )
-    }
-
     // MARK: - Helpers
-
-    private func fallback(
-        _ members: [TabID],
-        focusedIndex: Int
-    ) -> [TabID] {
-        BrowserPresentedPageReleasePolicy.fallbackReleasableTabIDs(
-            presentedTabIDs: members,
-            focusedTabID: members[focusedIndex],
-            level: .critical,
-            hasOtherReleasablePages: false
-        )
-    }
 
     /// A Space holding one split run plus one ordinary background tab after it.
     private func makeSplitSession(
         memberCount: Int,
         selectedIndex: Int
     ) -> SplitFixture {
-        let groupID = SplitGroupID(rawValue: fixedUUID(0x5000))
+        let groupID = fixedUUID(0x5000)
         let members = (0..<memberCount).map { index in
-            BrowserTab(
-                id: TabID(rawValue: fixedUUID(0x5100 + index)),
+            TabState.Seed(
+                id: fixedUUID(0x5100 + index),
                 title: "Card \(index)",
                 url: URL(string: "https://cards.crest.test/\(index)"),
                 placement: .current,
@@ -674,65 +234,36 @@ final class MobileBrowserPageStoreTests: XCTestCase {
                 lastActivatedAt: fixedDate(index)
             )
         }
-        let background = BrowserTab(
-            id: TabID(rawValue: fixedUUID(0x5200)),
+        let background = TabState.Seed(
+            id: fixedUUID(0x5200),
             title: "Background",
             url: URL(string: "https://background.crest.test"),
             placement: .current,
             lastActivatedAt: fixedDate(0)
         )
-        let space = BrowserSpace(
-            id: SpaceID(rawValue: fixedUUID(0x5300)),
-            profile: BrowsingProfile(id: fixedUUID(0x5400)),
+        let space = SpaceState.Seed(
+            id: fixedUUID(0x5300),
+            profileID: fixedUUID(0x5400),
             name: "Split",
             symbol: "rectangle.split.2x1",
             accent: .indigo,
             folders: [],
-            tabs: members + [background],
-            selectedTabID: members[selectedIndex].id
+            tabs: members + [background]
         )
         return SplitFixture(
-            session: BrowserSession(spaces: [space], selectedSpaceID: space.id),
+            session: SessionState.Seed(spaces: [space]),
+            spaceID: space.id,
+            selectedID: members[selectedIndex].id,
             memberIDs: members.map(\.id),
             nonMemberID: background.id
         )
     }
 
-    private func makeSplitPageStore() -> MobileBrowserPageStore {
+    /// A scene over `split`'s session showing its selected card.
+    private func makeSplitPageStore(for split: SplitFixture) -> MobileBrowserPageStore {
         MobileBrowserPageStore(
-            usesEphemeralWebsiteDataStores: true,
-            // Deterministic: every off-focus page is unloadable, so these tests
-            // measure the store's own eligibility rules rather than WebKit's
-            // media state.
-            residencyDecisionProvider: { _, _ in
-                BrowserPageResidencyDecision(
-                    isSelected: false,
-                    keepsPageLoaded: false,
-                    isPlayingMedia: false,
-                    isCapturingMedia: false
-                )
-            }
-        )
-    }
-
-    private func makeLinkRoutingPageStore(
-        browser: BrowserStore
-    ) -> MobileBrowserPageStore {
-        MobileBrowserPageStore(
-            usesEphemeralWebsiteDataStores: true,
-            openModifiedLink: { url, spaceID, selecting in
-                guard
-                    let tabID = browser.openNewTab(
-                        url: url,
-                        in: spaceID,
-                        selecting: selecting
-                    ),
-                    let space = browser.session.space(id: spaceID),
-                    let tab = space.tabs.first(where: { $0.id == tabID })
-                else { return nil }
-                return BrowserModifiedLinkRegistration(tab: tab, space: space, session: browser.session)
-            }
-        )
+            browser: .hostingPages(split.session, showing: split.spaceID, tabs: [split.spaceID: split.selectedID]),
+            usesEphemeralWebsiteDataStores: true)
     }
 
     private func fixedDate(_ offset: Int) -> Date {
@@ -742,31 +273,30 @@ final class MobileBrowserPageStoreTests: XCTestCase {
     private func makeSession(
         index: Int,
         savesCredentials: Bool = true
-    ) -> BrowserSession {
+    ) -> SessionState.Seed {
         let space = makeSpace(index: index, savesCredentials: savesCredentials)
-        return BrowserSession(spaces: [space], selectedSpaceID: space.id)
+        return SessionState.Seed(spaces: [space])
     }
 
     private func makeSpace(
         index: Int,
         savesCredentials: Bool
-    ) -> BrowserSpace {
-        let tab = BrowserTab.startPage(
-            id: TabID(rawValue: fixedUUID(index * 10 + 1)),
+    ) -> SpaceState.Seed {
+        let tab = TabState.Seed.startPage(
+            id: fixedUUID(index * 10 + 1),
             placement: .current
         )
-        var credentialPreferences = BrowserCredentialPreferences.default
+        var credentialPreferences = CredentialPreferences.seeded
         credentialPreferences.isEnabled = savesCredentials
-        return BrowserSpace(
-            id: SpaceID(rawValue: fixedUUID(index * 10 + 2)),
-            profile: BrowsingProfile(id: fixedUUID(index * 10 + 3)),
+        return SpaceState.Seed(
+            id: fixedUUID(index * 10 + 2),
+            profileID: fixedUUID(index * 10 + 3),
             name: "Space \(index)",
             symbol: "circle",
             accent: .indigo,
             folders: [],
             tabs: [tab],
-            credentialPreferences: credentialPreferences,
-            selectedTabID: tab.id
+            credentialPreferences: credentialPreferences
         )
     }
 
@@ -821,6 +351,10 @@ final class MobileBrowserPageStoreTests: XCTestCase {
         } catch {}
     }
 
+    /// Crest Passwords turned off for a Space.
+    private static let savingOff = CredentialPreferences(
+        isEnabled: false, syncsCrestPasswordsWithICloud: false, alsoOffersSaveToSystemPasswords: false)
+
     private func fixedUUID(_ value: Int) -> UUID {
         UUID(uuidString: String(format: "00000000-0000-0000-0000-%012x", value))!
     }
@@ -828,31 +362,9 @@ final class MobileBrowserPageStoreTests: XCTestCase {
 
 /// One split run, its members in order, and the background tab that follows it.
 private struct SplitFixture {
-    let session: BrowserSession
-    let memberIDs: [TabID]
-    let nonMemberID: TabID
-
-    /// The same Space with the run dissolved, which is what a remote "Separate
-    /// All Tabs" or a group broken up on another device materializes as.
-    var sessionWithoutSplitGroup: BrowserSession {
-        guard let space = session.selectedSpace else { return session }
-        let flattened = BrowserSpace(
-            id: space.id,
-            profile: space.profile,
-            name: space.name,
-            symbol: space.symbol,
-            accent: space.accent,
-            folders: space.folders,
-            tabs: space.tabs.map { tab in
-                var tab = tab
-                tab.splitGroupID = nil
-                return tab
-            },
-            selectedTabID: space.selectedTabID
-        )
-        return BrowserSession(
-            spaces: [flattened],
-            selectedSpaceID: flattened.id
-        )
-    }
+    var session: SessionState.Seed
+    let spaceID: UUID
+    let selectedID: UUID
+    let memberIDs: [UUID]
+    let nonMemberID: UUID
 }

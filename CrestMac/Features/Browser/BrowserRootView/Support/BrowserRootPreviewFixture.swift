@@ -1,52 +1,54 @@
 import Foundation
 
+// MARK: - Types
+
+enum BrowserRootPreviewState: Equatable {
+    case docked
+    case collapsed
+    case commandPalette
+}
+
 enum BrowserRootPreviewFixture {
-    static let spaceID = SpaceID(rawValue: uuid(0x21))
-    static let startTabID = TabID(rawValue: uuid(0x41))
-    static let space = BrowserSpace(
+    static let spaceID = uuid(0x21)
+    static let startTabID = uuid(0x41)
+    static let space = SpaceState.Seed(
         id: spaceID,
-        profile: BrowsingProfile(id: uuid(0x11)),
+        profileID: uuid(0x11),
         name: "Research",
         symbol: "books.vertical.fill",
         accent: .indigo,
-        branding: .initial(
-            accent: .indigo,
-            symbol: "books.vertical.fill"
-        ),
-        folders: [],
         tabs: [
-            BrowserTab(
-                id: TabID(rawValue: uuid(0x42)),
+            TabState.Seed(
+                id: uuid(0x42),
                 title: "Apple Developer",
                 url: URL(fileURLWithPath: "/preview/apple-developer"),
                 symbol: "apple.logo",
                 placement: .pinned,
                 lastActivatedAt: Date(timeIntervalSince1970: 0)
             ),
-            BrowserTab(
-                id: TabID(rawValue: uuid(0x43)),
+            TabState.Seed(
+                id: uuid(0x43),
                 title: "WebKit Notes",
                 url: URL(fileURLWithPath: "/preview/webkit-notes"),
                 symbol: "safari.fill",
                 placement: .current,
                 lastActivatedAt: Date(timeIntervalSince1970: 0)
             ),
-            BrowserTab.startPage(
+            TabState.Seed.startPage(
                 id: startTabID,
                 lastActivatedAt: Date(timeIntervalSince1970: 0)
             ),
-        ],
-        selectedTabID: startTabID
+        ]
     )
 
-    static let splitGroupID = SplitGroupID(rawValue: uuid(0x61))
+    static let splitGroupID = uuid(0x61)
 
     /// Two grouped current tabs, for previewing the split content area. Kept
     /// beside the fixture Space rather than inside it so every existing preview
     /// keeps rendering the single-page path it was written for.
-    static let splitMembers: [BrowserTab] = [
-        BrowserTab(
-            id: TabID(rawValue: uuid(0x62)),
+    static let splitMembers: [TabState.Seed] = [
+        TabState.Seed(
+            id: uuid(0x62),
             title: "WebKit Notes",
             url: URL(fileURLWithPath: "/preview/webkit-notes"),
             symbol: "safari.fill",
@@ -54,8 +56,8 @@ enum BrowserRootPreviewFixture {
             splitGroupID: splitGroupID,
             lastActivatedAt: Date(timeIntervalSince1970: 0)
         ),
-        BrowserTab(
-            id: TabID(rawValue: uuid(0x63)),
+        TabState.Seed(
+            id: uuid(0x63),
             title: "Layout Research",
             url: URL(fileURLWithPath: "/preview/layout-research"),
             symbol: "ruler.fill",
@@ -68,11 +70,7 @@ enum BrowserRootPreviewFixture {
     @MainActor
     static func makeBrowser() -> BrowserStore {
         BrowserStore(
-            session: BrowserSession(
-                spaces: [space],
-                selectedSpaceID: spaceID
-            ),
-            persistence: InMemoryBrowserSessionPersistence()
+            seed: SessionState.Seed(spaces: [space])
         )
     }
 
@@ -94,10 +92,10 @@ enum BrowserRootPreviewFixture {
         let browser = makeBrowser()
         return BrowserRootModel(
             browser: browser,
-            pages: BrowserPagePool(),
+            pages: BrowserPagePool(browser: browser),
             chrome: makeChrome(state: state),
             spaceAccess: BrowserSpaceAccessController(),
-            windowState: makeWindowState(session: browser.session),
+            windowState: makeWindowState(browser: browser),
             startupBehavior: .showStartPage,
             persistedSidebarWidth: BrowserChromeLayout.sidebarIdealWidth
         )
@@ -105,12 +103,12 @@ enum BrowserRootPreviewFixture {
 
     @MainActor
     static func makeWindowState(
-        session: BrowserSession
+        browser: BrowserStore
     ) -> BrowserWindowStateStore {
         let windowState = BrowserWindowStateStore(
-            id: BrowserWindowID(rawValue: uuid(0x51)),
-            session: session,
-            persistence: InMemoryBrowserWindowStatePersistence()
+            id: uuid(0x51),
+            browser: browser,
+            layouts: BrowserWindowLayouts(defaults: nil)
         )
         windowState.captureSidebar(
             width: Double(BrowserChromeLayout.sidebarIdealWidth),

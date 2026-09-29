@@ -3,15 +3,16 @@ import Observation
 
 struct BrowserOnboardingImportReadOutput: Sendable {
     let payload: BrowserDetectedImportPayload
-    let imported: BrowserPortableImport
+    /// The Spaces the core read, with new identities.
+    let imported: [SpaceState]
     let passwordCandidates: [BrowserPasswordImportCandidate]
 }
 
 enum BrowserOnboardingImportReadPhase: Equatable {
     case idle
-    case reading(id: UUID, application: BrowserImportApplication)
+    case reading(id: UUID, application: ImportSource)
 
-    var application: BrowserImportApplication? {
+    var application: ImportSource? {
         switch self {
         case .idle:
             nil
@@ -43,10 +44,7 @@ final class BrowserOnboardingImportReadCoordinator {
     @ObservationIgnored private let reader: any BrowserOnboardingImportReading
     @ObservationIgnored private var readTask: Task<Void, Never>?
 
-    init(
-        reader: any BrowserOnboardingImportReading =
-            LiveBrowserOnboardingImportReader()
-    ) {
+    init(reader: any BrowserOnboardingImportReading) {
         self.reader = reader
     }
 

@@ -1,3 +1,5 @@
+import Foundation
+
 struct BrowserCredentialDetailRequest: Equatable, Identifiable, Sendable {
     let descriptor: CredentialDescriptor
     let spaceAssignment: BrowserSpaceRuntimeAssignment
@@ -20,17 +22,18 @@ struct BrowserCredentialDetailRequest: Equatable, Identifiable, Sendable {
         self.spaceName = spaceName
     }
 
-    init?(descriptor: CredentialDescriptor, space: BrowserSpace) {
+    @MainActor
+    init?(descriptor: CredentialDescriptor, space: SpaceModel) {
         guard descriptor.spaceID == space.id else { return nil }
         self.init(
             descriptor: descriptor,
             spaceAssignment: BrowserSpaceRuntimeAssignment(space: space),
-            spaceName: space.name
+            spaceName: space.settings.name
         )
     }
 }
 
 struct BrowserCredentialDetailPresentationIdentity: Equatable, Hashable, Sendable {
-    let credentialID: CredentialID
+    let credentialID: UUID
     let spaceAssignment: BrowserSpaceRuntimeAssignment
 }

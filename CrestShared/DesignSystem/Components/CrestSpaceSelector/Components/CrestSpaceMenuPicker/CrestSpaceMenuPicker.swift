@@ -17,7 +17,7 @@ struct CrestSpaceMenuPicker<Tag: Hashable>: View {
         Picker(label, selection: $selection) {
             ForEach(spaces) { identity in
                 BrowserSpaceIdentityLabel(
-                    space: identity.space,
+                    identity: identity.space,
                     title: identity.name,
                     iconSize: iconSize
                 )
@@ -32,9 +32,9 @@ struct CrestSpaceMenuPicker<Tag: Hashable>: View {
 
 #if DEBUG
     #Preview("Select a Space") {
-        @Previewable @State var selection: SpaceID? = BrowserSession.preview.selectedSpaceID
+        @Previewable @State var selection: UUID? = SessionState.Seed.preview.spaces[0].id
         CrestSpaceMenuPicker(
-            "Default Space", selection: $selection, spaces: CrestSpaceIdentity.list(BrowserSession.preview.spaces)
+            "Default Space", selection: $selection, spaces: CrestSpaceIdentity.list(SpaceModel.previewSpaces)
         )
         .padding().frame(width: 320)
     }

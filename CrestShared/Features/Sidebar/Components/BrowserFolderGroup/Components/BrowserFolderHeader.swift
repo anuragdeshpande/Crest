@@ -9,7 +9,7 @@ struct BrowserFolderHeader: View {
     let configuration: BrowserFolderGroupConfiguration
     let interaction: BrowserFolderGroupInteractionContext
 
-    private var folder: BrowserFolder { configuration.folder }
+    private var folder: FolderStateModel { configuration.folder }
     @AppStorage(BrowserSidebarDensityPreference.scaleKey, store: BrowserSidebarDensityPreference.defaults)
     private var tabScale = 1.0
 
@@ -18,7 +18,7 @@ struct BrowserFolderHeader: View {
             configuration: configuration,
             interaction: interaction
         )
-        .accessibilityLabel("\(folder.title) folder")
+        .accessibilityLabel("\(folder.shownTitle) folder")
         .accessibilityValue(
             BrowserChromeAccessibility.folderValue(
                 isExpanded: interaction.isExpanded.wrappedValue
@@ -45,7 +45,6 @@ struct BrowserFolderHeader: View {
             profileID: configuration.profileID,
             spaceID: configuration.spaceID,
             dragState: sidebarInteraction.folderDragState,
-            memberTabIDs: configuration.subtreeTabIDs,
             reorder: BrowserSidebarReorderContext(
                 browser: configuration.browser,
                 spaceAccess: configuration.spaceAccess,
@@ -61,11 +60,7 @@ struct BrowserFolderHeader: View {
         // above the header is already drawn by the row's own reorder indicator,
         // on every shell, so the header carries only the nesting answer.
         .overlay {
-            BrowserFolderNestDropHighlight(
-                isTargeted: BrowserFolderRowPresentationPolicy.showsNestOutline(
-                    for: configuration.nestingLift
-                )
-            )
+            BrowserFolderNestDropHighlight(state: sidebarInteraction.sidebarReorderState, target: .folder(folder.id))
         }
     }
 }

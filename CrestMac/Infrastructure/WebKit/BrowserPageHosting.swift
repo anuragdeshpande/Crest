@@ -4,47 +4,22 @@ import Foundation
 import Observation
 import UniformTypeIdentifiers
 import WebKit
-import os
 
-/// The tab-level operations a page needs from whatever owns it. Popup adoption
-/// and `window.close()` arrive while a WebKit delegate callback is on the stack;
-/// the page itself defers teardown requests until that callback has unwound.
+/// The tab-level operations a page needs from whatever owns it.
 @MainActor
 protocol BrowserPageHosting: AnyObject {
-    /// Replaces an extension document with its top-level web destination in
-    /// the same browser tab and ordinary WebKit runtime.
-    func replaceExtensionPageNavigation(
-        _ page: BrowserPage,
-        with destinationURL: URL
-    )
+    /// Lets go of a page its engine closed on its own authority, once the
+    /// core closed what owned it. A tab the core kept, such as one in a locked
+    /// Space, loads its page anew when it is shown.
+    func releaseEngineClosedPage(_ page: BrowserPage)
 
-    /// Keeps an allowed new-window request in its current transient surface,
-    /// or declines when the opener belongs to an ordinary resident tab.
-    func navigatePopupInCurrentPage(
-        _ request: URLRequest,
-        opener: BrowserPage
-    ) -> Bool
-
-    /// Adopts the web view WebKit pre-made for a popup into a new selected tab,
-    /// or returns nil when this opener cannot host one.
-    func adoptPopupWebView(
-        configuration: WKWebViewConfiguration,
-        requestedURL: URL?,
-        opener: BrowserPage,
-        selecting: Bool
-    ) -> WKWebView?
-
-    /// Honors `window.close()` for a page the web content itself opened.
-    func closeWebContentInitiatedPage(_ page: BrowserPage)
-
-    /// Retires an empty transient surface whose initial navigation became a download.
+    /// Retires an empty surface whose initial navigation became a download:
+    /// a transient one closes, and a tab's page asks the core to close it as
+    /// its own script would.
     func discardDownloadOnlyPage(_ page: BrowserPage)
 
     /// Brings the live tab that authored a clicked system notification forward.
     func activateNotificationSourcePage(_ page: BrowserPage)
-
-    /// Reveals the exact live PiP source in its current owning window.
-    func restorePictureInPictureSourcePage(_ page: BrowserPage)
 
     /// Routes a message received by a shared popup content controller to the
     /// page whose web view actually authored it.

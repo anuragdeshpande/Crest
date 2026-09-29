@@ -7,8 +7,8 @@ import SwiftUI
 /// their own insets inside a group's container.
 struct BrowserSidebarTabActivationButton: View {
     @Environment(BrowserSidebarInteractionState.self) private var sidebarInteraction
-    let tab: BrowserTab
-    let spaceID: SpaceID
+    let tab: TabStateModel
+    let favicons: FaviconAssets
     let profileID: UUID
     let isSelected: Bool
     let isLoaded: Bool
@@ -24,10 +24,9 @@ struct BrowserSidebarTabActivationButton: View {
     var body: some View {
         Button(action: select) {
             BrowserSidebarTabLabel(
-                tab: tab, profileID: profileID, isSelected: isSelected,
+                tab: tab, favicons: favicons, profileID: profileID, isSelected: isSelected,
                 isLoaded: isLoaded, metrics: metrics, leadingInset: leadingInset,
-                restoreSavedLocation: restoreSavedLocation, faviconPrimaryClick: faviconPrimaryClick,
-                sidePanelSpaceID: spaceID)
+                restoreSavedLocation: restoreSavedLocation, faviconPrimaryClick: faviconPrimaryClick)
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, maxHeight: maxHeight)
@@ -51,7 +50,7 @@ struct BrowserSidebarTabActivationButton: View {
                 .accessibilityHidden(true)
                 .browserIconCustomizationPopover(iconCustomization, arrowEdge: iconPickerArrowEdge)
         }
-        .accessibilityLabel(tab.displayTitle)
+        .accessibilityLabel(tab.shownTitle)
         .accessibilityValue(BrowserChromeAccessibility.tabValue(isLoaded: isLoaded))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityIdentifier(BrowserTabAccessibilityID.row(tab.id))
@@ -69,8 +68,8 @@ struct BrowserSidebarTabActivationButton: View {
 
     private var faviconPrimaryClick: (() -> Void)? {
         #if os(macOS)
-            guard BrowserDurableTabPreferenceStore.shared.returnsToSavedURLOnFaviconClick,
-                tab.placement == .saved, tab.isAwayFromSavedLocation,
+            guard BrowserAppPreferenceStore.shared.returnsToSavedURLOnFaviconClick,
+                tab.placement == .saved, tab.isAwayFromSavedAddress,
                 let restoreSavedLocation
             else { return nil }
             return {

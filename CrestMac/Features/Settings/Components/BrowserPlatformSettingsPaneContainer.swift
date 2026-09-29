@@ -17,12 +17,12 @@ struct BrowserPlatformSettingsPaneContainer<Content: View>: View {
 
     var body: some View {
         ScrollView {
-            BrowserSettingsSectionGrid(allowsColumns: ![.passwords, .about, .extensions].contains(destination)) {
+            BrowserSettingsSectionGrid(allowsColumns: ![.passwords, .about].contains(destination)) {
                 content
             }
             .padding(24)
         }
         .browserNativeScrollState(tabState?.scroll(for: destination) ?? standaloneScroll)
-        .accessibilityIdentifier("settings-form-\(destination.rawValue)")
+        .accessibilityIdentifier("settings-form-\(destination.name)")
     }
 }

@@ -2,13 +2,13 @@ import SwiftUI
 
 /// A stable-height scroll lane with explicit controls for mouse-only scrolling.
 struct BrowserSpaceSwitcherCompactPicker: View {
-    let spaces: [BrowserSpace]
-    let selectedSpaceID: SpaceID
+    let spaces: [BrowserSpaceIdentity]
+    let selectedSpaceID: UUID
     var reorderState: BrowserSidebarReorderState? = nil
     let metrics: BrowserSpacePickerMetrics
-    let selectSpace: (SpaceID) -> Void
+    let selectSpace: (UUID) -> Void
     let allocation: BrowserSpaceSwitcherCompactAllocation
-    var moveSpace: ((SpaceID, SpaceID) -> Void)? = nil
+    var moveSpace: ((UUID, UUID) -> Void)? = nil
     var style: CrestSpaceIconPickerStyle = .compact
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -75,7 +75,7 @@ struct BrowserSpaceSwitcherCompactPicker: View {
         .scrollIndicators(.never)
         .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
         .frame(width: allocation.scrollViewportWidth, height: style.height)
-        .clipShape(.rect(cornerRadius: style.cornerRadius))
+        .clipShape(CrestSpaceIconPickerShape(style: style))
         .onGeometryChange(for: CGRect.self) {
             $0.frame(in: .global)
         } action: {

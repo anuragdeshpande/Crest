@@ -15,7 +15,7 @@ struct MobileHistoryView: View {
         .presentationDetents([.medium, .large])
     }
 
-    private var space: BrowserSpace? {
+    private var space: SpaceModel? {
         BrowserSidebarAccessPolicy.selectedUnlockedSpace(
             matching: assignment,
             in: browser,

@@ -5,12 +5,14 @@ import Foundation
 /// when it asks, and a menu cannot wait for an answer.
 @MainActor
 struct BrowserSplitLinkHost {
-    var canOpenLink: (TabID, BrowserSpaceRuntimeAssignment) -> Bool
-    var openLink: (URL, TabID, BrowserSpaceRuntimeAssignment) -> Void
+    var canOpenLink: (UUID, BrowserSpaceRuntimeAssignment) -> Bool
+    /// Opens the link as a new tab beside the tab it came from, presenting as
+    /// one split, and answers the new tab.
+    var openLink: (URL, UUID, BrowserSpaceRuntimeAssignment) -> UUID?
 
     init(
-        canOpenLink: @escaping (TabID, BrowserSpaceRuntimeAssignment) -> Bool,
-        openLink: @escaping (URL, TabID, BrowserSpaceRuntimeAssignment) -> Void
+        canOpenLink: @escaping (UUID, BrowserSpaceRuntimeAssignment) -> Bool,
+        openLink: @escaping (URL, UUID, BrowserSpaceRuntimeAssignment) -> UUID?
     ) {
         self.canOpenLink = canOpenLink
         self.openLink = openLink
@@ -20,6 +22,6 @@ struct BrowserSplitLinkHost {
     /// simply leave the menu item out.
     static let unavailable = BrowserSplitLinkHost(
         canOpenLink: { _, _ in false },
-        openLink: { _, _, _ in }
+        openLink: { _, _, _ in nil }
     )
 }

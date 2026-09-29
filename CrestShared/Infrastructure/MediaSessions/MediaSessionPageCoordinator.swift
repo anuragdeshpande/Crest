@@ -1,15 +1,30 @@
 import Foundation
-import WebKit
 
-/// Binds one resident web view to the profile-owned Media Session store.
+/// How a page's Media Session state reaches Crest and Crest's commands reach
+/// the page. WebKit runs Crest's bridge in the page's own world
+/// (`BrowserWebKitMediaSessionTransport`); an engine with a native media
+/// session reports it and executes the commands itself.
+@MainActor
+protocol BrowserMediaSessionTransport: AnyObject {
+    /// The committed document's address, which every event must name.
+    var mediaSessionLocation: String? { get }
+    /// Starts reporting the current document under `documentIdentifier`.
+    func activateMediaSession(documentIdentifier: String)
+    func performMediaSessionAction(_ action: BrowserMediaSessionAction, documentIdentifier: String)
+    func setMediaSessionMuted(_ muted: Bool, documentIdentifier: String)
+}
+
+/// Binds one resident page to the profile-owned Media Session store.
 ///
-/// The coordinator accepts only main-frame messages authored by its exact web
-/// view and only after that view commits the matching document URL. Navigation,
-/// process loss, and page teardown all invalidate the endpoint before another
-/// document is allowed to publish.
+/// The coordinator accepts only main-frame messages from its own page and only
+/// after that page commits the matching document URL. Navigation, process
+/// loss, and page teardown all invalidate the endpoint before another document
+/// is allowed to publish.
 @MainActor
 final class BrowserMediaSessionPageCoordinator {
-    private weak var webView: WKWebView?
+    private weak var transport: (any BrowserMediaSessionTransport)?
+    /// A transport built for this coordinator alone, which nothing else keeps.
+    private(set) var ownedTransport: (any BrowserMediaSessionTransport)?
     private weak var endpoint: (any BrowserMediaSessionCommandEndpoint)?
     private let store: BrowserMediaSessionStore
     private let owner: @MainActor () -> BrowserTabRuntimeAssignment?
@@ -17,17 +32,30 @@ final class BrowserMediaSessionPageCoordinator {
     private var documentIdentifier: String?
 
     init(
-        webView: WKWebView,
+        transport: any BrowserMediaSessionTransport,
         endpoint: any BrowserMediaSessionCommandEndpoint,
         store: BrowserMediaSessionStore,
         owner: @escaping @MainActor () -> BrowserTabRuntimeAssignment?,
         fallbackTitle: @escaping @MainActor () -> String?
     ) {
-        self.webView = webView
+        self.transport = transport
         self.endpoint = endpoint
         self.store = store
         self.owner = owner
         self.fallbackTitle = fallbackTitle
+    }
+
+    /// Binds a transport this coordinator keeps alive, for an engine that
+    /// builds one per page.
+    convenience init(
+        owning transport: any BrowserMediaSessionTransport,
+        endpoint: any BrowserMediaSessionCommandEndpoint,
+        store: BrowserMediaSessionStore,
+        owner: @escaping @MainActor () -> BrowserTabRuntimeAssignment?,
+        fallbackTitle: @escaping @MainActor () -> String?
+    ) {
+        self.init(transport: transport, endpoint: endpoint, store: store, owner: owner, fallbackTitle: fallbackTitle)
+        ownedTransport = transport
     }
 
     func prepareForNavigation() {
@@ -52,16 +80,8 @@ final class BrowserMediaSessionPageCoordinator {
     }
 
     private func emitCurrentState() {
-        guard let documentIdentifier, let webView else { return }
-        Task { @MainActor [weak self, weak webView] in
-            guard self?.documentIdentifier == documentIdentifier else { return }
-            _ = try? await webView?.callAsyncJavaScript(
-                "return globalThis.__crestMediaSessionBridge?.activate(documentIdentifier);",
-                arguments: ["documentIdentifier": documentIdentifier],
-                in: nil,
-                contentWorld: BrowserMediaSessionContentBridge.contentWorld
-            )
-        }
+        guard let documentIdentifier else { return }
+        transport?.activateMediaSession(documentIdentifier: documentIdentifier)
     }
 
     func webContentProcessDidTerminate() {
@@ -72,20 +92,26 @@ final class BrowserMediaSessionPageCoordinator {
     func prepareForRemoval() {
         invalidate()
         documentIdentifier = nil
-        webView = nil
+        transport = nil
+        ownedTransport = nil
         endpoint = nil
     }
 
-    func receive(_ message: WKScriptMessage) {
+    func receive(_ body: Any, isMainFrame: Bool) {
+        guard let event = BrowserMediaSessionPageEventDecoder.decode(body) else { return }
+        receive(event, isMainFrame: isMainFrame)
+    }
+
+    /// A session event an engine reports in the model itself rather than as a
+    /// page script's message body.
+    func receive(_ event: BrowserMediaSessionPageEvent, isMainFrame: Bool) {
         guard let documentIdentifier,
-            message.frameInfo.isMainFrame,
-            let webView,
-            message.webView === webView,
+            isMainFrame,
+            let transport,
             let endpoint,
             let owner = owner(),
-            let event = BrowserMediaSessionPageEventDecoder.decode(message.body),
             event.documentIdentifier == documentIdentifier,
-            event.location == webView.url?.absoluteString
+            event.location == transport.mediaSessionLocation
         else { return }
         store.receive(
             event,
@@ -100,56 +126,23 @@ final class BrowserMediaSessionPageCoordinator {
         documentIdentifier: String
     ) {
         guard self.documentIdentifier == documentIdentifier,
-            let webView,
             documentIdentifier.count
                 <= BrowserMediaSessionPageEventDecoder.maximumDocumentIdentifierLength
         else { return }
-        Task { @MainActor [weak webView] in
-            _ = try? await webView?.callAsyncJavaScript(
-                """
-                return globalThis.__crestMediaSessionBridge?.perform(
-                  action,
-                  documentIdentifier
-                ) === true;
-                """,
-                arguments: [
-                    "action": action.rawValue,
-                    "documentIdentifier": documentIdentifier,
-                ],
-                in: nil,
-                contentWorld: BrowserMediaSessionContentBridge.contentWorld
-            )
-        }
+        transport?.performMediaSessionAction(action, documentIdentifier: documentIdentifier)
     }
 
     /// Muting is an element property rather than a Media Session action, so it
-    /// travels the same validated path as `perform` but addresses the elements
-    /// the page has surfaced instead of a registered handler.
+    /// travels the same validated path as `perform`.
     func setMuted(
         _ muted: Bool,
         documentIdentifier: String
     ) {
         guard self.documentIdentifier == documentIdentifier,
-            let webView,
             documentIdentifier.count
                 <= BrowserMediaSessionPageEventDecoder.maximumDocumentIdentifierLength
         else { return }
-        Task { @MainActor [weak webView] in
-            _ = try? await webView?.callAsyncJavaScript(
-                """
-                return globalThis.__crestMediaSessionBridge?.setMuted(
-                  muted,
-                  documentIdentifier
-                ) === true;
-                """,
-                arguments: [
-                    "muted": muted,
-                    "documentIdentifier": documentIdentifier,
-                ],
-                in: nil,
-                contentWorld: BrowserMediaSessionContentBridge.contentWorld
-            )
-        }
+        transport?.setMediaSessionMuted(muted, documentIdentifier: documentIdentifier)
     }
 
     private func invalidate() {

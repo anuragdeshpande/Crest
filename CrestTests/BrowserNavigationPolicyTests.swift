@@ -5,25 +5,6 @@ import XCTest
 @testable import Crest
 
 final class BrowserNavigationPolicyTests: XCTestCase {
-    func testModifiedLinkFocusChoiceAndShiftInversion() throws {
-        let url = try XCTUnwrap(URL(string: "https://example.com/research"))
-        for focusesNewTabs in [false, true] {
-            for shift in [false, true] {
-                XCTAssertEqual(
-                    BrowserModifiedLinkDisposition.classify(
-                        destinationURL: url,
-                        isUserActivatedLink: true,
-                        isCommandModified: true,
-                        isShiftModified: shift,
-                        isMiddleClick: false,
-                        focusesNewTabs: focusesNewTabs
-                    ),
-                    focusesNewTabs != shift ? .foregroundTab(url) : .backgroundTab(url)
-                )
-            }
-        }
-    }
-
     func testInlineDirectVideoUsesBrowserOwnedPlaybackDocument() throws {
         let url = try XCTUnwrap(
             URL(string: "https://media.example/watch?id=direct&quality=source")
@@ -212,125 +193,6 @@ final class BrowserNavigationPolicyTests: XCTestCase {
         XCTAssertEqual(intent, .download)
     }
 
-    func testCommandAndMiddleClickedWebLinksUseNativeTabDisposition() throws {
-        let url = try XCTUnwrap(URL(string: "https://example.com/reference"))
-
-        XCTAssertTrue(BrowserMouseButtonPolicy.isMiddleButton(number: 1 << 2))
-        XCTAssertFalse(BrowserMouseButtonPolicy.isMiddleButton(number: 0))
-        XCTAssertFalse(BrowserMouseButtonPolicy.isMiddleButton(number: 1))
-        XCTAssertFalse(BrowserMouseButtonPolicy.isMiddleButton(number: 2))
-
-        XCTAssertEqual(
-            BrowserModifiedLinkDisposition.classify(
-                destinationURL: url,
-                isUserActivatedLink: true,
-                isCommandModified: true,
-                isShiftModified: false,
-                isMiddleClick: false
-            ),
-            .backgroundTab(url)
-        )
-        XCTAssertEqual(
-            BrowserModifiedLinkDisposition.classify(
-                destinationURL: url,
-                isUserActivatedLink: true,
-                isCommandModified: true,
-                isShiftModified: true,
-                isMiddleClick: false
-            ),
-            .foregroundTab(url)
-        )
-        XCTAssertEqual(
-            BrowserModifiedLinkDisposition.classify(
-                destinationURL: url,
-                isUserActivatedLink: true,
-                isCommandModified: false,
-                isShiftModified: false,
-                isMiddleClick: true
-            ),
-            .backgroundTab(url)
-        )
-    }
-
-    func testPeekClickModifierSwapsCommandAndOptionWithoutLosingNewTabAccess() {
-        XCTAssertEqual(
-            BrowserLinkClickModifierPolicy.intent(
-                isCommandModified: true,
-                isOptionModified: false,
-                peekModifier: .option
-            ),
-            .newTab
-        )
-        XCTAssertEqual(
-            BrowserLinkClickModifierPolicy.intent(
-                isCommandModified: false,
-                isOptionModified: true,
-                peekModifier: .option
-            ),
-            .peek
-        )
-        XCTAssertEqual(
-            BrowserLinkClickModifierPolicy.intent(
-                isCommandModified: true,
-                isOptionModified: false,
-                peekModifier: .command
-            ),
-            .peek
-        )
-        XCTAssertEqual(
-            BrowserLinkClickModifierPolicy.intent(
-                isCommandModified: false,
-                isOptionModified: true,
-                peekModifier: .command
-            ),
-            .newTab
-        )
-        XCTAssertEqual(
-            BrowserLinkClickModifierPolicy.intent(
-                isCommandModified: true,
-                isOptionModified: true,
-                peekModifier: .command
-            ),
-            .peek
-        )
-    }
-
-    func testModifiedLinkDispositionRejectsOrdinaryNonLinkAndNonWebNavigation() throws {
-        let webURL = try XCTUnwrap(URL(string: "https://example.com/reference"))
-        let mailURL = try XCTUnwrap(URL(string: "mailto:person@example.com"))
-
-        XCTAssertEqual(
-            BrowserModifiedLinkDisposition.classify(
-                destinationURL: webURL,
-                isUserActivatedLink: true,
-                isCommandModified: false,
-                isShiftModified: false,
-                isMiddleClick: false
-            ),
-            .navigate
-        )
-        XCTAssertEqual(
-            BrowserModifiedLinkDisposition.classify(
-                destinationURL: webURL,
-                isUserActivatedLink: false,
-                isCommandModified: true,
-                isShiftModified: false,
-                isMiddleClick: false
-            ),
-            .navigate
-        )
-        XCTAssertEqual(
-            BrowserModifiedLinkDisposition.classify(
-                destinationURL: mailURL,
-                isUserActivatedLink: true,
-                isCommandModified: true,
-                isShiftModified: false,
-                isMiddleClick: false
-            ),
-            .navigate
-        )
-    }
-
     func testExplicitLinksAndFormsDoNotBecomeScriptedPopups() {
         XCTAssertEqual(
             BrowserPopupTrigger.classify(.linkActivated),
@@ -345,181 +207,6 @@ final class BrowserNavigationPolicyTests: XCTestCase {
     func testNonLinkWindowRequestsRemainScriptedForExternalSchemeConsent() {
         XCTAssertEqual(BrowserPopupTrigger.classify(.other), .scripted)
         XCTAssertEqual(BrowserPopupTrigger.classify(.reload), .scripted)
-    }
-
-    func testOnlyAnExplicitSiteDecisionAllowsAutomaticPopups() {
-        for decision in [
-            BrowserSitePermissionDecision.ask,
-            .denyForSession,
-            .denyPersistently,
-        ] {
-            XCTAssertFalse(
-                BrowserAutomaticPopupPolicy.allowsAutomaticPopups(decision: decision)
-            )
-        }
-        for decision in [
-            BrowserSitePermissionDecision.grantForSession,
-            .grantPersistently,
-        ] {
-            XCTAssertTrue(
-                BrowserAutomaticPopupPolicy.allowsAutomaticPopups(decision: decision)
-            )
-        }
-    }
-
-    func testBlockedPopupStateCoalescesOneIndicationPerDocument() {
-        let origin = BrowserSiteOrigin(
-            scheme: "https",
-            host: "console.example",
-            port: 443
-        )
-        var state = BrowserBlockedPopupPageState()
-
-        XCTAssertTrue(
-            state.recordBlockedAttempt(
-                documentIdentifier: "document-a",
-                origin: origin
-            )
-        )
-        XCTAssertFalse(
-            state.recordBlockedAttempt(
-                documentIdentifier: "document-a",
-                origin: origin
-            )
-        )
-        XCTAssertFalse(
-            state.recordBlockedAttempt(
-                documentIdentifier: "spoofed-document-b",
-                origin: origin
-            ),
-            "A document cannot stack another indication by changing its payload."
-        )
-        XCTAssertEqual(state.indicationRevision, 1)
-        XCTAssertEqual(state.notice?.status, .blocked)
-
-        XCTAssertTrue(state.recordPermissionAllowed())
-        XCTAssertEqual(state.notice?.status, .allowedAwaitingRetry)
-        XCTAssertEqual(
-            state.indicationRevision,
-            1,
-            "Retry guidance updates the existing indication instead of announcing another."
-        )
-        XCTAssertTrue(state.recordPermissionBlockedAgain())
-        XCTAssertEqual(state.notice?.status, .blocked)
-        XCTAssertEqual(state.indicationRevision, 1)
-    }
-
-    func testBlockedPopupStateResetsWithoutLeakingAcrossPageInstances() {
-        let origin = BrowserSiteOrigin(
-            scheme: "https",
-            host: "console.example",
-            port: 443
-        )
-        var firstTab = BrowserBlockedPopupPageState()
-        var secondTab = BrowserBlockedPopupPageState()
-
-        XCTAssertTrue(
-            firstTab.recordBlockedAttempt(
-                documentIdentifier: "first-document",
-                origin: origin
-            )
-        )
-        XCTAssertNil(secondTab.notice, "A second tab starts without the first tab's state.")
-        XCTAssertFalse(firstTab.clearAfterAllowedPopup())
-        XCTAssertEqual(firstTab.notice?.status, .blocked)
-        XCTAssertTrue(firstTab.clearForNavigation())
-        XCTAssertNil(firstTab.notice)
-        XCTAssertNil(firstTab.documentIdentifier)
-
-        XCTAssertTrue(
-            secondTab.recordBlockedAttempt(
-                documentIdentifier: "second-document",
-                origin: origin
-            )
-        )
-        XCTAssertNil(firstTab.notice, "A later indication remains scoped to its own page.")
-        XCTAssertEqual(secondTab.indicationRevision, 1)
-    }
-
-    func testExternalSchemesLeaveWebKitWhileItsOwnSchemesStay() throws {
-        for address in [
-            "https://example.com/page",
-            "http://example.com/page",
-            "about:blank",
-            "blob:https://example.com/2f8a",
-            "data:text/plain,hello",
-            "webkit-extension://runtime-id/options/index.html",
-        ] {
-            XCTAssertEqual(
-                BrowserExternalSchemePolicy.disposition(
-                    for: try XCTUnwrap(URL(string: address))
-                ),
-                .webKit,
-                "\(address) is WebKit's to load or refuse."
-            )
-        }
-
-        XCTAssertEqual(
-            BrowserExternalSchemePolicy.disposition(
-                for: try XCTUnwrap(URL(string: "webkit-extension-remote://runtime-id/page"))
-            ),
-            .handOff,
-            "Only WebKit's exact extension scheme stays inside the browser."
-        )
-
-        for address in [
-            "mailto:person@example.com",
-            "tel:+15555550100",
-            "sms:+15555550100",
-            "facetime:person@example.com",
-            "zoommtg://zoom.us/join?confno=1",
-            "slack://channel?team=T1&id=C1",
-            "itms-apps://apps.apple.com/app/id1",
-        ] {
-            XCTAssertEqual(
-                BrowserExternalSchemePolicy.disposition(
-                    for: try XCTUnwrap(URL(string: address))
-                ),
-                .handOff,
-                "\(address) belongs to another app."
-            )
-        }
-    }
-
-    func testDangerousSchemesAreBlockedInsteadOfHandedToAnotherApp() throws {
-        XCTAssertEqual(
-            BrowserExternalSchemePolicy.disposition(
-                for: try XCTUnwrap(URL(string: "javascript:alert(1)"))
-            ),
-            .blocked
-        )
-        XCTAssertEqual(
-            BrowserExternalSchemePolicy.disposition(
-                for: try XCTUnwrap(URL(string: "file:///etc/passwd"))
-            ),
-            .blocked
-        )
-    }
-
-    func testOnlyCrestItselfMayLoadAFileURL() throws {
-        let fileURL = try XCTUnwrap(URL(string: "file:///tmp/fixture.html"))
-
-        XCTAssertEqual(
-            BrowserExternalSchemePolicy.disposition(for: fileURL, isAppInitiated: true),
-            .webKit
-        )
-        XCTAssertEqual(
-            BrowserExternalSchemePolicy.disposition(for: fileURL, isAppInitiated: false),
-            .blocked
-        )
-        XCTAssertEqual(
-            BrowserExternalSchemePolicy.disposition(
-                for: try XCTUnwrap(URL(string: "javascript:alert(1)")),
-                isAppInitiated: true
-            ),
-            .blocked,
-            "An app-initiated load is not a licence to run script through a URL."
-        )
     }
 
     func testExternalSchemeNavigationIntentOutranksDownloadsAndNewTabs() throws {
@@ -549,51 +236,6 @@ final class BrowserNavigationPolicyTests: XCTestCase {
             ),
             .allow
         )
-    }
-
-    func testEveryUnapprovedExternalSchemeRequiresConsentBeforeOpening() {
-        XCTAssertEqual(
-            BrowserExternalSchemeConsent.resolve(
-                trigger: .explicitUserNavigation,
-                decision: .ask
-            ),
-            .prompt
-        )
-        XCTAssertEqual(
-            BrowserExternalSchemeConsent.resolve(trigger: .scripted, decision: .ask),
-            .prompt,
-            "Script-mediated app links still require an explicit user decision."
-        )
-        for trigger in [BrowserPopupTrigger.explicitUserNavigation, .scripted] {
-            XCTAssertEqual(
-                BrowserExternalSchemeConsent.resolve(
-                    trigger: trigger,
-                    decision: .grantPersistently
-                ),
-                .open
-            )
-            XCTAssertEqual(
-                BrowserExternalSchemeConsent.resolve(
-                    trigger: trigger,
-                    decision: .grantForSession
-                ),
-                .open
-            )
-            XCTAssertEqual(
-                BrowserExternalSchemeConsent.resolve(
-                    trigger: trigger,
-                    decision: .denyPersistently
-                ),
-                .block
-            )
-            XCTAssertEqual(
-                BrowserExternalSchemeConsent.resolve(
-                    trigger: trigger,
-                    decision: .denyForSession
-                ),
-                .block
-            )
-        }
     }
 }
 
@@ -752,8 +394,8 @@ final class BrowserExternalSchemeCoordinatorTests: XCTestCase {
 
     @MainActor
     private final class Harness {
-        let spaceID = SpaceID()
-        let origin = BrowserSiteOrigin(scheme: "https", host: "mail.example", port: 443)
+        let spaceID = UUID()
+        let origin = SiteOrigin(scheme: "https", host: "mail.example", port: 443)
         let permissionCenter = BrowserSitePermissionCenter()
         let coordinator: BrowserExternalSchemeCoordinator
         private(set) var opened: [URL] = []
@@ -783,25 +425,23 @@ final class BrowserDownloadNavigationLifecycleTests: XCTestCase {
     func testKnownDownloadBypassesPeekBeforeNavigationStarts() throws {
         let sourceURL = try XCTUnwrap(URL(string: "https://saved.example/home"))
         let downloadURL = try XCTUnwrap(URL(string: "https://files.example/report.pdf"))
-        let tab = BrowserTab(
+        let tab = TabState.Seed(
             title: "Saved",
             url: sourceURL,
             savedURL: sourceURL,
             placement: .pinned
         )
-        let space = BrowserSpace(
-            id: SpaceID(),
-            profile: BrowsingProfile(),
+        let space = SpaceState.Seed(
             name: "Test",
             symbol: "circle",
             accent: .indigo,
             folders: [],
-            tabs: [tab],
-            selectedTabID: tab.id
+            tabs: [tab]
         )
         var peekRequest: BrowserPeekRequest?
-        let pool = BrowserPagePool(openPeek: { peekRequest = $0 })
-        pool.select(tab: tab, space: space)
+        let pool = BrowserPagePool(
+            browser: .hostingPages(SessionState.Seed(spaces: [space])), openPeek: { peekRequest = $0 })
+        pool.present(tab: tab.id, in: space.id)
         let page = try XCTUnwrap(pool.activePage)
         let recorder = DownloadPolicyRecorder()
 
@@ -833,7 +473,7 @@ final class BrowserPopupSchemeRoutingTests: XCTestCase {
         }
     }
 
-    func testAMailtoPopupHandsOffAndNeverAdoptsOrOpensATab() throws {
+    func testAMailtoPopupHandsOffAndIsNeverOffered() throws {
         let harness = Harness()
         let mailURL = try XCTUnwrap(URL(string: "mailto:person@example.com"))
 
@@ -848,16 +488,11 @@ final class BrowserPopupSchemeRoutingTests: XCTestCase {
         XCTAssertEqual(harness.handedOff.first?.trigger, .explicitUserNavigation)
         XCTAssertEqual(
             harness.handedOff.first?.origin,
-            BrowserSiteOrigin(scheme: "https", host: "mail.example", port: 443)
-        )
-        XCTAssertEqual(
-            harness.adoptedURLs.count,
-            0,
-            "A mailto: popup must never reach tab adoption."
+            SiteOrigin(scheme: "https", host: "mail.example", port: 443)
         )
         XCTAssertTrue(
-            harness.openedTabURLs.isEmpty,
-            "The hand-off replaces the tab; it must not also open one."
+            harness.offeredURLs.isEmpty,
+            "The hand-off replaces the popup; it must never also reach the core as a page."
         )
     }
 
@@ -872,11 +507,10 @@ final class BrowserPopupSchemeRoutingTests: XCTestCase {
         )
 
         XCTAssertEqual(harness.handedOff.first?.trigger, .scripted)
-        XCTAssertTrue(harness.openedTabURLs.isEmpty)
-        XCTAssertEqual(harness.adoptedURLs.count, 0)
+        XCTAssertTrue(harness.offeredURLs.isEmpty)
     }
 
-    func testABlockedSchemePopupIsDroppedWithoutAHandOffOrATab() throws {
+    func testABlockedSchemePopupIsDroppedWithoutAHandOffOrAPage() throws {
         for address in ["javascript:alert(1)", "file:///etc/passwd"] {
             let harness = Harness()
 
@@ -888,12 +522,11 @@ final class BrowserPopupSchemeRoutingTests: XCTestCase {
 
             XCTAssertNil(webView)
             XCTAssertTrue(harness.handedOff.isEmpty, "\(address) must not launch another app.")
-            XCTAssertTrue(harness.openedTabURLs.isEmpty)
-            XCTAssertEqual(harness.adoptedURLs.count, 0)
+            XCTAssertTrue(harness.offeredURLs.isEmpty)
         }
     }
 
-    func testAUserActivatedWindowOpenClassifiedAsOtherStillReachesAdoption() throws {
+    func testAUserActivatedWindowOpenClassifiedAsOtherIsOfferedOnceAndNeverBecomesATabOfItsOwn() throws {
         let harness = Harness()
         let signInURL = try XCTUnwrap(URL(string: "https://accounts.google.com/gsi/transform"))
 
@@ -903,12 +536,9 @@ final class BrowserPopupSchemeRoutingTests: XCTestCase {
             currentURL: try XCTUnwrap(URL(string: "https://www.reddit.com/"))
         )
 
-        XCTAssertEqual(harness.adoptedURLs, [signInURL])
-        XCTAssertEqual(
-            harness.openedTabURLs,
-            [signInURL],
-            "The harness cannot host an adopted web view, so the tested request falls back to a plain tab only after reaching adoption."
-        )
+        // The harness refuses the offer, as the core refuses a popup it has no
+        // place for: the request gets no window rather than a second page.
+        XCTAssertEqual(harness.offeredURLs, [signInURL])
     }
 
     @MainActor
@@ -916,24 +546,20 @@ final class BrowserPopupSchemeRoutingTests: XCTestCase {
         struct HandOff: Equatable {
             let url: URL
             let trigger: BrowserPopupTrigger
-            let origin: BrowserSiteOrigin?
+            let origin: SiteOrigin?
         }
 
         let coordinator: BrowserPopupCoordinator
         private(set) var handedOff: [HandOff] = []
-        private(set) var openedTabURLs: [URL] = []
-        private(set) var adoptedURLs: [URL?] = []
+        private(set) var offeredURLs: [URL?] = []
 
         init() {
-            var recordOpenTab: (URL) -> Void = { _ in }
             var recordHandOff: (HandOff) -> Void = { _ in }
             coordinator = BrowserPopupCoordinator(
-                openNewTab: { recordOpenTab($0) },
                 handOffExternalScheme: { url, trigger, origin in
                     recordHandOff(HandOff(url: url, trigger: trigger, origin: origin))
                 }
             )
-            recordOpenTab = { [weak self] url in self?.openedTabURLs.append(url) }
             recordHandOff = { [weak self] handOff in self?.handedOff.append(handOff) }
         }
 
@@ -949,7 +575,7 @@ final class BrowserPopupSchemeRoutingTests: XCTestCase {
                 ),
                 currentURL: currentURL
             ) { requestedURL in
-                self.adoptedURLs.append(requestedURL)
+                self.offeredURLs.append(requestedURL)
                 return nil
             }
         }
@@ -977,7 +603,7 @@ private final class StubNewWindowNavigationAction: WKNavigationAction,
     override var request: URLRequest { stubRequest }
     override var navigationType: WKNavigationType { stubNavigationType }
     override var targetFrame: WKFrameInfo? { nil }
-    var browserSourceOrigin: BrowserSiteOrigin? { nil }
+    var browserSourceOrigin: SiteOrigin? { nil }
 }
 
 private final class StubKnownDownloadNavigationAction: WKNavigationAction,
@@ -994,7 +620,7 @@ private final class StubKnownDownloadNavigationAction: WKNavigationAction,
     override var navigationType: WKNavigationType { .linkActivated }
     override var targetFrame: WKFrameInfo? { nil }
     override var shouldPerformDownload: Bool { true }
-    var browserSourceOrigin: BrowserSiteOrigin? { nil }
+    var browserSourceOrigin: SiteOrigin? { nil }
 }
 
 @MainActor

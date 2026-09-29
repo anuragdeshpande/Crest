@@ -7,7 +7,10 @@ enum CredentialVaultError: Error, Equatable, Sendable {
     case unavailableInPrivateBrowsing
     case credentialManagerDisabled
     case staleSaveCandidate
-    case spaceMismatch(expected: SpaceID, actual: SpaceID)
+    case spaceMismatch(expected: UUID, actual: UUID)
     case malformedStoredCredential
     case atomicReplacementRestoreFailed
+    case preferenceUpdateFailed
+    /// The portable core could not answer a save decision. Nothing is saved.
+    case saveDecisionUnavailable
 }

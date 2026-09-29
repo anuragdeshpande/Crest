@@ -5,19 +5,16 @@ import XCTest
 
 @MainActor
 final class BrowserSidebarExactAssignmentTests: XCTestCase {
-    func testRetainedRowPresentationNeverAuthorizesAStaleSpace() {
+    func testRetainedRowPresentationNeverAuthorizesAStaleSpace() throws {
         let context = makeContext()
         let access = BrowserSpaceAccessController(authenticator: AcceptingAuthenticator())
-        var row = BrowserSidebarTabRowConfiguration(
-            tab: context.sourceTab, spaceID: context.source.id, profileID: context.source.profile.id,
-            isSelected: true, canClose: true, browser: context.store, spaceAccess: access,
-            capabilities: BrowserInteractionCapabilities(), isLoaded: true,
-            unload: nil, pullNewIcon: nil, restoreSavedLocation: nil, promotionNamespace: nil,
-            isSplitGroupMember: false,
-            followingTabID: nil, hasVisibleFollowingRow: false, select: { _ in })
+        context.store.attachSpaceAccess(access)
+        let lists = try XCTUnwrap(context.store.sidebarListContext(for: context.source.id, spaceAccess: access))
+        let tab = try XCTUnwrap(lists.space.tabs.model(context.sourceTab.id))
+        var row = BrowserSidebarTabRowConfiguration(tab: tab, context: lists, isSelected: true, isLoaded: true)
         XCTAssertTrue(row.isAvailableForDisplay, "The unprovided presentation keeps the live fallback")
         XCTAssertTrue(SidebarSpaceRole.permitsInteraction(isSelected: nil, isAvailable: row.isAvailableForDisplay))
-        row.spacePresentation = SidebarSpacePresentation(space: context.source, isUnlocked: true)
+        row.spacePresentation = SidebarSpacePresentation(space: lists.space, isUnlocked: true)
 
         context.store.selectSpace(context.destination.id)
         XCTAssertTrue(row.isAvailableForDisplay)
@@ -36,23 +33,29 @@ final class BrowserSidebarExactAssignmentTests: XCTestCase {
         XCTAssertFalse(SidebarSpaceRole.permitsInteraction(isSelected: nil, isAvailable: row.isAvailableForDisplay))
 
         context.store.selectSpace(context.source.id)
-        row.spacePresentation = SidebarSpacePresentation(space: context.source, isUnlocked: true)
+        row.spacePresentation = SidebarSpacePresentation(space: lists.space, isUnlocked: true)
         XCTAssertTrue(row.isCurrentAndUnlocked)
         replaceProfile(of: context.source, in: context.store)
         XCTAssertFalse(row.isCurrentAndUnlocked, "A cached render value cannot authorize a replaced profile")
 
-        row.spacePresentation = SidebarSpacePresentation(space: context.destination, isUnlocked: true)
+        let destination = try XCTUnwrap(context.store.spaceModel(context.destination.id))
+        row.spacePresentation = SidebarSpacePresentation(space: destination, isUnlocked: true)
         XCTAssertFalse(row.isAvailableForDisplay, "A supplied foreign assignment must fail closed")
         XCTAssertFalse(SidebarSpaceRole.permitsInteraction(isSelected: true, isAvailable: row.isAvailableForDisplay))
-        row.spacePresentation = SidebarSpacePresentation(space: context.source, isUnlocked: false)
+        row.spacePresentation = SidebarSpacePresentation(
+            space: try XCTUnwrap(context.store.spaceModel(context.source.id)), isUnlocked: false)
         XCTAssertFalse(row.isAvailableForDisplay)
         XCTAssertFalse(SidebarSpaceRole.permitsInteraction(isSelected: true, isAvailable: row.isAvailableForDisplay))
 
-        var removedMember = context.source
-        removedMember.tabs = []
-        row.spacePresentation = SidebarSpacePresentation(space: removedMember, isUnlocked: true)
-        XCTAssertFalse(row.isAvailableForDisplay, "A removed member cannot remain enabled in a refreshed root")
-        XCTAssertFalse(SidebarSpaceRole.permitsInteraction(isSelected: true, isAvailable: row.isAvailableForDisplay))
+        let replaced = try XCTUnwrap(context.store.sidebarListContext(for: context.source.id, spaceAccess: access))
+        var refreshed = BrowserSidebarTabRowConfiguration(
+            tab: try XCTUnwrap(replaced.space.tabs.model(context.sourceTab.id)), context: replaced, isSelected: true,
+            isLoaded: true)
+        _ = context.store.deleteTab(context.sourceTab.id, matching: replaced.assignment)
+        refreshed.spacePresentation = SidebarSpacePresentation(space: replaced.space, isUnlocked: true)
+        XCTAssertFalse(refreshed.isAvailableForDisplay, "A removed member cannot remain enabled in a refreshed root")
+        XCTAssertFalse(
+            SidebarSpaceRole.permitsInteraction(isSelected: true, isAvailable: refreshed.isAvailableForDisplay))
     }
 
     func testCapturedTabCloseRejectsAReplacementBrowsingProfile() throws {
@@ -67,8 +70,8 @@ final class BrowserSidebarExactAssignmentTests: XCTestCase {
             )
         )
         XCTAssertTrue(
-            try XCTUnwrap(context.store.session.space(id: context.source.id))
-                .contains(context.sourceTab.id)
+            try XCTUnwrap(context.store.spaceModel(context.source.id))
+                .tabs.contains(context.sourceTab.id)
         )
     }
 
@@ -85,8 +88,8 @@ final class BrowserSidebarExactAssignmentTests: XCTestCase {
             )
         )
         XCTAssertNil(
-            try XCTUnwrap(context.store.session.space(id: context.source.id))
-                .tabs.first(where: { $0.id == context.sourceTab.id })?
+            try XCTUnwrap(context.store.spaceModel(context.source.id))
+                .tabs.model(context.sourceTab.id)?
                 .customTitle
         )
     }
@@ -195,14 +198,14 @@ final class BrowserSidebarExactAssignmentTests: XCTestCase {
             )
         )
         let movedTab = try XCTUnwrap(
-            context.store.session.space(id: context.destination.id)?
-                .tabs.first(where: { $0.id == context.sourceTab.id })
+            context.store.spaceModel(context.destination.id)?
+                .tabs.model(context.sourceTab.id)
         )
         XCTAssertEqual(movedTab.placement, .saved)
         XCTAssertEqual(movedTab.folderID, folderID)
         XCTAssertFalse(
-            try XCTUnwrap(context.store.session.space(id: context.source.id))
-                .contains(context.sourceTab.id)
+            try XCTUnwrap(context.store.spaceModel(context.source.id))
+                .tabs.contains(context.sourceTab.id)
         )
     }
 
@@ -230,8 +233,8 @@ final class BrowserSidebarExactAssignmentTests: XCTestCase {
             )
         )
         XCTAssertTrue(
-            try XCTUnwrap(context.store.session.space(id: context.source.id))
-                .folders.contains(where: { $0.id == folderID })
+            try XCTUnwrap(context.store.spaceModel(context.source.id))
+                .folders.contains(folderID)
         )
     }
 
@@ -299,8 +302,8 @@ final class BrowserSidebarExactAssignmentTests: XCTestCase {
             )
         )
         XCTAssertEqual(
-            context.store.session.space(id: context.source.id)?
-                .folders.first(where: { $0.id == movedFolderID })?
+            context.store.spaceModel(context.source.id)?
+                .folders.model(movedFolderID)?
                 .parentID,
             nil
         )
@@ -311,20 +314,15 @@ final class BrowserSidebarExactAssignmentTests: XCTestCase {
         let access = BrowserSpaceAccessController(
             authenticator: AcceptingAuthenticator()
         )
+        context.store.attachSpaceAccess(access)
         let assignment = BrowserSpaceRuntimeAssignment(space: context.source)
         let historyURL = try XCTUnwrap(
             URL(string: "https://sidebar-history.crest.test/selection")
         )
-        XCTAssertTrue(
-            context.store.recordVisit(
-                url: historyURL,
-                title: "Selection",
-                matching: assignment
-            )
-        )
+        context.store.seedVisit(to: historyURL, titled: "Selection", in: assignment.spaceID)
         let confirmation = try XCTUnwrap(
             BrowserSidebarSpacePresentationPolicy.clearHistoryConfirmation(
-                for: context.source,
+                for: try XCTUnwrap(context.store.spaceModel(context.source.id)),
                 in: context.store,
                 accessController: access
             )
@@ -346,7 +344,7 @@ final class BrowserSidebarExactAssignmentTests: XCTestCase {
             )
         )
         XCTAssertEqual(
-            context.store.session.space(id: context.source.id)?.history.count,
+            context.store.spaceModel(context.source.id)?.history.entries.count,
             1
         )
     }
@@ -356,22 +354,18 @@ final class BrowserSidebarExactAssignmentTests: XCTestCase {
         let access = BrowserSpaceAccessController(
             authenticator: AcceptingAuthenticator()
         )
+        context.store.attachSpaceAccess(access)
         let assignment = BrowserSpaceRuntimeAssignment(space: context.source)
         let historyURL = try XCTUnwrap(
             URL(string: "https://sidebar-history.crest.test/relock")
         )
-        XCTAssertTrue(
-            context.store.recordVisit(
-                url: historyURL,
-                title: "Relock",
-                matching: assignment
-            )
-        )
-        let didUnlock = await access.unlock(context.source)
+        let didUnlock = await access.unlock(try XCTUnwrap(context.store.spaceModel(context.source.id)))
         XCTAssertTrue(didUnlock)
+        // The core records nothing into a Space this process holds locked.
+        context.store.seedVisit(to: historyURL, titled: "Relock", in: assignment.spaceID)
         let confirmation = try XCTUnwrap(
             BrowserSidebarSpacePresentationPolicy.clearHistoryConfirmation(
-                for: context.source,
+                for: try XCTUnwrap(context.store.spaceModel(context.source.id)),
                 in: context.store,
                 accessController: access
             )
@@ -386,31 +380,31 @@ final class BrowserSidebarExactAssignmentTests: XCTestCase {
             )
         )
         XCTAssertEqual(
-            context.store.session.space(id: context.source.id)?.history.count,
+            context.store.spaceModel(context.source.id)?.history.entries.count,
             1
         )
     }
 
     private func makeContext(sourceIsProtected: Bool = false) -> (
         store: BrowserStore,
-        source: BrowserSpace,
-        destination: BrowserSpace,
-        sourceTab: BrowserTab
+        source: SpaceState.Seed,
+        destination: SpaceState.Seed,
+        sourceTab: TabState.Seed
     ) {
-        let sourceTab = BrowserTab(
-            id: TabID(rawValue: fixedUUID(1)),
+        let sourceTab = TabState.Seed(
+            id: fixedUUID(1),
             title: "Source tab",
             url: nil,
             placement: .current,
             lastActivatedAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
-        let destinationTab = BrowserTab.startPage(
-            id: TabID(rawValue: fixedUUID(2)),
+        let destinationTab = TabState.Seed.startPage(
+            id: fixedUUID(2),
             lastActivatedAt: Date(timeIntervalSince1970: 1_700_000_001)
         )
-        let source = BrowserSpace(
-            id: SpaceID(rawValue: fixedUUID(3)),
-            profile: BrowsingProfile(id: fixedUUID(4)),
+        let source = SpaceState.Seed(
+            id: fixedUUID(3),
+            profileID: fixedUUID(4),
             name: "Source",
             symbol: "1.circle",
             accent: .indigo,
@@ -418,76 +412,37 @@ final class BrowserSidebarExactAssignmentTests: XCTestCase {
             tabs: [sourceTab],
             accessPolicy: sourceIsProtected
                 ? .deviceOwnerAuthentication
-                : .open,
-            selectedTabID: sourceTab.id
+                : .open
         )
-        let destination = BrowserSpace(
-            id: SpaceID(rawValue: fixedUUID(5)),
-            profile: BrowsingProfile(id: fixedUUID(6)),
+        let destination = SpaceState.Seed(
+            id: fixedUUID(5),
+            profileID: fixedUUID(6),
             name: "Destination",
             symbol: "2.circle",
             accent: .rose,
             folders: [],
-            tabs: [destinationTab],
-            selectedTabID: destinationTab.id
+            tabs: [destinationTab]
         )
-        let store = BrowserStore(
-            session: BrowserSession(
-                spaces: [source, destination],
-                selectedSpaceID: source.id
-            ),
-            persistence: InMemoryBrowserSessionPersistence(),
-            browsingMode: .privateBrowsing
-        )
+        let store = BrowserStore(seed: SessionState.Seed(spaces: [source, destination]), core: .hostingPages())
         return (store, source, destination, sourceTab)
     }
 
     private func dragItem(
-        for tab: BrowserTab,
-        in space: BrowserSpace
+        for tab: TabState.Seed,
+        in space: SpaceState.Seed
     ) -> BrowserTabDragItem {
         BrowserTabDragItem(
             tabID: tab.id,
             spaceID: space.id,
-            profileID: space.profile.id
+            profileID: space.profileID
         )
     }
 
     private func replaceProfile(
-        of space: BrowserSpace,
+        of space: SpaceState.Seed,
         in store: BrowserStore
     ) {
-        guard let current = store.session.space(id: space.id) else {
-            XCTFail("Expected the captured Space to remain in the session.")
-            return
-        }
-        let replacement = BrowserSpace(
-            id: current.id,
-            profile: BrowsingProfile(id: fixedUUID(7)),
-            name: current.name,
-            symbol: current.symbol,
-            accent: current.accent,
-            branding: current.branding,
-            folders: current.folders,
-            tabs: current.tabs,
-            archivedTabs: current.archivedTabs,
-            history: current.history,
-            browsingPreferences: current.browsingPreferences,
-            credentialPreferences: current.credentialPreferences,
-            accessPolicy: current.accessPolicy,
-            isSavedTabsExpanded: current.isSavedTabsExpanded,
-            savedTabsExpansionModifiedAt: current.savedTabsExpansionModifiedAt,
-            selectedTabID: current.selectedTabID
-        )
-        guard
-            let index = store.session.spaces.firstIndex(where: {
-                $0.id == space.id
-            })
-        else {
-            XCTFail("Expected the captured Space to remain in the session.")
-            return
-        }
-        store.session.spaces[index] = replacement
+        store.replaceProfileForTesting(of: space.id, with: fixedUUID(7))
     }
 
     private func fixedUUID(_ suffix: UInt8) -> UUID {
@@ -500,20 +455,20 @@ final class BrowserSidebarExactAssignmentTests: XCTestCase {
     }
 
     private func assertTab(
-        _ tabID: TabID,
-        staysIn sourceID: SpaceID,
-        outside destinationID: SpaceID,
+        _ tabID: UUID,
+        staysIn sourceID: UUID,
+        outside destinationID: UUID,
         store: BrowserStore,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
         XCTAssertTrue(
-            store.session.space(id: sourceID)?.contains(tabID) == true,
+            store.spaceModel(sourceID)?.tabs.contains(tabID) == true,
             file: file,
             line: line
         )
         XCTAssertFalse(
-            store.session.space(id: destinationID)?.contains(tabID) == true,
+            store.spaceModel(destinationID)?.tabs.contains(tabID) == true,
             file: file,
             line: line
         )

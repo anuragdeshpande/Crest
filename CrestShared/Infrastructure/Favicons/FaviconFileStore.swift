@@ -62,15 +62,15 @@ final class BrowserFaviconFileStore: BrowserFaviconStoring, @unchecked Sendable 
         )
     }
 
-    func faviconFileURL(tabID: TabID) -> URL {
+    func faviconFileURL(tabID: UUID) -> URL {
         rootDirectory
-            .appendingPathComponent(tabID.rawValue.uuidString)
+            .appendingPathComponent(tabID.uuidString)
             .appendingPathExtension(Self.fileExtension)
     }
 
     /// Reads on the write queue so an icon stored a moment ago is visible and a
     /// read never races a half-written file.
-    func favicon(tabID: TabID) -> Data? {
+    func favicon(tabID: UUID) -> Data? {
         let url = faviconFileURL(tabID: tabID)
         return writeQueue.sync {
             guard let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
@@ -78,7 +78,7 @@ final class BrowserFaviconFileStore: BrowserFaviconStoring, @unchecked Sendable 
         }
     }
 
-    func reconcile(_ faviconData: Data?, tabID: TabID) {
+    func reconcile(_ faviconData: Data?, tabID: UUID) {
         let url = faviconFileURL(tabID: tabID)
         writeQueue.async { [self] in
             guard let faviconData,
@@ -97,9 +97,9 @@ final class BrowserFaviconFileStore: BrowserFaviconStoring, @unchecked Sendable 
         }
     }
 
-    func pruneFavicons(keeping tabIDs: Set<TabID>) {
+    func pruneFavicons(keeping tabIDs: Set<UUID>) {
         writeQueue.async { [self] in
-            let retainedNames = Set(tabIDs.map(\.rawValue.uuidString))
+            let retainedNames = Set(tabIDs.map(\.uuidString))
             for url in faviconFiles()
             where !retainedNames.contains(url.deletingPathExtension().lastPathComponent) {
                 try? fileManager.removeItem(at: url)

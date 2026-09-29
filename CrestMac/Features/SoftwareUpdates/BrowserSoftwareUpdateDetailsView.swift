@@ -2,11 +2,13 @@ import SwiftUI
 
 /// Full release notes for an update the sidebar is already presenting.
 ///
-/// This scene is deliberately passive: closing it never changes Sparkle's
+/// This window is deliberately passive: closing it never changes Sparkle's
 /// pending choice, and only the sidebar's explicit What's New control opens it.
 struct BrowserSoftwareUpdateDetailsView: View {
     let model: BrowserSoftwareUpdateModel
-    @Environment(\.dismissWindow) private var dismissWindow
+    /// Closes the window showing this view, once the update it described is
+    /// gone.
+    let closeWindow: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: CrestSpacing.large) {
@@ -37,14 +39,23 @@ struct BrowserSoftwareUpdateDetailsView: View {
         .background(CrestBrandTheme.canvas)
         .onChange(of: model.phase, initial: true) { _, phase in
             guard phase == .idle else { return }
-            dismissWindow(id: BrowserSoftwareUpdateSceneID.details)
+            closeWindow()
         }
+    }
+}
+
+/// Gives the sidebar's update card the window that shows full release notes.
+struct BrowserSoftwareUpdateDetailsPresentation: ViewModifier {
+    @Environment(\.browserMacWindows) private var windows
+
+    func body(content: Content) -> some View {
+        content.environment(\.browserSoftwareUpdateDetails) { [windows] in windows?.openSoftwareUpdateDetails() }
     }
 }
 
 #Preview("Update Details") {
     let model = BrowserSoftwareUpdateModel()
-    BrowserSoftwareUpdateDetailsView(model: model)
+    BrowserSoftwareUpdateDetailsView(model: model, closeWindow: {})
         .task {
             model.presentUpdate(
                 title: "Crest 0.5.99",

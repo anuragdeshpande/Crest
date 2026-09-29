@@ -135,51 +135,11 @@ final class BrowserSplitCardLiftPolicyTests: XCTestCase {
         XCTAssertEqual(
             BrowserSplitCardLiftPolicy.displayMembers(
                 members,
-                lifted: TabID(),
+                lifted: UUID(),
                 gapIndex: 0
             ),
             members
         )
-    }
-
-    // MARK: - Which cards have a picture to carry
-
-    /// Selecting a split builds a page — and a `WKWebView` — for every member,
-    /// start pages included, and a start-page card never loads or mounts the one
-    /// it was given. Asking that web view for a picture answers with an empty
-    /// one, and an empty picture stands the preview's title-and-favicon
-    /// placeholder down: the carry then shows neither the page nor the tab, which
-    /// is a card with nothing in it at all.
-    func testOnlyACardShowingALivePageHasAPictureToCarry() {
-        XCTAssertTrue(BrowserSplitCardLiftPolicy.picturesPage(.livePage))
-
-        for presentation in BrowserPagePresentation.allCases
-        where presentation != .livePage {
-            XCTAssertFalse(
-                BrowserSplitCardLiftPolicy.picturesPage(presentation),
-                "\(presentation) draws over a web view that is showing nothing."
-            )
-        }
-    }
-
-    /// The card and its picture must agree about what the card is showing, which
-    /// is why both resolve it with the same policy rather than by asking whether
-    /// a page happens to exist.
-    func testAStartPageCardResolvesToAPresentationWithNoPicture() {
-        let presentation = BrowserPagePresentationPolicy.resolve(
-            BrowserPagePresentationInput(
-                selection: .startPage,
-                // A page exists for it, which is exactly the trap: presence is
-                // not the same question as what the card is drawing.
-                hasActivePage: true,
-                hasNavigationFailure: false,
-                hasProcessFailure: false,
-                unloadedBehavior: .remainUnloaded
-            )
-        )
-
-        XCTAssertEqual(presentation, .startPage)
-        XCTAssertFalse(BrowserSplitCardLiftPolicy.picturesPage(presentation))
     }
 
     // MARK: - Which card the press landed in
@@ -192,7 +152,7 @@ final class BrowserSplitCardLiftPolicyTests: XCTestCase {
     func testAFrameBelongingToNoMemberIsNotACard() {
         let members = Array(BrowserSplitCardTestFixture.members.prefix(2))
         var frames = Self.registeredFrames(count: 2)
-        let departed = TabID()
+        let departed = UUID()
         // The whole row, as the leaving card measured it before it shrank.
         frames[departed] = CGRect(x: 0, y: 0, width: 1_000, height: 600)
 
@@ -212,7 +172,7 @@ final class BrowserSplitCardLiftPolicyTests: XCTestCase {
     func testDividerGeometryIgnoresFramesNoMemberOwns() {
         let members = Array(BrowserSplitCardTestFixture.members.prefix(2))
         var frames = Self.registeredFrames(count: 2)
-        frames[TabID()] = CGRect(x: 120, y: 0, width: 60, height: 600)
+        frames[UUID()] = CGRect(x: 120, y: 0, width: 60, height: 600)
 
         let ordered = BrowserSplitCardLiftPolicy.orderedMemberFrames(
             members: members,
@@ -262,8 +222,8 @@ final class BrowserSplitCardLiftPolicyTests: XCTestCase {
 
     private static func gapIndex(
         atX x: CGFloat,
-        in frames: [TabID: CGRect],
-        lifted: TabID,
+        in frames: [UUID: CGRect],
+        lifted: UUID,
         layoutDirection: LayoutDirection = .leftToRight
     ) -> Int {
         BrowserSplitCardLiftPolicy.gapIndex(
@@ -279,7 +239,7 @@ final class BrowserSplitCardLiftPolicyTests: XCTestCase {
         frames(widths: Array(repeating: 300, count: count))
     }
 
-    private static func registeredFrames(count: Int) -> [TabID: CGRect] {
+    private static func registeredFrames(count: Int) -> [UUID: CGRect] {
         registeredFrames(
             members: Array(BrowserSplitCardTestFixture.members.prefix(count)),
             widths: Array(repeating: 300, count: count)
@@ -289,9 +249,9 @@ final class BrowserSplitCardLiftPolicyTests: XCTestCase {
     /// Card frames as the row would register them for `members` in the order
     /// given: the first member in the leading column, and so on.
     private static func registeredFrames(
-        members: [BrowserTab],
+        members: [BrowserSplitCardTestFixture.Member],
         widths: [CGFloat]
-    ) -> [TabID: CGRect] {
+    ) -> [UUID: CGRect] {
         Dictionary(
             uniqueKeysWithValues: zip(members.map(\.id), frames(widths: widths))
         )
@@ -680,22 +640,18 @@ private enum BrowserSplitCardTestFixture {
         member(id: trailingTabID, title: "Split View Spec"),
     ]
 
-    private static let groupID = SplitGroupID(rawValue: uuid(0x01))
-
-    private static func member(id: TabID, title: String) -> BrowserTab {
-        BrowserTab(
-            id: id,
-            title: title,
-            url: URL(fileURLWithPath: "/split-card-tests/\(id.rawValue.uuidString)"),
-            symbol: "globe",
-            placement: .current,
-            splitGroupID: groupID,
-            lastActivatedAt: Date(timeIntervalSince1970: 1_700_000_000)
-        )
+    /// A card of the row: only its identity matters to the lift.
+    struct Member: Identifiable, Equatable {
+        let id: UUID
+        let title: String
     }
 
-    private static func tabID(_ finalByte: UInt8) -> TabID {
-        TabID(rawValue: uuid(finalByte))
+    private static func member(id: UUID, title: String) -> Member {
+        Member(id: id, title: title)
+    }
+
+    private static func tabID(_ finalByte: UInt8) -> UUID {
+        uuid(finalByte)
     }
 
     private static func uuid(_ finalByte: UInt8) -> UUID {

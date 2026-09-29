@@ -1,8 +1,8 @@
 import Foundation
 
 struct CredentialDescriptor: Codable, Equatable, Identifiable, Sendable {
-    let id: CredentialID
-    let spaceID: SpaceID
+    let id: UUID
+    let spaceID: UUID
     let origin: CredentialOrigin
     var scope: BrowserCredentialScope
     var username: String
@@ -13,8 +13,8 @@ struct CredentialDescriptor: Codable, Equatable, Identifiable, Sendable {
     var isSynchronizable: Bool
 
     init(
-        id: CredentialID = CredentialID(),
-        spaceID: SpaceID,
+        id: UUID = UUID(),
+        spaceID: UUID,
         origin: CredentialOrigin,
         scope: BrowserCredentialScope = .webForm,
         username: String,
@@ -51,10 +51,11 @@ struct CredentialDescriptor: Codable, Equatable, Identifiable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(CredentialID.self, forKey: .id)
-        spaceID = try container.decode(SpaceID.self, forKey: .spaceID)
+        id = try container.decodeIdentity(forKey: .id)
+        spaceID = try container.decodeIdentity(forKey: .spaceID)
         origin = try container.decode(CredentialOrigin.self, forKey: .origin)
-        scope = try container.decodeIfPresent(BrowserCredentialScope.self, forKey: .scope)
+        scope =
+            try container.decodeIfPresent(BrowserCredentialScope.self, forKey: .scope)
             ?? .webForm
         username = try container.decode(String.self, forKey: .username)
         displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
@@ -66,8 +67,11 @@ struct CredentialDescriptor: Codable, Equatable, Identifiable, Sendable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id, forKey: .id)
-        try container.encode(spaceID, forKey: .spaceID)
+        // Descriptors keep the identity spelling every earlier build wrote.
+        try container.encodeStoredIdentity(id, forKey: .id)
+        // Synchronizable descriptors reach older builds on other devices,
+        // which read only the stored spelling, so it stays for good.
+        try container.encodeStoredIdentity(spaceID, forKey: .spaceID)
         try container.encode(origin, forKey: .origin)
         try container.encode(scope, forKey: .scope)
         try container.encode(username, forKey: .username)

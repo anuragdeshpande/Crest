@@ -4,24 +4,43 @@ import SwiftUI
 struct BrowserSystemPermissionSettingsSection: View {
     let browser: BrowserStore
     let spaceAccess: BrowserSpaceAccessController
-    @State private var controller = BrowserSystemPermissionController()
+    @Environment(BrowserPasskeyAccessController.self) private var passkeyAccess
 
-    private var spaceID: SpaceID? {
-        guard BrowserSettingsPrivacyPolicy.canRevealSpaceData(in: browser.selectedSpace, accessController: spaceAccess)
-        else { return nil }
-        return browser.selectedSpace?.id
+    var body: some View {
+        BrowserSystemPermissionSettingsContent(
+            browser: browser, spaceAccess: spaceAccess,
+            service: BrowserSystemPermissionService(core: browser.core, passkeyAccess: passkeyAccess))
+    }
+}
+
+/// The permission rows over one permission service. The service is made once,
+/// when the section first appears.
+private struct BrowserSystemPermissionSettingsContent: View {
+    let browser: BrowserStore
+    let spaceAccess: BrowserSpaceAccessController
+    @State private var controller: BrowserSystemPermissionController
+
+    init(browser: BrowserStore, spaceAccess: BrowserSpaceAccessController, service: BrowserSystemPermissionService) {
+        self.browser = browser
+        self.spaceAccess = spaceAccess
+        _controller = State(initialValue: BrowserSystemPermissionController(service: service))
+    }
+
+    private var spaceID: UUID? {
+        guard let space = browser.shownSpace, !spaceAccess.isLocked(space) else { return nil }
+        return space.id
     }
 
     var body: some View {
         Section("System Permissions", systemImage: "hand.raised") {
             VStack(spacing: 0) {
-                ForEach(BrowserSystemPermission.allCases) { permission in
+                ForEach(BrowserSystemPermission.all) { permission in
                     BrowserSystemPermissionRow(
                         permission: permission,
                         status: controller.status(for: permission),
                         error: controller.errors[permission],
                         isWorking: controller.working.contains(permission),
-                        spaceName: spaceID == nil ? nil : browser.selectedSpace?.name,
+                        spaceName: spaceID == nil ? nil : browser.shownSpace?.settings.name,
                         request: { Task { await controller.request(permission, spaceID: spaceID) } },
                         openSettings: { controller.openSettings(for: permission) },
                         chooseFolder: {
@@ -29,7 +48,7 @@ struct BrowserSystemPermissionSettingsSection: View {
                             Task { await controller.chooseFolder(spaceID: spaceID) }
                         }
                     )
-                    if permission != BrowserSystemPermission.allCases.last {
+                    if permission != BrowserSystemPermission.all.last {
                         Divider().padding(.vertical, 12)
                     }
                 }

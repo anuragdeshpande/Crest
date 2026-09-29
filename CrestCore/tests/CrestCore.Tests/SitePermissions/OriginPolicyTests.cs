@@ -1,0 +1,113 @@
+using CrestCore.Contracts;
+using CrestCore.Domain;
+
+using Xunit;
+
+namespace CrestCore.Tests;
+
+public sealed class OriginPolicyTests {
+    private static readonly SiteOrigin Site = new("https", "site.example", 443);
+
+    [Theory]
+    [InlineData("https", "maps.example", true)]
+    [InlineData("http", "localhost", true)]
+    [InlineData("http", "127.0.0.1", true)]
+    [InlineData("http", "::1", true)]
+    [InlineData("http", "maps.example", false)]
+    [InlineData("file", "localhost", false)]
+    [InlineData("https", "", false)]
+    public void PowerfulFeaturesNeedASecureContext(string scheme, string host, bool allowed) =>
+        Assert.Equal(allowed, SecureOriginPolicy.Allows(new(scheme, host, 0)));
+
+    [Theory]
+    [InlineData("https", false, "engine")]
+    [InlineData("DATA", false, "engine")]
+    [InlineData("blob", false, "engine")]
+    [InlineData("javascript", true, "blocked")]
+    [InlineData("file", false, "blocked")]
+    [InlineData("file", true, "engine")]
+    [InlineData("mailto", false, "handOff")]
+    [InlineData("zoommtg", false, "handOff")]
+    [InlineData(null, false, "engine")]
+    public void SchemesAreKeptBlockedOrHandedOff(string? scheme, bool appInitiated, string expected) =>
+        Assert.Equal(expected, ExternalSchemePolicy.Disposition(scheme, appInitiated).Name);
+
+    [Fact]
+    public void AnOverlongSchemeIsRefused() =>
+        Assert.Equal(ExternalSchemeDisposition.Blocked, ExternalSchemePolicy.Disposition(new string('a', 300), false));
+
+    [Fact]
+    public void WebLinksNeedHttpOrHttpsAndAHost() {
+        Assert.True(ExternalUrlPolicy.AcceptsWebLink("HTTPS", "example.com"));
+        Assert.True(ExternalUrlPolicy.AcceptsWebLink("http", "example.com"));
+        Assert.False(ExternalUrlPolicy.AcceptsWebLink("https", ""));
+        Assert.False(ExternalUrlPolicy.AcceptsWebLink("file", null));
+        Assert.False(ExternalUrlPolicy.AcceptsWebLink("javascript", "example.com"));
+        Assert.False(ExternalUrlPolicy.AcceptsWebLink(null, "example.com"));
+        Assert.False(ExternalUrlPolicy.AcceptsWebLink("https", new string('a', ExternalUrlPolicy.MaximumHostLength + 1)));
+    }
+
+    [Fact]
+    public void LocalDocumentsRefuseRemoteAuthoritiesAndUsers() {
+        Assert.True(ExternalUrlPolicy.AcceptsLocalDocument(new(true, false, true, null)));
+        Assert.True(ExternalUrlPolicy.AcceptsLocalDocument(new(true, false, true, "LocalHost")));
+        Assert.False(ExternalUrlPolicy.AcceptsLocalDocument(new(true, false, true, "server")));
+        Assert.False(ExternalUrlPolicy.AcceptsLocalDocument(new(true, true, true, null)));
+        Assert.False(ExternalUrlPolicy.AcceptsLocalDocument(new(true, false, false, null)));
+        Assert.False(ExternalUrlPolicy.AcceptsLocalDocument(new(false, false, true, null)));
+        Assert.False(ExternalUrlPolicy.AcceptsLocalDocument(new(true, false, true, new string('a', ExternalUrlPolicy.MaximumHostLength + 1))));
+    }
+
+    [Fact]
+    public void NotificationRequestsPromptOnlyWithActivation() {
+        Assert.Equal(HostedNotificationRequestAction.PromptForSitePermission, HostedNotificationRequestAction.For(SitePermissionDecision.Ask, true));
+        Assert.Equal(HostedNotificationRequestAction.RespondDefault, HostedNotificationRequestAction.For(SitePermissionDecision.Ask, false));
+        Assert.Equal(HostedNotificationRequestAction.RespondDenied, HostedNotificationRequestAction.For(SitePermissionDecision.DenyForSession, true));
+        Assert.Equal(HostedNotificationRequestAction.ResolveSystemAuthorization,
+            HostedNotificationRequestAction.For(SitePermissionDecision.GrantPersistently, false));
+    }
+
+    [Fact]
+    public void ADocumentShowsOneBlockedPopupIndicationUntilItNavigates() {
+        static BlockedPopupPageState? After(BlockedPopupPageState state, BlockedPopupEvent popupEvent, string? document = null,
+            SiteOrigin? origin = null) => BlockedPopupPolicy.Apply(state, popupEvent, document, origin);
+        var blocked = After(BlockedPopupPageState.Empty, BlockedPopupEvent.Blocked, "doc-1", Site)!;
+        Assert.Equal(BlockedPopupStatus.Blocked, blocked.Status);
+        Assert.Equal(1, blocked.IndicationRevision);
+        Assert.Null(After(blocked, BlockedPopupEvent.Blocked, "doc-1", Site));
+        Assert.Null(After(blocked, BlockedPopupEvent.PopupAllowed));
+
+        var allowed = After(blocked, BlockedPopupEvent.PermissionAllowed)!;
+        Assert.Equal(BlockedPopupStatus.AllowedAwaitingRetry, allowed.Status);
+        Assert.Equal(BlockedPopupStatus.Blocked, After(allowed, BlockedPopupEvent.PermissionBlockedAgain)!.Status);
+
+        var cleared = After(allowed, BlockedPopupEvent.PopupAllowed)!;
+        Assert.Null(cleared.Status);
+        Assert.Null(cleared.DocumentIdentifier);
+        Assert.Equal(1, cleared.IndicationRevision);
+        Assert.Null(After(cleared, BlockedPopupEvent.Navigation));
+        Assert.Null(After(blocked, BlockedPopupEvent.Navigation)!.Status);
+        // An indication needs its document and a readable origin, and a status never stands without its origin.
+        Assert.IsType<InvalidBlockedPopup>(Assert.Throws<Rejected>(() => After(cleared, BlockedPopupEvent.Blocked, null, Site)).Rejection);
+        Assert.IsType<InvalidBlockedPopup>(Assert.Throws<Rejected>(() =>
+            After(cleared, BlockedPopupEvent.Blocked, "doc-2", new SiteOrigin("https", "", 443))).Rejection);
+        Assert.IsType<InvalidBlockedPopup>(Assert.Throws<Rejected>(() =>
+            After(blocked with { Origin = null }, BlockedPopupEvent.PopupAllowed)).Rejection);
+    }
+
+    [Fact]
+    public void BasicAndDigestPromptThreeTimesAndProxiesKeepSystemHandling() {
+        Assert.Equal(AuthenticationHandling.PromptForCredentials, AuthenticationPolicy.Handling(AuthenticationMethod.HttpBasic, false, 2));
+        Assert.Equal(AuthenticationHandling.Cancel, AuthenticationPolicy.Handling(AuthenticationMethod.HttpDigest, false, 3));
+        Assert.Equal(AuthenticationHandling.PerformDefaultHandling, AuthenticationPolicy.Handling(AuthenticationMethod.HttpBasic, true, 0));
+        Assert.Equal(AuthenticationHandling.PerformDefaultHandling, AuthenticationPolicy.Handling(AuthenticationMethod.Other, false, 0));
+    }
+
+    [Fact]
+    public void TheAuthenticationPromptNamesTheServerWithANonDefaultPort() {
+        Assert.Equal("intranet.example", AuthenticationPolicy.SourceLabel("intranet.example", 443, "HTTPS"));
+        Assert.Equal("intranet.example:8443", AuthenticationPolicy.SourceLabel("intranet.example", 8443, "https"));
+        Assert.Equal("proxy.example:80", AuthenticationPolicy.SourceLabel("proxy.example", 80, null));
+        Assert.Null(AuthenticationPolicy.SourceLabel("", 443, "https"));
+    }
+}

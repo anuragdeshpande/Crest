@@ -12,14 +12,22 @@ final class BrowserSidebarReorderState {
         let rowSize: CGSize
         let grabOffset: CGSize
         var previewRows: [BrowserSidebarReorderRow] = []
+        /// What the lift carries and where the core would let it land, asked
+        /// once as it began; nil for a lift whose plan is asked at its drop.
+        var plan: BrowserSidebarLiftPlan? = nil
+        /// The rows the lift carries, worked out once as it began, since
+        /// every row asks whether it is one of them each time it renders.
+        var rowIDs: Set<BrowserSidebarReorderItemID> = []
     }
 
     private(set) var lift: Lift?
     private(set) var pointer: CGPoint = .zero
     private(set) var resolvedTarget: BrowserSidebarReorderTarget?
-    private(set) var batchConstraintMessage: String?
+    /// What the person is told of the target the lift is over when the core
+    /// refuses it there, whatever the lift carries; releasing there commits
+    /// nothing.
+    private(set) var constraintMessage: String?
     var selectionRowsRevision: Int { geometry.selectionRowsRevision }
-    @ObservationIgnored var batchValidation: ((BrowserSidebarReorderTarget, BrowserTabBatchRequest) -> String?)?
     private(set) var layout = BrowserSidebarReorderLayout()
     private var lastPreviewShape: BrowserTabDragPreviewShape?
     private(set) var landingPreview: BrowserSidebarFloatingLift?
@@ -27,10 +35,20 @@ final class BrowserSidebarReorderState {
     @ObservationIgnored private var landingExpirationTask: Task<Void, Never>?
     @ObservationIgnored private var needsLandingMeasurement = false
     @ObservationIgnored private var landingSection: BrowserSidebarReorderSection?
+    /// The view the landing row was lifted from, when the lift landed in
+    /// another list. That view is leaving, and it measures itself once more
+    /// on its way out: it reads the row's own model, so it names the list the
+    /// row joined, from the slot the row left. The section alone cannot tell
+    /// it from the view that arrived, so it never measures the landing.
+    @ObservationIgnored private var landingDepartingOwner: UUID?
+    /// The rows the landing preview carries, kept with it.
+    @ObservationIgnored private var landingRowIDs: Set<BrowserSidebarReorderItemID> = []
+    /// The section order a lift's insertion reads, worked out once per target
+    /// and row registration rather than by every row as it renders.
+    @ObservationIgnored private var insertionOrder: InsertionOrder?
 
     func isRevealing(_ id: BrowserSidebarReorderItemID) -> Bool {
-        landingPreview?.item.selectionRowIDs.contains(id) == true
-            && landingPreview?.landing?.isRevealing == true
+        landingPreview?.landing?.isRevealing == true && landingRowIDs.contains(id)
     }
 
     func revealLanding(_ id: UUID) {
@@ -39,15 +57,17 @@ final class BrowserSidebarReorderState {
     }
 
     func hidesSource(_ id: BrowserSidebarReorderItemID) -> Bool {
-        isLifted(id) || landingPreview?.item.selectionRowIDs.contains(id) == true
+        isLifted(id) || landingPreview != nil && landingRowIDs.contains(id)
     }
 
     func finishLanding(_ id: UUID) {
         guard landingPreview?.landing?.id == id else { return }
         landingPreview = nil
+        landingRowIDs = []
         landingSessionToken = nil
         needsLandingMeasurement = false
         landingSection = nil
+        landingDepartingOwner = nil
         landingExpirationTask?.cancel()
         landingExpirationTask = nil
     }
@@ -63,15 +83,20 @@ final class BrowserSidebarReorderState {
     private let geometry = BrowserSidebarReorderGeometry()
 
     // Staging holds the pager still before native input confirms a moving lift.
-    private var stagedLift: (item: BrowserSidebarReorderItem, section: BrowserSidebarReorderSection)?
+    private var stagedLift:
+        (item: BrowserSidebarReorderItem, section: BrowserSidebarReorderSection, plan: BrowserSidebarLiftPlan?)?
     @ObservationIgnored private var stagedLiftExpirationTask: Task<Void, Never>?
     @ObservationIgnored private let stagedLiftExpiration: Duration
+    /// The clock a stage's expiry waits on.
+    @ObservationIgnored private let clock: any Clock<Duration>
 
     init(
         stagedLiftExpiration: Duration = BrowserSidebarReorderPolicy
-            .stagedLiftExpiration
+            .stagedLiftExpiration,
+        clock: any Clock<Duration> = ContinuousClock()
     ) {
         self.stagedLiftExpiration = stagedLiftExpiration
+        self.clock = clock
     }
     private(set) var isSuppressingActivation = false
     // Latch the content host for the drag so its WebView does not change parents repeatedly.
@@ -114,7 +139,7 @@ final class BrowserSidebarReorderState {
     }
 
     func isLifted(_ id: BrowserSidebarReorderItemID) -> Bool {
-        lift?.item.selectionRowIDs.contains(id) == true
+        lift?.rowIDs.contains(id) == true
     }
 
     // MARK: - Geometry registration
@@ -128,7 +153,7 @@ final class BrowserSidebarReorderState {
         guard !isDragging || geometry.rows[row.id] == nil else { return }
         geometry.register(row: row, owner: owner, scrollRegionID: scrollRegionID)
         if needsLandingMeasurement, var preview = landingPreview, preview.item.id == row.id,
-            !row.frame.isEmpty, landingSection == nil || landingSection == row.section,
+            owner != landingDepartingOwner, !row.frame.isEmpty, landingSection == nil || landingSection == row.section,
             preview.landing?.frame != row.frame, preview.landing?.isRevealing != true
         {
             preview.landing = BrowserSidebarReorderLanding(frame: row.frame)
@@ -225,9 +250,9 @@ final class BrowserSidebarReorderState {
             return BrowserPinnedTabReorderLayout(ids: ids)
         }
         var result = BrowserPinnedTabReorderLayout(ids: ids, liftedID: lift.item.id)
-        result.liftedIDs = lift.item.selectionRowIDs
+        result.liftedIDs = lift.rowIDs
         if case .insert(let section, _, let index) = resolvedTarget?.kind, section.usesGridOrdering,
-            batchConstraintMessage == nil
+            constraintMessage == nil
         {
             result.insertionIndex = index
         }
@@ -249,14 +274,14 @@ final class BrowserSidebarReorderState {
 
     func register(
         splitCardFrame frame: CGRect,
-        for tabID: TabID,
+        for tabID: UUID,
         in space: BrowserSpaceRuntimeAssignment,
         owner: UUID
     ) {
         geometry.register(splitCardFrame: frame, for: tabID, in: space, owner: owner)
     }
 
-    func removeSplitCardFrame(for tabID: TabID, owner: UUID) {
+    func removeSplitCardFrame(for tabID: UUID, owner: UUID) {
         geometry.removeSplitCardFrame(for: tabID, owner: owner)
     }
 
@@ -271,19 +296,21 @@ final class BrowserSidebarReorderState {
     // MARK: - Drag lifecycle
     func stage(
         item: BrowserSidebarReorderItem,
-        section: BrowserSidebarReorderSection
+        section: BrowserSidebarReorderSection,
+        plan: BrowserSidebarLiftPlan? = nil
     ) {
         cancel()
         sessionGeneration &+= 1
-        stagedLift = (item, section)
+        stagedLift = (item, section, plan)
         armStagedLiftExpiration()
     }
 
     private func armStagedLiftExpiration() {
         stagedLiftExpirationTask?.cancel()
         let delay = stagedLiftExpiration
+        let clock = clock
         stagedLiftExpirationTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: delay)
+            try? await clock.sleep(for: delay)
             guard !Task.isCancelled, let self else { return }
             stagedLiftExpirationTask = nil
             guard lift == nil else { return }
@@ -299,7 +326,8 @@ final class BrowserSidebarReorderState {
     func begin(
         item: BrowserSidebarReorderItem,
         section: BrowserSidebarReorderSection,
-        at pointer: CGPoint
+        at pointer: CGPoint,
+        plan: BrowserSidebarLiftPlan? = nil
     ) {
         pointerContinuation = nil
         lastPointerEvent = nil
@@ -308,6 +336,7 @@ final class BrowserSidebarReorderState {
         }
         if let id = landingPreview?.landing?.id { finishLanding(id) }
         let frame = frame(ofRow: item.id)
+        let rowIDs = item.selectionRowIDs
         lift = Lift(
             item: item,
             section: section,
@@ -318,7 +347,9 @@ final class BrowserSidebarReorderState {
             ),
             previewRows: item.selection == nil
                 ? folderPreviewRows(for: item)
-                : selectionRows(in: item.spaceAssignment).filter { item.selectionRowIDs.contains($0.id) }
+                : selectionRows(in: item.spaceAssignment).filter { rowIDs.contains($0.id) },
+            plan: plan,
+            rowIDs: rowIDs
         )
         stagedLift = nil
         cancelStagedLiftExpiration()
@@ -351,7 +382,7 @@ final class BrowserSidebarReorderState {
         } else {
             resolveTarget()
         }
-        validateBatchTarget()
+        validateTarget()
     }
 
     func folderPreviewRows(for item: BrowserSidebarReorderItem) -> [BrowserSidebarReorderRow] {
@@ -368,7 +399,7 @@ final class BrowserSidebarReorderState {
 
     func update(pointer: CGPoint) {
         if lift == nil, let staged = stagedLift {
-            begin(item: staged.item, section: staged.section, at: pointer)
+            begin(item: staged.item, section: staged.section, at: pointer, plan: staged.plan)
         }
         guard lift != nil else { return }
         let delta = pointer.y - self.pointer.y
@@ -380,18 +411,20 @@ final class BrowserSidebarReorderState {
     func end(
         retainingPreview: Bool = false, landingTimeout: Duration? = .seconds(1),
         suppressReleaseActivation: Bool = true
-    ) -> (
-        item: BrowserSidebarReorderItem,
-        target: BrowserSidebarReorderTarget
-    )? {
-        if retainingPreview, batchConstraintMessage == nil, var preview = liftPreview,
+    ) -> BrowserSidebarReorderDrop? {
+        if retainingPreview, constraintMessage == nil, var preview = liftPreview,
             let frame = landingFrame
         {
             preview.landing = BrowserSidebarReorderLanding(frame: frame)
+            landingRowIDs = lift?.rowIDs ?? preview.item.selectionRowIDs
             landingPreview = preview
             landingSessionToken = sessionToken
             needsLandingMeasurement = true
             landingSection = resolvedTarget == nil ? lift?.section : resolvedTarget?.section
+            // Within one list the view the row was lifted from is the one it
+            // lands in; any other landing leaves that view behind.
+            landingDepartingOwner =
+                landingSection == lift?.section ? nil : lift.flatMap { geometry.rows[$0.item.id]?.owner }
             landingExpirationTask?.cancel()
             landingExpirationTask = nil
             if let landingTimeout {
@@ -413,11 +446,10 @@ final class BrowserSidebarReorderState {
             layout = BrowserSidebarReorderLayout()
             lastPreviewShape = nil
             hasEnteredSplitContent = false
-            batchConstraintMessage = nil
-            batchValidation = nil
+            constraintMessage = nil
         }
-        guard batchConstraintMessage == nil, let lift, let target = resolvedTarget else { return nil }
-        return (lift.item, target)
+        guard constraintMessage == nil, let lift, let target = resolvedTarget else { return nil }
+        return BrowserSidebarReorderDrop(item: lift.item, target: target, plan: lift.plan)
     }
 
     func cancel(session: BrowserDragSessionToken) {
@@ -437,8 +469,7 @@ final class BrowserSidebarReorderState {
         layout = BrowserSidebarReorderLayout()
         lastPreviewShape = nil
         hasEnteredSplitContent = false
-        batchConstraintMessage = nil
-        batchValidation = nil
+        constraintMessage = nil
     }
 
     func yieldToCompetingInteraction() {
@@ -473,12 +504,9 @@ final class BrowserSidebarReorderState {
         guard let context = insertionContext(for: id) else { return .zero }
         return BrowserSidebarReorderPolicy.displacement(
             candidateIndex: context.candidateIndex,
-            draggedSlot: context.draggedSlot,
-            insertionIndex: context.index,
-            layout: BrowserSidebarReorderPolicy.slotLayout(
-                for: context.ordered,
-                fallbackStride: context.fallbackStride
-            )
+            draggedSlot: context.order.draggedSlot,
+            insertionIndex: context.order.index,
+            layout: context.order.slotLayout
         )
     }
 
@@ -498,16 +526,16 @@ final class BrowserSidebarReorderState {
         for id: BrowserSidebarReorderItemID
     ) -> BrowserSidebarReorderIndicator? {
         guard let context = insertionContext(for: id) else { return nil }
-        let flowsHorizontally = context.section.flowsHorizontally
+        let flowsHorizontally = context.order.section.flowsHorizontally
 
-        if context.candidateIndex == context.index {
+        if context.candidateIndex == context.order.index {
             return BrowserSidebarReorderIndicator(
                 side: .before,
                 flowsHorizontally: flowsHorizontally
             )
         }
-        if context.index >= context.candidateCount,
-            context.candidateIndex == context.candidateCount - 1
+        if context.order.index >= context.order.candidateCount,
+            context.candidateIndex == context.order.candidateCount - 1
         {
             return BrowserSidebarReorderIndicator(
                 side: .after,
@@ -534,14 +562,14 @@ final class BrowserSidebarReorderState {
         )
     }
 
-    func isTargetedFolder(_ folderID: FolderID) -> Bool {
+    func isTargetedFolder(_ folderID: UUID) -> Bool {
         resolvedTarget?.kind == .intoFolder(folderID)
     }
 
     // MARK: - Morphing
     var liftTargetShape: BrowserTabDragPreviewShape? {
         guard let lift else { return nil }
-        if lift.item.selection != nil, batchConstraintMessage != nil {
+        if constraintMessage != nil {
             return lift.section.usesGridOrdering ? .pinnedTile : .row
         }
         switch lift.item {
@@ -588,7 +616,7 @@ final class BrowserSidebarReorderState {
             previewRows: lift.previewRows,
             pinnedTileSize: pinnedSize,
             sidebarBounds: pinned?.frame,
-            constraintMessage: batchConstraintMessage
+            constraintMessage: constraintMessage
         )
     }
 
@@ -613,14 +641,27 @@ final class BrowserSidebarReorderState {
 
     // MARK: - Resolution
 
-    private struct InsertionContext {
+    /// The order of the section a lift would be inserted into, which every
+    /// row of it reads to find its own slot.
+    private struct InsertionOrder {
+        /// The lift, target and row registrations it was worked out for.
+        let item: BrowserSidebarReorderItemID
+        let target: BrowserSidebarReorderTarget
+        let rowSize: CGSize
+        let rowsRevision: Int
+
         let section: BrowserSidebarReorderSection
-        let ordered: [BrowserSidebarReorderRow]
-        let candidateIndex: Int
+        /// Each row's place among the section's rows other than the lifted one.
+        let candidateIndexes: [BrowserSidebarReorderItemID: Int]
         let candidateCount: Int
         let draggedSlot: Int
         let index: Int
-        let fallbackStride: CGFloat
+        let slotLayout: BrowserSidebarReorderPolicy.SlotLayout
+    }
+
+    private struct InsertionContext {
+        let order: InsertionOrder
+        let candidateIndex: Int
     }
 
     private func insertionContext(
@@ -629,36 +670,47 @@ final class BrowserSidebarReorderState {
         guard let lift,
             lift.item.id != id,
             let target = resolvedTarget,
-            case .insert(let section, _, let index) = target.kind
+            case .insert = target.kind,
+            let order = insertionOrder(for: lift, target: target),
+            let candidateIndex = order.candidateIndexes[id]
         else { return nil }
+        return InsertionContext(order: order, candidateIndex: candidateIndex)
+    }
 
+    /// The insertion order for `lift` at `target`, kept until the lift, the
+    /// target or the registered rows change.
+    private func insertionOrder(for lift: Lift, target: BrowserSidebarReorderTarget) -> InsertionOrder? {
+        if let order = insertionOrder, order.item == lift.item.id, order.target == target,
+            order.rowSize == lift.rowSize,
+            order.rowsRevision == geometry.rowsRevision
+        {
+            return order
+        }
+        guard case .insert(let section, _, let index) = target.kind else { return nil }
         let ordered = BrowserSidebarReorderPolicy.rows(
             in: section,
             from: registeredRows(in: lift.item.spaceAssignment)
         )
         let candidates = ordered.filter { $0.id != lift.item.id }
-        guard let candidateIndex = candidates.firstIndex(where: { $0.id == id })
-        else { return nil }
-        let draggedSlot =
-            ordered.firstIndex { $0.id == lift.item.id } ?? candidates.count
-
-        return InsertionContext(
+        let order = InsertionOrder(
+            item: lift.item.id, target: target, rowSize: lift.rowSize, rowsRevision: geometry.rowsRevision,
             section: section,
-            ordered: ordered,
-            candidateIndex: candidateIndex,
+            candidateIndexes: Dictionary(
+                candidates.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first }),
             candidateCount: candidates.count,
-            draggedSlot: draggedSlot,
+            draggedSlot: ordered.firstIndex { $0.id == lift.item.id } ?? candidates.count,
             index: index,
-            fallbackStride: section.usesGridOrdering
-                ? lift.rowSize.width
-                : lift.rowSize.height
-        )
+            slotLayout: BrowserSidebarReorderPolicy.slotLayout(
+                for: ordered,
+                fallbackStride: section.usesGridOrdering ? lift.rowSize.width : lift.rowSize.height))
+        insertionOrder = order
+        return order
     }
 
     private func resolveTarget() {
         let previousTarget = resolvedTarget
         defer {
-            validateBatchTarget()
+            validateTarget()
             if resolvedTarget != previousTarget { refreshLayout() }
             if resolvedTarget != nil { lastPreviewShape = liftTargetShape }
         }
@@ -674,12 +726,23 @@ final class BrowserSidebarReorderState {
         if case .splitInsert = resolvedTarget?.kind { hasEnteredSplitContent = true }
     }
 
-    private func validateBatchTarget() {
-        guard let request = lift?.item.selection, let target = resolvedTarget else {
-            batchConstraintMessage = nil
+    /// Asks the lift's plan about the target it is over: a target the core
+    /// offers no such drop for resolves to nothing, and one it refuses keeps
+    /// its place with the refusal's own words.
+    private func validateTarget() {
+        guard let plan = lift?.plan, let target = resolvedTarget else {
+            constraintMessage = nil
             return
         }
-        batchConstraintMessage = batchValidation?(target, request)
+        switch plan.verdict(on: target) {
+        case .allowed:
+            constraintMessage = nil
+        case .refused(let refusal):
+            constraintMessage = refusal.placementExplanation
+        case .unavailable:
+            resolvedTarget = nil
+            constraintMessage = nil
+        }
     }
 
     // Tall blocks cross neighbours with their moving edge rather than the grabbed header.
@@ -703,7 +766,7 @@ final class BrowserSidebarReorderState {
                 ? max(pinned.emptyHeight, pinned.layout.height) - pinned.frame.height : 0
         }
         next.gap = nil
-        if batchConstraintMessage != nil {
+        if constraintMessage != nil {
             if next != layout { layout = next }
             return
         }
@@ -728,7 +791,7 @@ final class BrowserSidebarReorderState {
                 if next != layout { layout = next }
                 return
             }
-            var parents: Set<FolderID> = []
+            var parents: Set<UUID> = []
             var parent = section.parentFolderID
             while let id = parent, parents.insert(id).inserted {
                 parent = geometry.rows[.folder(id)]?.row.section.parentFolderID
@@ -745,4 +808,12 @@ final class BrowserSidebarReorderState {
         geometry.restingZone(for: section, inColumn: frame)
     }
 
+}
+
+/// A lift released where the core may take it: what was lifted, where it
+/// landed, and the plan it carried.
+struct BrowserSidebarReorderDrop: Equatable, Sendable {
+    let item: BrowserSidebarReorderItem
+    let target: BrowserSidebarReorderTarget
+    let plan: BrowserSidebarLiftPlan?
 }

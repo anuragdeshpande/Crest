@@ -1,7 +1,8 @@
 import SwiftUI
 
 struct BrowserSpaceSidebarTabRowContent: View {
-    let tab: BrowserTab
+    let tab: TabStateModel
+    let favicons: FaviconAssets
     let profileID: UUID
     let isSelected: Bool
     @Environment(\.browserInteractionCapabilities) private var capabilities
@@ -12,12 +13,13 @@ struct BrowserSpaceSidebarTabRowContent: View {
 
     var body: some View {
         HStack(spacing: BrowserManualSetupSidebarPreviewMetrics.tabSpacing) {
-            TabFaviconView(
+            TabStateFaviconView(
                 tab: tab,
+                favicons: favicons,
                 profileID: profileID,
                 size: BrowserManualSetupSidebarPreviewMetrics.tabIconSize * BrowserSidebarDensityPolicy.scale(tabScale)
             )
-            Text(tab.title)
+            Text(tab.shownTitle)
                 .lineLimit(1)
             Spacer()
         }
@@ -47,13 +49,15 @@ struct BrowserSpaceSidebarTabRowContent: View {
 
 #if DEBUG
     #Preview("Setup tab rows") {
-        let configuration = BrowserSidebarTabRowPreviewFixture.configuration()
+        let tab = BrowserSidebarTabRowPreviewFixture.tab()
+        let profileID = BrowserSidebarTabRowPreviewFixture.profileID
+        let favicons = FaviconAssets()
         VStack(spacing: 12) {
             BrowserSpaceSidebarTabRowContent(
-                tab: configuration.tab, profileID: configuration.profileID, isSelected: true, tabScale: 1,
+                tab: tab, favicons: favicons, profileID: profileID, isSelected: true, tabScale: 1,
                 appearance: BrowserTabAppearance())
             BrowserSpaceSidebarTabRowContent(
-                tab: configuration.tab, profileID: configuration.profileID, isSelected: false, tabScale: 1,
+                tab: tab, favicons: favicons, profileID: profileID, isSelected: false, tabScale: 1,
                 appearance: BrowserTabAppearance())
         }.padding().frame(width: 320)
     }

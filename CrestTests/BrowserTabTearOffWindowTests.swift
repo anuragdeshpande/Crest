@@ -9,7 +9,7 @@ final class BrowserTabTearOffWindowTests: XCTestCase {
     func testNativeDragOutsideOnlyWindowWaitsForBlankWindowThenMovesTab() throws {
         let fixture = try Fixture()
         defer { fixture.close() }
-        fixture.source.pages.select(session: fixture.source.browser.session)
+        fixture.source.pages.select()
         let page = try XCTUnwrap(fixture.source.pages.activePage)
         let row = try XCTUnwrap(fixture.root.sidebarInteraction.sidebarReorderState.frame(ofRow: .tab(fixture.tabID)))
         let grabFraction = CGPoint(x: 0.25, y: 0.75)
@@ -31,9 +31,9 @@ final class BrowserTabTearOffWindowTests: XCTestCase {
 
         let request = try XCTUnwrap(fixture.request)
         XCTAssertEqual(request.kind, .temporary)
-        XCTAssertEqual(fixture.source.browser.selectedTab?.id, fixture.tabID)
+        XCTAssertEqual(fixture.source.browser.shownTab?.id, fixture.tabID)
         let destination = try XCTUnwrap(fixture.coordinator.existingModel(for: request.id))
-        XCTAssertTrue(destination.browser.selectedSpace?.tabs.isEmpty == true)
+        XCTAssertTrue(destination.browser.shownSpace?.tabs.models.isEmpty == true)
         let placement = try XCTUnwrap(destination.tearOffPlacement)
         XCTAssertEqual(placement.assignment.tabID, fixture.tabID)
         XCTAssertEqual(fixture.capturedDropPoint, point)
@@ -58,11 +58,11 @@ final class BrowserTabTearOffWindowTests: XCTestCase {
         fixture.coordinator.attach(fixture.destinationWindow, to: request.id)
         fixture.pump()
 
-        XCTAssertEqual(destination.browser.selectedTab?.id, fixture.tabID)
+        XCTAssertEqual(destination.browser.shownTab?.id, fixture.tabID)
         XCTAssertTrue(destination.pages.activePage === page)
         XCTAssertTrue(page.host === destination.pages)
         XCTAssertNil(fixture.source.pages.residentPage(matching: placement.assignment))
-        XCTAssertTrue(fixture.source.browser.selectedSpace?.tabs.isEmpty == true)
+        XCTAssertTrue(fixture.source.browser.shownSpace?.tabs.models.isEmpty == true)
         XCTAssertNotNil(fixture.coordinator.existingModel(for: fixture.source.id))
         XCTAssertTrue(fixture.source.window?.isVisible == true)
         XCTAssertTrue(fixture.completedPlacementFromRow, "The destination's measured row must finish placement")
@@ -75,7 +75,7 @@ final class BrowserTabTearOffWindowTests: XCTestCase {
             id: measuredRow.id, space: measuredRow.space, section: measuredRow.section,
             frame: measuredRow.frame.offsetBy(dx: 33, dy: 22))
         let unrelatedRow = BrowserSidebarReorderRow(
-            id: .tab(TabID()), space: measuredRow.space, section: measuredRow.section, frame: lateRow.frame)
+            id: .tab(UUID()), space: measuredRow.space, section: measuredRow.section, frame: lateRow.frame)
         let destinationFrame = fixture.destinationWindow.frame
         let sourceFrame = sourceWindow.frame
         fixture.destinationWindow.orderOut(nil)
@@ -107,7 +107,7 @@ final class BrowserTabTearOffWindowTests: XCTestCase {
         fixture.pump()
 
         XCTAssertNil(fixture.request)
-        XCTAssertEqual(fixture.source.browser.selectedTab?.id, fixture.tabID)
+        XCTAssertEqual(fixture.source.browser.shownTab?.id, fixture.tabID)
         XCTAssertFalse(fixture.root.sidebarInteraction.sidebarReorderState.hasLiftInFlight)
     }
 
@@ -117,9 +117,9 @@ final class BrowserTabTearOffWindowTests: XCTestCase {
         let source: BrowserMacWindowModel
         let root: BrowserRootModel
         let input: BrowserNativeMouseInput
-        let tabID: TabID
+        let tabID: UUID
         let destinationWindow: NSWindow
-        let outside = CGPoint(x: 1_320, y: -120)
+        private(set) var outside = CGPoint(x: 1_320, y: -120)
         var request: BrowserMacWindowRequest?
         var capturedDropPoint: CGPoint?
         var capturedGrabFraction: CGPoint?
@@ -127,19 +127,20 @@ final class BrowserTabTearOffWindowTests: XCTestCase {
         var completedPlacementFromRow = false
 
         init() throws {
-            let tab = BrowserTab(title: "Tear off", url: URL(string: "about:blank"), placement: .current)
+            let tab = TabState.Seed(title: "Tear off", url: URL(string: "about:blank"), placement: .current)
             tabID = tab.id
-            let space = BrowserSpace(
-                id: SpaceID(), profile: BrowsingProfile(), name: "Temporary windows", symbol: "globe",
-                accent: .indigo, folders: [], tabs: [tab], selectedTabID: tab.id)
-            let browser = BrowserStore(
-                session: BrowserSession(spaces: [space], selectedSpaceID: space.id),
-                persistence: InMemoryBrowserSessionPersistence())
+            let space = SpaceState.Seed(
+                name: "Temporary windows", symbol: "globe",
+                accent: .indigo, folders: [], tabs: [tab])
+            let browser = BrowserStore.hostingPages(
+                SessionState.Seed(spaces: [space]),
+                showing: space.id, tabs: [space.id: tab.id])
             let access = BrowserSpaceAccessController()
             coordinator = BrowserMacWindowCoordinator(
                 browser: browser,
-                pages: BrowserPagePool(monitorsMemoryPressure: false, usesEphemeralWebsiteDataStores: true),
-                spaceAccess: access, windowStatePersistence: InMemoryBrowserWindowStatePersistence())
+                pages: BrowserPagePool(
+                    browser: browser, usesEphemeralWebsiteDataStores: true),
+                spaceAccess: access, windowLayouts: BrowserWindowLayouts(defaults: nil))
             source = try XCTUnwrap(coordinator.model(for: .initial))
             root = BrowserRootModel(
                 browser: source.browser, pages: source.pages, chrome: source.chrome, spaceAccess: access,
@@ -172,6 +173,12 @@ final class BrowserTabTearOffWindowTests: XCTestCase {
                         })))
             coordinator.attach(window, to: source.id)
             window.makeKeyAndOrderFront(nil)
+            // The app's initial scene or an earlier test may have another
+            // visible window. This fixture specifically exercises empty desktop.
+            let rightEdge =
+                NSApp.orderedWindows.filter { $0.isVisible && !$0.ignoresMouseEvents }
+                .map { $0.frame.maxX }.max() ?? window.frame.maxX
+            outside.x = rightEdge - window.frame.minX + 80
             pump()
         }
 

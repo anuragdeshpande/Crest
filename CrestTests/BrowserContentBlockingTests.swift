@@ -11,59 +11,19 @@ final class BrowserContentBlockingTests: XCTestCase {
         let store = try isolatedRuleListStore()
         defer { store.remove() }
         let compiler = RecordingBuiltInRuleListCompiler()
+        let core = CrestCore()
         let provider = BrowserContentRuleListProvider(
+            core: core,
             ruleListStore: store.store,
             compiler: compiler
         )
 
         let ruleLists = try await provider.balancedRuleLists()
+        let rules = try core.query(BalancedProtectionRules())
 
-        XCTAssertEqual(ruleLists.map(\.identifier), [BrowserContentBlockingRules.identifier])
-        XCTAssertEqual(compiler.identifiers, [BrowserContentBlockingRules.identifier])
-        XCTAssertEqual(compiler.sources, [BrowserContentBlockingRules.balancedSource])
-    }
-
-    func testBalancedProtectionIsTheDefaultAndRepairsLegacyPreferences() throws {
-        XCTAssertEqual(
-            BrowserSpaceBrowsingPreferences.default.contentBlockingPolicy,
-            .balanced
-        )
-
-        let legacyJSON = """
-            {
-              "searchProvider": "duckDuckGo",
-              "currentTabCleanupPolicy": "after24Hours"
-            }
-            """
-        let decoded = try JSONDecoder().decode(
-            BrowserSpaceBrowsingPreferences.self,
-            from: Data(legacyJSON.utf8)
-        )
-
-        XCTAssertEqual(decoded.searchProvider, .duckDuckGo)
-        XCTAssertEqual(decoded.currentTabCleanupPolicy, .after24Hours)
-        XCTAssertEqual(decoded.contentBlockingPolicy, .balanced)
-    }
-
-    func testContentBlockingPreferenceChangesOnlyTheTargetSpace() throws {
-        var session = BrowserSession.preview
-        let workID = try XCTUnwrap(session.spaces.first?.id)
-        let personalID = try XCTUnwrap(session.spaces.last?.id)
-        var workPreferences = try XCTUnwrap(
-            session.space(id: workID)?.browsingPreferences
-        )
-
-        workPreferences.contentBlockingPolicy = .off
-        session.updateBrowsingPreferences(workPreferences, in: workID)
-
-        XCTAssertEqual(
-            session.space(id: workID)?.browsingPreferences.contentBlockingPolicy,
-            .off
-        )
-        XCTAssertEqual(
-            session.space(id: personalID)?.browsingPreferences.contentBlockingPolicy,
-            .balanced
-        )
+        XCTAssertEqual(ruleLists.map(\.identifier), [rules.identifier])
+        XCTAssertEqual(compiler.identifiers, [rules.identifier])
+        XCTAssertEqual(compiler.sources, [rules.source])
     }
 
     func testPagePoolReconcilesThePolicyAcrossResidentAndRecoveredTransientPages() async throws {
@@ -75,16 +35,12 @@ final class BrowserContentBlockingTests: XCTestCase {
             store: store.store
         )
         let provider = StubContentRuleListProvider(generations: [[ruleList]])
-        let firstTab = BrowserTab.startPage()
+        let firstTab = TabState.Seed.startPage()
         let firstSpace = contentBlockingSpace(name: "Protected", tab: firstTab)
-        var session = BrowserSession(
-            spaces: [firstSpace],
-            selectedSpaceID: firstSpace.id
-        )
-        let pool = BrowserPagePool(
-            browsingMode: .privateBrowsing,
-            contentRuleListProvider: provider
-        )
+        let browser = BrowserStore.hostingPages(
+            SessionState.Seed(spaces: [firstSpace]), showing: firstSpace.id, tabs: [firstSpace.id: firstTab.id],
+            core: .hostingPages(contentRuleLists: provider))
+        let pool = BrowserPagePool(browser: browser, browsingMode: .privateBrowsing)
         defer {
             for tabID in pool.retainedTabIDs {
                 pool.unloadPage(for: tabID)
@@ -96,29 +52,26 @@ final class BrowserContentBlockingTests: XCTestCase {
             pool.contentBlockingErrorDescription,
             pool.contentBlockingErrorDescription ?? ""
         )
-        pool.select(session: session)
+        pool.select()
         XCTAssertEqual(pool.activePage?.isContentBlockingActive, true)
         let transientLease = try XCTUnwrap(
             pool.makeTransientPageLease(
                 url: URL(string: "about:blank")!,
-                in: firstSpace
+                in: try XCTUnwrap(browser.spaceModel(firstSpace.id))
             )
         )
         XCTAssertEqual(transientLease.page?.isContentBlockingActive, true)
 
-        let protectedSpaceID = try XCTUnwrap(session.selectedSpace?.id)
-        var preferences = try XCTUnwrap(
-            session.space(id: protectedSpaceID)?.browsingPreferences
-        )
-        preferences.contentBlockingPolicy = .off
-        session.updateBrowsingPreferences(preferences, in: protectedSpaceID)
-        await pool.reconcileContentBlocking(in: session)
+        var preferences = try XCTUnwrap(browser.spaceModel(firstSpace.id)).settings.browsingPreferences
+        preferences.contentBlocking = .off
+        browser.updateBrowsingPreferences(preferences, in: firstSpace.id)
+        await pool.reconcileContentBlocking()
 
         XCTAssertEqual(pool.activePage?.isContentBlockingActive, false)
         XCTAssertEqual(transientLease.page?.isContentBlockingActive, false)
 
         transientLease.setActive(false)
-        pool.handleMemoryPressure(.warning)
+        pool.relieveMemoryPressure(.warning)
         XCTAssertNil(transientLease.page)
         transientLease.restore()
         XCTAssertEqual(transientLease.page?.isContentBlockingActive, false)
@@ -161,25 +114,39 @@ final class BrowserContentBlockingTests: XCTestCase {
                 to: directory.appendingPathComponent("extension-script.js")
             )
 
-            let space = try XCTUnwrap(BrowserSession.preview.selectedSpace)
+            let space = try XCTUnwrap(SessionState.Seed.preview.spaces.first)
+            let browser = BrowserStore.hostingPages(.preview)
+            // A popup shares its opener's user content controller, so it holds
+            // rule lists Crest did not install.
+            let opener = try XCTUnwrap(
+                browser.openWebKitPage(in: space.id, for: try XCTUnwrap(space.tabs.first).id))
+            defer { opener.core.release(keepingState: false) }
             let configuration = BrowserPageConfiguration.make(
-                for: space.profile,
+                for: BrowsingProfile(id: space.profileID),
                 websiteDataStore: .nonPersistent(),
                 contentRuleList: crestRuleList
             )
             configuration.userContentController.add(extensionRuleList)
-            let page = BrowserPage(
-                configuration: configuration,
-                dialogPresenter: BrowserDialogPresenter(),
-                downloadCenter: BrowserDownloadCenter(),
-                permissionCenter: BrowserSitePermissionCenter(),
-                spaceID: space.id,
-                profileID: space.profile.id,
-                spaceName: space.name,
-                contentRuleList: crestRuleList,
-                openNewTab: { _ in }
-            )
-            defer { page.prepareForSpaceDeletion() }
+            let page = try XCTUnwrap(
+                browser.openWebKitPopup(
+                    from: opener.webKit, configuration: configuration,
+                    loading: URLRequest(url: try XCTUnwrap(URL(string: "about:blank")))
+                ).map {
+                    opened in
+                    BrowserPage(
+                        corePage: opened.core,
+                        webKitPage: opened.webKit,
+                        dialogPresenter: BrowserDialogPresenter(),
+                        downloadCenter: BrowserDownloadCenter(),
+                        permissionCenter: BrowserSitePermissionCenter(),
+                        spaceID: space.id,
+                        profileID: space.profileID,
+                        spaceName: space.settings.name,
+                        contentRuleList: crestRuleList,
+                        openNewTab: { _ in }
+                    )
+                })
+            defer { page.release(keepingState: false) }
 
             page.applyContentBlocking(policy: .off, balancedRuleList: crestRuleList)
             let startingNavigationCount = page.completedNavigationCount
@@ -223,17 +190,16 @@ final class BrowserContentBlockingTests: XCTestCase {
         let provider = StubContentRuleListProvider(
             generations: [[firstGeneration], [secondGeneration]]
         )
-        let activeTab = BrowserTab.startPage()
-        let backgroundTab = BrowserTab.startPage()
+        let activeTab = TabState.Seed.startPage()
+        let backgroundTab = TabState.Seed.startPage()
         let space = contentBlockingSpace(
             name: "Protected",
             tabs: [activeTab, backgroundTab]
         )
-        var session = BrowserSession(spaces: [space], selectedSpaceID: space.id)
-        let pool = BrowserPagePool(
-            browsingMode: .privateBrowsing,
-            contentRuleListProvider: provider
-        )
+        let browser = BrowserStore.hostingPages(
+            SessionState.Seed(spaces: [space]), showing: space.id, tabs: [space.id: backgroundTab.id],
+            core: .hostingPages(contentRuleLists: provider))
+        let pool = BrowserPagePool(browser: browser, browsingMode: .privateBrowsing)
         defer {
             for tabID in pool.retainedTabIDs {
                 pool.unloadPage(for: tabID)
@@ -241,11 +207,9 @@ final class BrowserContentBlockingTests: XCTestCase {
         }
 
         await pool.prepareContentBlocking()
-        session.selectTab(backgroundTab.id)
-        pool.select(session: session)
+        pool.select()
         let backgroundPage = try XCTUnwrap(pool.activePage)
-        session.selectTab(activeTab.id)
-        pool.select(session: session)
+        pool.present(tab: activeTab.id, in: space.id)
         let activePage = try XCTUnwrap(pool.activePage)
         XCTAssertFalse(activePage === backgroundPage)
 
@@ -258,7 +222,7 @@ final class BrowserContentBlockingTests: XCTestCase {
         let activeNavigationCount = activePage.completedNavigationCount
         let backgroundNavigationCount = backgroundPage.completedNavigationCount
 
-        await pool.reloadContentBlocking(in: session)
+        await pool.reloadContentBlocking()
 
         // The swap must reach both pages without disturbing either document.
         try await Task.sleep(for: .milliseconds(400))
@@ -269,7 +233,7 @@ final class BrowserContentBlockingTests: XCTestCase {
             let keptSentinel = try await documents.hasSentinel(in: page)
             let trackers = try await documents.trackerState(in: page)
             XCTAssertEqual(page.completedNavigationCount, navigationCount)
-            XCTAssertFalse(page.isLoading)
+            XCTAssertFalse(page.live.isLoading)
             XCTAssertTrue(keptSentinel)
             XCTAssertEqual(trackers, [false, true])
             XCTAssertEqual(page.isContentBlockingActive, true)
@@ -304,24 +268,21 @@ final class BrowserContentBlockingTests: XCTestCase {
 
     private func contentBlockingSpace(
         name: String,
-        tab: BrowserTab
-    ) -> BrowserSpace {
+        tab: TabState.Seed
+    ) -> SpaceState.Seed {
         contentBlockingSpace(name: name, tabs: [tab])
     }
 
     private func contentBlockingSpace(
         name: String,
-        tabs: [BrowserTab]
-    ) -> BrowserSpace {
-        BrowserSpace(
-            id: SpaceID(),
-            profile: BrowsingProfile(),
+        tabs: [TabState.Seed]
+    ) -> SpaceState.Seed {
+        SpaceState.Seed(
             name: name,
             symbol: "shield",
             accent: .indigo,
             folders: [],
-            tabs: tabs,
-            selectedTabID: tabs.first?.id
+            tabs: tabs
         )
     }
 
@@ -483,5 +444,20 @@ private final class StubContentRuleListProvider: BrowserContentRuleListProviding
     func balancedRuleLists() async throws -> [WKContentRuleList] {
         defer { requestCount += 1 }
         return generations[min(requestCount, generations.count - 1)]
+    }
+}
+
+extension BrowserStore {
+    /// The page WebKit builds from `configuration` for a popup `opener`, a
+    /// tab's page this window opened, offers the core, as a popup WebKit made
+    /// would be, for a test that hosts the page itself. Nil when the core
+    /// refuses it.
+    fileprivate func openWebKitPopup(
+        from opener: WebKitEnginePage, configuration: WKWebViewConfiguration, loading request: URLRequest
+    ) -> (core: CorePage, webKit: WebKitEnginePage)? {
+        guard let popup = opener.offer(WebKitPopup(configuration: configuration), for: request, foreground: false),
+            let opened = core.engines.host(popup.id)
+        else { return nil }
+        return (opened.page, popup)
     }
 }

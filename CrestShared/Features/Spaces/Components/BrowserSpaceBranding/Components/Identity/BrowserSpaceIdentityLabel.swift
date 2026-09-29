@@ -1,22 +1,26 @@
 import SwiftUI
 
 struct BrowserSpaceIdentityLabel: View {
-    let space: BrowserSpace
+    let identity: BrowserSpaceIdentity
     var title: String?
     var iconSize: CGFloat = 20
 
-    init(space: BrowserSpace, title: String? = nil, iconSize: CGFloat = 20) {
-        self.space = space
+    init(space: some BrowserSpaceIdentifying, title: String? = nil, iconSize: CGFloat = 20) {
+        self.init(identity: space.identity, title: title, iconSize: iconSize)
+    }
+
+    init(identity: BrowserSpaceIdentity, title: String? = nil, iconSize: CGFloat = 20) {
+        self.identity = identity
         self.title = title
         self.iconSize = iconSize
     }
 
     var body: some View {
         Label {
-            Text(title ?? space.name)
+            Text(title ?? identity.name)
         } icon: {
             BrowserSpaceSymbolArtwork(
-                space: space,
+                identity: identity,
                 size: iconSize,
                 lockSize: max(5, iconSize * 0.24)
             )

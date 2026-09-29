@@ -3,6 +3,8 @@ import Foundation
 struct BrowserLaunchEnvironment: Equatable, Sendable {
     let explicitlyRequiresIsolation: Bool
     let persistentIsolationID: String?
+    let isolatedCloudSyncID: String?
+    let requestsIsolatedCloudSync: Bool
     let resetsSession: Bool
     let presentsShowcaseSession: Bool
     let usesInMemoryCredentialVault: Bool
@@ -15,16 +17,16 @@ struct BrowserLaunchEnvironment: Equatable, Sendable {
     let performanceRunID: String
     let softwareUpdateWidgetFixture: String?
     let isolatedSoftwareUpdateFeedURL: URL?
-    /// Whether extension pages forward their own console output to Crest's
-    /// diagnostics channel. Verbose by design, so it is opt-in per launch.
-    let capturesExtensionConsole: Bool
-    /// Whether an isolated launch may reach the native messaging hosts that
-    /// Chrome and Firefox extensions install on this Mac. Off by default so a
-    /// validation launch never runs a companion process by accident; on only
-    /// when a run needs the real companion.
-    let allowsExternalNativeHostsInIsolation: Bool
     let isXCTestRuntime: Bool
     let isSwiftUIPreviewRuntime: Bool
+    /// Whether this launch stays out of the installed profile. The core decides
+    /// from the flags above.
+    private(set) var requiresIsolation = true
+    /// Keeps page and extension web storage in the same privacy class: both
+    /// forget, unless a named isolated profile persists both.
+    private(set) var usesEphemeralProfileStorage = true
+    /// False only under the test runtime.
+    private(set) var presentsInstalledApplicationUI = false
 
     init(
         values: [String: String],
@@ -34,6 +36,15 @@ struct BrowserLaunchEnvironment: Equatable, Sendable {
         explicitlyRequiresIsolation = Self.isEnabled(.isolatedSession, in: values)
         persistentIsolationID = values[Key.persistentIsolationID.rawValue]
             .flatMap(Self.normalizedIsolationID)
+        requestsIsolatedCloudSync = values["CREST_ISOLATED_CLOUD_SYNC_ID"] != nil
+        isolatedCloudSyncID = values["CREST_ISOLATED_CLOUD_SYNC_ID"].flatMap { value in
+            guard (1...48).contains(value.count),
+                value.allSatisfy({
+                    $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "-")
+                })
+            else { return nil }
+            return value
+        }
         resetsSession = Self.isEnabled(.resetSession, in: values)
         presentsShowcaseSession = Self.isEnabled(.showcaseSession, in: values)
         usesInMemoryCredentialVault = Self.isEnabled(
@@ -62,16 +73,27 @@ struct BrowserLaunchEnvironment: Equatable, Sendable {
         isolatedSoftwareUpdateFeedURL = Self.loopbackSoftwareUpdateFeedURL(
             values[Key.softwareUpdateTestFeedURL.rawValue]
         )
-        capturesExtensionConsole = Self.isEnabled(
-            .extensionConsoleCapture,
-            in: values
-        )
-        allowsExternalNativeHostsInIsolation = Self.isEnabled(
-            .isolatedExternalNativeHosts,
-            in: values
-        )
         self.isXCTestRuntime = isXCTestRuntime
         self.isSwiftUIPreviewRuntime = isSwiftUIPreviewRuntime
+        // Isolation is decided before any core exists, so the core answers it
+        // without an app.
+        let plan =
+            (try? CrestCore.answer(LaunchIsolation(platform: .current, environment: coreEnvironment)))
+            ?? LaunchDecision.unavailable
+        requiresIsolation = plan.requiresIsolation
+        usesEphemeralProfileStorage = plan.usesEphemeralProfileStorage
+        presentsInstalledApplicationUI = plan.presentsInstalledApplicationUI
+    }
+
+    /// The preferences domain a named isolated profile persists into.
+    ///
+    /// Every owner of that profile's state — the browser session, the
+    /// credential vault prefix, the extension registry — is addressed through
+    /// this one name, so a relaunch with the same
+    /// `CREST_ISOLATED_PERSISTENCE_ID` finds all of it again and none of it
+    /// lands in the installed app's own domain.
+    static func isolatedDefaultsSuiteName(isolationID: String) -> String {
+        "\(ProductIdentity.serviceNamespace).isolated.\(isolationID)"
     }
 
     private static func isEnabled(
@@ -121,8 +143,6 @@ struct BrowserLaunchEnvironment: Equatable, Sendable {
         case performanceRunID = "CREST_PERFORMANCE_RUN_ID"
         case softwareUpdateWidgetFixture = "CREST_UPDATE_WIDGET_FIXTURE"
         case softwareUpdateTestFeedURL = "CREST_UPDATE_TEST_FEED_URL"
-        case extensionConsoleCapture = "CREST_EXTENSION_CONSOLE_CAPTURE"
-        case isolatedExternalNativeHosts = "CREST_ISOLATED_EXTERNAL_NATIVE_HOSTS"
     }
 
     private enum Defaults {

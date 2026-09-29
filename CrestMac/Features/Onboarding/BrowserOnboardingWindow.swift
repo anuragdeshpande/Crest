@@ -1,32 +1,38 @@
 import SwiftUI
 
 struct BrowserOnboardingWindow: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.openWindow) private var openWindow
-
     let request: BrowserOnboardingRequest
     let cloudSync: BrowserCloudSyncController
     let progress: BrowserOnboardingProgressStore
     let spaceAccess: BrowserSpaceAccessController
+    /// Closes the window setup shows in.
+    private let closeWindow: () -> Void
+    /// Brings the browser forward once setup finished: the window setup was
+    /// opened from, or the launch it held back.
+    private let openBrowser: () -> Void
 
     @State private var flow: BrowserOnboardingFlow
-    @State private var selectedSourceSpaceID: SpaceID?
-    @State private var selectedManualSpaceID: SpaceID?
-    @State private var customizationSpaceID: SpaceID?
+    /// How long the welcome has waited on iCloud's check.
+    @State private var cloudWait = BrowserOnboardingCloudWait()
+    @State private var selectedManualSpaceID: UUID?
+    @State private var customizationSpaceID: UUID?
 
     init(
         request: BrowserOnboardingRequest,
         browser: BrowserStore,
         cloudSync: BrowserCloudSyncController,
         progress: BrowserOnboardingProgressStore,
-        spaceAccess: BrowserSpaceAccessController
+        spaceAccess: BrowserSpaceAccessController,
+        closeWindow: @escaping () -> Void,
+        openBrowser: @escaping () -> Void
     ) {
         self.init(
             request: request,
             cloudSync: cloudSync,
             progress: progress,
             spaceAccess: spaceAccess,
-            flow: BrowserOnboardingFlow(request: request, browser: browser)
+            flow: BrowserOnboardingFlow(request: request, browser: browser),
+            closeWindow: closeWindow, openBrowser: openBrowser
         )
     }
 
@@ -35,17 +41,18 @@ struct BrowserOnboardingWindow: View {
         cloudSync: BrowserCloudSyncController,
         progress: BrowserOnboardingProgressStore,
         spaceAccess: BrowserSpaceAccessController,
-        flow: BrowserOnboardingFlow
+        flow: BrowserOnboardingFlow,
+        closeWindow: @escaping () -> Void,
+        openBrowser: @escaping () -> Void
     ) {
         self.request = request
         self.cloudSync = cloudSync
         self.progress = progress
         self.spaceAccess = spaceAccess
+        self.closeWindow = closeWindow
+        self.openBrowser = openBrowser
         _flow = State(initialValue: flow)
-        _selectedSourceSpaceID = State(initialValue: nil)
-        _selectedManualSpaceID = State(
-            initialValue: flow.manualPlan?.spaces.first?.id
-        )
+        _selectedManualSpaceID = State(initialValue: flow.manualSetup.spaces.first?.spaceID)
         _customizationSpaceID = State(initialValue: nil)
     }
 
@@ -55,22 +62,19 @@ struct BrowserOnboardingWindow: View {
             cloudSync: cloudSync,
             progress: progress,
             flow: flow,
-            selectedSourceSpaceID: $selectedSourceSpaceID,
+            cloudWait: cloudWait,
             selectedManualSpaceID: $selectedManualSpaceID,
             customizationSpaceID: $customizationSpaceID,
-            close: { dismiss() },
+            close: closeWindow,
             openCrest: openCrest
         )
+        .environment(flow.browser.core)
     }
 
     private func openCrest() {
-        let reusesLaunchWindow = progress.isLaunchGateActive
         flow.completeSetup(progress: progress, spaceAccess: spaceAccess) {
-            // Completing the gate turns its existing WindowGroup window into
-            // the browser. Opening the scene again creates a second window.
-            BrowserOnboardingLaunchGateWindow.restore()
-            if !reusesLaunchWindow { openWindow(id: BrowserSceneID.browser.rawValue) }
-            dismiss()
+            openBrowser()
+            closeWindow()
         }
     }
 }
@@ -82,7 +86,9 @@ struct BrowserOnboardingWindow: View {
         cloudSync: fixture.cloudSync,
         progress: fixture.progress,
         spaceAccess: fixture.spaceAccess,
-        flow: fixture.flow
+        flow: fixture.flow,
+        closeWindow: {},
+        openBrowser: {}
     )
     .frame(width: 980, height: 660)
 }

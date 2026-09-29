@@ -5,16 +5,17 @@ import UIKit
 /// accessibility, ordering and overflow controls remain in the shared picker.
 struct PlatformSpacePickerPresentation: UIViewRepresentable {
     let presentation: SpacePagerPresentation
-    let spaces: [BrowserSpace]
-    let selectedSpaceID: SpaceID?
-    let frames: [SpaceID: CGRect]
+    let style: CrestSpaceIconPickerStyle
+    let spaces: [BrowserSpaceIdentity]
+    let selectedSpaceID: UUID?
+    let frames: [UUID: CGRect]
     let selectionTint: Color?
 
     func makeUIView(context: Context) -> SpacePickerPresentationView { SpacePickerPresentationView() }
 
     func updateUIView(_ view: SpacePickerPresentationView, context: Context) {
         view.update(
-            presentation: presentation, spaces: spaces, selectedSpaceID: selectedSpaceID,
+            presentation: presentation, style: style, spaces: spaces, selectedSpaceID: selectedSpaceID,
             frames: frames, tint: selectionTint)
     }
 
@@ -25,11 +26,12 @@ struct PlatformSpacePickerPresentation: UIViewRepresentable {
 final class SpacePickerPresentationView: UIView {
     private let highlight = CALayer()
     private weak var presentation: SpacePagerPresentation?
+    private var style = CrestSpaceIconPickerStyle.touch
     private weak var scrollView: UIScrollView?
-    private var ids: [SpaceID] = []
+    private var ids: [UUID] = []
     private var tint: UIColor?
     private var tones: [SpaceForegroundPresentation.Tone] = []
-    private var frames: [SpaceID: CGRect] = [:]
+    private var frames: [UUID: CGRect] = [:]
     private var lastSnapshot: SpacePagerPresentation.Snapshot?
     private var scrollSegment: SpacePickerScrollProgress?
     private var lastPosition: CGFloat?
@@ -49,13 +51,14 @@ final class SpacePickerPresentationView: UIView {
     }
 
     func update(
-        presentation: SpacePagerPresentation, spaces: [BrowserSpace], selectedSpaceID: SpaceID?,
-        frames: [SpaceID: CGRect], tint: Color?
+        presentation: SpacePagerPresentation, style: CrestSpaceIconPickerStyle, spaces: [BrowserSpaceIdentity],
+        selectedSpaceID: UUID?, frames: [UUID: CGRect], tint: Color?
     ) {
         if self.presentation !== presentation {
             disconnect()
             self.presentation = presentation
         }
+        self.style = style
         // Anchor resolution introduces subpixel rounding during native scrolling.
         // That is not a layout change and must not recenter manual overflow taps.
         let oldWidth = ids.first.flatMap { self.frames[$0]?.width } ?? 0
@@ -134,8 +137,8 @@ final class SpacePickerPresentationView: UIView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         highlight.frame = frame
-        highlight.cornerRadius = frame.height / 2
-        highlight.cornerCurve = .circular
+        highlight.cornerRadius = CrestSpaceIconPickerShape(style: style).cornerRadius(in: frame)
+        highlight.cornerCurve = CrestSpaceIconPickerShape.layerCornerCurve
         highlight.backgroundColor =
             (tint ?? UIColor(white: SpaceForegroundPresentation.white(at: position, tones: tones), alpha: 1))
             .withAlphaComponent(0.22).cgColor

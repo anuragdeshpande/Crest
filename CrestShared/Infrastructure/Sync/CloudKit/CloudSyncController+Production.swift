@@ -3,16 +3,16 @@ import Foundation
 
 extension BrowserCloudSyncController {
     convenience init(
-        browser: BrowserStore,
+        core: CrestCore,
         configuration: BrowserCloudSyncConfiguration? = .configured(),
         defaults: UserDefaults? = nil,
         enabledKey: String = UserDefaultsBrowserCloudSyncPreferences.defaultEnabledKey
     ) {
         if defaults == nil,
-            BrowserLaunchIsolationPolicy.requiresIsolation(.current)
+            BrowserLaunchEnvironment.current.requiresIsolation
         {
             self.init(
-                workflow: browser,
+                core: core,
                 configuration: nil,
                 preferences: InMemoryBrowserCloudSyncPreferences(),
                 remoteService: nil,
@@ -21,15 +21,9 @@ extension BrowserCloudSyncController {
             return
         }
         let defaults = defaults ?? .standard
-        let statePersistence: any BrowserCloudSyncStatePersisting =
-            FileBrowserCloudSyncStatePersistence.production(
-                migrationDefaults: defaults
-            )
-            ?? UserDefaultsBrowserCloudSyncStatePersistence(defaults: defaults)
         let preferences = UserDefaultsBrowserCloudSyncPreferences(
             defaults: defaults,
-            enabledKey: enabledKey,
-            statePersistence: statePersistence
+            enabledKey: enabledKey
         )
         let remoteService = configuration.map {
             CloudKitBrowserCloudSyncRemoteService(configuration: $0)
@@ -37,14 +31,14 @@ extension BrowserCloudSyncController {
         let transportFactory = configuration.map {
             CloudKitBrowserCloudSyncTransportFactory(
                 configuration: $0,
-                gateway: browser,
-                persistence: statePersistence
+                core: core
             )
         }
         self.init(
-            workflow: browser,
+            core: core,
             configuration: configuration,
             preferences: preferences,
+            legacyState: .production(defaults: defaults),
             remoteService: remoteService,
             transportFactory: transportFactory
         )

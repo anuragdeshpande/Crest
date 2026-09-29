@@ -4,22 +4,21 @@ import Foundation
 import Observation
 import UniformTypeIdentifiers
 import WebKit
-import os
 
 extension BrowserPage: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
         translation.reset()
-        linkHover.beginNavigation()
-        linkDrag.beginNavigation()
+        linkHover?.beginNavigation()
+        linkDrag?.beginNavigation()
         focusRestoration.invalidate()
-        mediaCaptureSession.reset()
+        sitePermissionSession.resetMediaGrants()
         sitePermissionRequests.cancelAll()
         activeNavigation = navigation
         // Reloads and history traversal do not necessarily pass through the
         // app-level load path. Retire the old document's session as soon as
         // WebKit starts any replacement navigation.
         mediaSessionCoordinator?.prepareForNavigation()
-        pictureInPicture.invalidate()
+        pictureInPicture?.invalidate()
         isAwaitingPopupNavigation = false
         beginBlockedPopupNavigation()
         beginGeolocationNavigation()
@@ -27,31 +26,32 @@ extension BrowserPage: WKNavigationDelegate {
         // WebKit accepted the navigation Crest asked for, so the authorization
         // that came with it is spent.
         consumeAppInitiatedURL()
-        clearNavigationFailure(preservingPendingURL: true)
         pendingServerTrustIdentity = nil
         credentialState.didStartNavigation()
-        readerModeSession.invalidate()
-        faviconSession.invalidate()
+        readerModeSession?.invalidate()
+        faviconSession?.invalidate()
+        webKitAdapter?.reporter?.started(webView.url)
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation?) {
         guard isCurrentNavigation(navigation) else { return }
-        linkHover.didCommitNavigation()
-        linkDrag.didFinishNavigation()
+        if let url = webView.url { webKitAdapter?.reporter?.committed(url) }
+        linkHover?.didCommitNavigation()
+        linkDrag?.didFinishNavigation()
         mediaSessionCoordinator?.didCommitNavigation()
-        pictureInPicture.navigationDidCommit()
+        pictureInPicture?.navigationDidCommit()
         committedNavigationCount += 1
-        // Supplements belong to the current document. A document replacement
-        // can discard an item that WebKit omits from its public history lists.
-        navigationHistory = BrowserPageNavigationHistory()
+        // A new document drops the supplements that described the old one; a
+        // return to history keeps the entries the person may go forward to.
+        navigationHistory.documentDidCommit(in: webView.backForwardList)
         refreshNavigationState()
-        downloadCenter.resetAutomaticDownloadSequence(in: webView)
+        webKitAdapter?.webKitPage.resetAutomaticDownloads()
         Task { [weak self] in
-            guard let self, self.extensionBaseURL == nil,
-                self.webView.url?.scheme == "https",
-                self.webView.window?.isKeyWindow == true, NSApp.isActive
+            guard let self, let passkeyAccess = self.passkeyAccess,
+                self.webKitView?.url?.scheme == "https",
+                self.webKitView?.window?.isKeyWindow == true, NSApp.isActive
             else { return }
-            await BrowserPasskeyAccessController.shared.prepareForBrowsing()
+            await passkeyAccess.prepareForBrowsing()
         }
     }
 
@@ -62,7 +62,7 @@ extension BrowserPage: WKNavigationDelegate {
         guard isCurrentNavigation(navigation),
             let redirectedURL = webView.url
         else { return }
-        pendingNavigationURL = redirectedURL
+        webKitAdapter?.reporter?.redirected(to: redirectedURL)
     }
 
     func webView(
@@ -70,22 +70,6 @@ extension BrowserPage: WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
-        if let item = BrowserChromeWebStoreInstallNavigation.item(
-            for: navigationAction.request.url,
-            currentURL: webView.url
-        ) {
-            decisionHandler(.cancel)
-            beginChromeWebStoreInstall(for: item)
-            return
-        }
-        if let item = BrowserMozillaAddonsInstallNavigation.item(
-            for: navigationAction.request.url,
-            currentURL: webView.url
-        ) {
-            decisionHandler(.cancel)
-            mozillaAddonsInstall.begin(for: item)
-            return
-        }
         let appInitiated = isAppInitiated(navigationAction)
         switch navigationDecider.decision(
             for: navigationAction,
@@ -105,18 +89,12 @@ extension BrowserPage: WKNavigationDelegate {
                 trigger: BrowserPopupTrigger.classify(navigationAction.navigationType),
                 origin: externalSchemeCoordinator.sourceOrigin(
                     for: navigationAction,
-                    currentURL: displayURL
+                    currentURL: live.displayURL
                 )
             )
             decisionHandler(.cancel)
             return
         }
-        let isCommandModified = navigationAction.modifierFlags.contains(.command)
-        let isOptionModified = navigationAction.modifierFlags.contains(.option)
-        let isShiftModified = navigationAction.modifierFlags.contains(.shift)
-        let isMiddleClick = BrowserMouseButtonPolicy.isMiddleButton(
-            number: navigationAction.buttonNumber
-        )
         let sourcePresentation =
             navigationAction.navigationType == .linkActivated
             ? peekSourcePresentation(
@@ -124,54 +102,27 @@ extension BrowserPage: WKNavigationDelegate {
                 in: webView
             )
             : nil
-        let clickIntent = BrowserLinkClickModifierPolicy.intent(
-            isCommandModified: isCommandModified,
-            isOptionModified: isOptionModified,
-            peekModifier: BrowserLinkPreferenceStore.shared.preferences.peekClickModifier
-        )
-        if let request = BrowserPeekPolicy.request(
+        // The core decides what the link does, as it does for Chromium's.
+        let webKitPage = webKitAdapter?.webKitPage
+        let decision =
+            webKitPage?.linkActivation(to: navigationAction.request.url, gesture: navigationAction.linkGesture)
+            ?? .navigate
+        // A modified click keeps its initiator's referrer through a staged
+        // request; a saved-site Peek starts afresh, as it does on Chromium.
+        let engineNavigation = decision == .peekModifier ? webKitPage?.stageLink(navigationAction.request) : nil
+        if let request = decision.peekRequest(
             destinationURL: navigationAction.request.url,
-            context: navigationContext,
-            isUserActivatedLink: navigationAction.navigationType == .linkActivated,
-            isTopLevelNavigation: navigationAction.targetFrame?.isMainFrame ?? true,
-            isAlternateModified: clickIntent == .peek,
-            isNewTabModified: clickIntent == .newTab || isMiddleClick,
-            sourcePresentation: sourcePresentation
-        ) {
+            context: navigationContext, sourcePresentation: sourcePresentation,
+            engineNavigation: engineNavigation)
+        {
             openPeek(request)
             decisionHandler(.cancel)
             return
         }
-        switch BrowserModifiedLinkDisposition.classify(
-            destinationURL: navigationAction.request.url,
-            isUserActivatedLink: navigationAction.navigationType == .linkActivated,
-            isCommandModified: clickIntent == .newTab,
-            isShiftModified: isShiftModified,
-            isMiddleClick: isMiddleClick,
-            focusesNewTabs: opensModifiedLinksInForeground
-                || BrowserLinkPreferenceStore.shared.preferences.focusesNewTabsOpenedFromLinks
-        ) {
-        case .navigate:
-            break
-        case .backgroundTab:
-            openModifiedLink(navigationAction.request, spaceID, false)
+        if let engineNavigation { corePage.discardStagedLink(engineNavigation) }
+        if decision == .foregroundTab || decision == .backgroundTab {
+            openModifiedLink(navigationAction.request, spaceID, decision == .foregroundTab)
             decisionHandler(.cancel)
-            return
-        case .foregroundTab:
-            openModifiedLink(navigationAction.request, spaceID, true)
-            decisionHandler(.cancel)
-            return
-        }
-        if BrowserExtensionExternalNavigationPolicy
-            .shouldReplaceCurrentTabRuntime(
-                currentURL: webView.url,
-                destinationURL: navigationAction.request.url,
-                isTopLevel: isTopLevelNavigation(navigationAction),
-                isAppInitiated: appInitiated
-            ), let destinationURL = navigationAction.request.url
-        {
-            decisionHandler(.cancel)
-            host?.replaceExtensionPageNavigation(self, with: destinationURL)
             return
         }
         if navigationAction.targetFrame?.isMainFrame == true {
@@ -274,17 +225,11 @@ extension BrowserPage: WKNavigationDelegate {
             for: navigationAction.request.url,
             in: webView
         )
-        downloadCenter.start(
-            download,
-            in: webView,
-            profileID: profileID,
-            spaceID: spaceID,
-            spaceName: spaceName,
-            isUserInitiated:
-                BrowserDownloadInitiationPolicy
-                .userInitiatedOverride(hasTrustedSource: feedbackSource != nil),
-            feedbackSource: feedbackSource
-        )
+        startDownload(
+            download, in: webView,
+            isUserInitiated: BrowserDownloadInitiationPolicy.userInitiatedOverride(
+                hasTrustedSource: feedbackSource != nil) ?? false,
+            feedbackSource: feedbackSource)
         discardDownloadOnlySurfaceIfNeeded()
     }
 
@@ -298,18 +243,28 @@ extension BrowserPage: WKNavigationDelegate {
                 ?? navigationResponse.response.url,
             in: webView
         )
-        downloadCenter.start(
-            download,
-            in: webView,
-            profileID: profileID,
-            spaceID: spaceID,
-            spaceName: spaceName,
-            isUserInitiated:
-                BrowserDownloadInitiationPolicy
-                .userInitiatedOverride(hasTrustedSource: feedbackSource != nil),
-            feedbackSource: feedbackSource
-        )
+        startDownload(
+            download, in: webView,
+            isUserInitiated: BrowserDownloadInitiationPolicy.userInitiatedOverride(
+                hasTrustedSource: feedbackSource != nil) ?? false,
+            feedbackSource: feedbackSource)
         discardDownloadOnlySurfaceIfNeeded()
+    }
+
+    /// Hands a download the page's web view started to WebKit's binding, which
+    /// runs it as the engine's own. Once the core says it began, the page
+    /// shows it leaving, from the link the person clicked when the pointer
+    /// has left the page.
+    func startDownload(
+        _ download: WKDownload, in webView: WKWebView, isUserInitiated: Bool,
+        feedbackSource: BrowserDownloadFeedbackSource? = nil
+    ) {
+        guard let webKitPage = webKitAdapter?.webKitPage else {
+            download.cancel { _ in }
+            return
+        }
+        startedDownloadSource = feedbackSource
+        webKitPage.startDownload(download, isUserInitiated: isUserInitiated)
     }
 
     func discardDownloadOnlySurfaceIfNeeded() {
@@ -321,24 +276,17 @@ extension BrowserPage: WKNavigationDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        faviconSession.invalidate()
+        faviconSession?.invalidate()
         translation.reset()
-        readerModeSession.invalidate()
-        linkHover.beginNavigation()
-        linkDrag.beginNavigation()
+        readerModeSession?.invalidate()
+        linkHover?.beginNavigation()
+        linkDrag?.beginNavigation()
         focusRestoration.invalidate()
         mediaSessionCoordinator?.webContentProcessDidTerminate()
-        pictureInPicture.invalidate()
+        pictureInPicture?.invalidate()
         credentialState.webContentProcessDidTerminate()
         httpAuthenticationSession.authenticationFailed()
-        processTerminationCount += 1
-        switch processRecovery.recordTermination() {
-        case .reload:
-            webContentFailureMessage = nil
-            webView.reload()
-        case .showFailure:
-            webContentFailureMessage = "This page’s web process stopped repeatedly."
-        }
+        reportWebContentProcessStopped()
     }
 
     func webView(
@@ -364,17 +312,7 @@ extension BrowserPage: WKNavigationDelegate {
             }
             return
         }
-        Task {
-            let resolution = await httpAuthenticationSession.response(
-                to: challenge
-            ) { [dialogPresenter, spaceName] prompt in
-                await dialogPresenter.presentHTTPAuthentication(
-                    prompt: prompt,
-                    spaceName: spaceName
-                )
-            }
-            completionHandler(resolution.disposition, resolution.credential)
-        }
+        answerSignIn(challenge, from: webKitAdapter?.webKitPage, completionHandler: completionHandler)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
@@ -383,10 +321,19 @@ extension BrowserPage: WKNavigationDelegate {
         #endif
         guard isCurrentNavigation(navigation) else { return }
         activeNavigation = nil
-        clearNavigationFailure()
-        processRecovery.recordSuccessfulNavigation()
-        webContentFailureMessage = nil
-        completedNavigationCount += 1
+        let completedURL = webView.url
+        let committedNavigation = committedNavigationCount
+        Task { @MainActor [weak self, weak webView] in
+            guard let self, let webView else { return }
+            let documentTitle = try? await webView.evaluateJavaScript("document.title") as? String
+            guard self.activeNavigation == nil,
+                self.committedNavigationCount == committedNavigation,
+                webView.url == completedURL
+            else { return }
+            let title = documentTitle?.isEmpty == false ? documentTitle : webView.title
+            self.completedNavigationCount += 1
+            if let completedURL { self.webKitAdapter?.reporter?.finished(completedURL, title: title) }
+        }
         updateUnderPageBackground()
         mediaSessionCoordinator?.didFinishNavigation()
         refreshFavicon()
@@ -404,13 +351,13 @@ extension BrowserPage: WKNavigationDelegate {
         withError error: any Error
     ) {
         if isCurrentNavigation(navigation) {
-            linkHover.didFailNavigation()
-            linkDrag.didFinishNavigation()
+            linkHover?.didFailNavigation()
+            linkDrag?.didFinishNavigation()
         }
         httpAuthenticationSession.authenticationFailed()
         recordNavigationFailure(
             error,
-            phase: .committed,
+            replacedDocument: true,
             navigation: navigation
         )
     }
@@ -421,13 +368,13 @@ extension BrowserPage: WKNavigationDelegate {
         withError error: any Error
     ) {
         if isCurrentNavigation(navigation) {
-            linkHover.didFailNavigation()
-            linkDrag.didFinishNavigation()
+            linkHover?.didFailNavigation()
+            linkDrag?.didFinishNavigation()
         }
         httpAuthenticationSession.authenticationFailed()
         recordNavigationFailure(
             error,
-            phase: .provisional,
+            replacedDocument: false,
             navigation: navigation
         )
     }

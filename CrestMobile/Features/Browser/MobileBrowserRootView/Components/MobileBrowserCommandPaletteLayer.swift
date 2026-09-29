@@ -2,10 +2,10 @@ import SwiftUI
 
 struct MobileBrowserCommandPaletteLayer: View {
     let mode: BrowserCommandPaletteMode?
-    let space: BrowserSpace?
-    let selectedTabID: TabID?
+    let browser: BrowserStore
+    let space: SpaceModel?
+    let selectedTabID: UUID?
     let commands: BrowserCommandPaletteCommandRegistry
-    let isPrivateBrowsing: Bool
     let isSourceAvailable: (BrowserTabRuntimeAssignment) -> Bool
     let selectTab:
         (
@@ -27,17 +27,16 @@ struct MobileBrowserCommandPaletteLayer: View {
             isSourceAvailable(sourceAssignment)
         {
             BrowserCommandPalette(
+                browser: browser,
                 space: space,
                 selectedTabID: selectedTabID,
                 initialQuery: mode.initialQuery,
                 commands: commands,
-                isPrivateBrowsing: isPrivateBrowsing,
                 isSourceAvailable: isSourceAvailable,
                 selectTab: selectTab,
                 openURL: { source, url in openURL(source, url, mode) },
                 dismiss: dismiss,
                 morphNamespace: morphNamespace,
-                morphID: "crest-address-command-\(space?.id.id.uuidString ?? "none")",
                 overlayContentInsets: overlayContentInsets
             )
             .id(
@@ -54,10 +53,6 @@ struct MobileBrowserCommandPaletteLayer: View {
 
     private var sourceAssignment: BrowserTabRuntimeAssignment? {
         guard let space, let selectedTabID else { return nil }
-        return BrowserTabRuntimeAssignment(
-            tabID: selectedTabID,
-            spaceID: space.id,
-            profileID: space.profile.id
-        )
+        return BrowserTabRuntimeAssignment(tabID: selectedTabID, spaceID: space.id, profileID: space.profileID)
     }
 }

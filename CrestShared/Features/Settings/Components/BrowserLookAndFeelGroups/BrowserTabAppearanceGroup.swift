@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Tabs, pins, and the shape they share, on every Space on this device.
 struct BrowserTabAppearanceGroup: View {
-    var space: BrowserSpace?
+    var space: BrowserSpaceAppearance?
     var showsPreview = false
 
     @Bindable private var appearance = BrowserDeviceAppearanceStore.shared
@@ -110,7 +110,7 @@ struct BrowserTabAppearanceGroup: View {
             default: BrowserLookAndFeelDefaults.tabs.usesWebsitePinColor)
     }
 
-    private var accent: CrestSettingValue<BrowserSpaceBrandColor?> {
+    private var accent: CrestSettingValue<BrandColor?> {
         CrestSettingValue($appearance.tabs.color)
     }
 

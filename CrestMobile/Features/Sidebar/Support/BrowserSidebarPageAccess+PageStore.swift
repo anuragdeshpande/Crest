@@ -18,22 +18,19 @@ extension BrowserSidebarPageAccess {
                 pages.siteThemeIconAccent(matching: assignment)
             },
             residencyRevision: { pages.residencyRevision &+ pages.nativeTabs.residencyRevision },
-            selectPages: { pages.select(session: browser.session) },
+            selectPages: { pages.select() },
             deactivatePagePresentation: { pages.deactivatePagePresentation() },
             unloadPage: { tabID, assignment in
-                guard let tab = browser.space(matching: assignment)?.tabs.first(where: { $0.id == tabID })
+                guard let tab = browser.spaceModel(matching: assignment)?.tabs.model(tabID)
                 else { return }
-                if tab.placement == .current {
+                if !tab.placement.isDurable {
                     pages.unloadPage(for: tabID, matching: assignment)
-                } else if BrowserDurableTabCloseAction(
-                    browser: browser, spaceAccess: spaceAccess,
-                    closePage: { pages.closeDurablePage($0, discardState: $1) }
-                ).perform(
+                } else if BrowserDurableTabCloseAction(browser: browser, spaceAccess: spaceAccess).perform(
                     BrowserTabRuntimeAssignment(
                         tabID: tabID, spaceID: assignment.spaceID, profileID: assignment.profileID
                     ))
                 {
-                    pages.select(session: browser.session)
+                    pages.select()
                 }
             },
             pullFavicon: { tabID, assignment in

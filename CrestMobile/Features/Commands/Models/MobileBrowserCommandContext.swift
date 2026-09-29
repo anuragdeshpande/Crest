@@ -13,11 +13,16 @@ struct MobileBrowserCommandContext {
     let canReopenClosedTab: Bool
     let tabCount: Int
     let spaceCount: Int
+    /// Where each numbered command leads in this window, per the core.
+    let numberedSelections: [ShortcutCommand: NumberedSelection]
     let isSelectedTabInSplit: Bool
     let canSplitWithNextTab: Bool
     /// Which way the cards are laid out, so a command that names a side of the
     /// screen resolves to the right member. See `BrowserSplitCardMoveDirection`.
     let layoutDirection: LayoutDirection
+    /// Whether the device offers a command at all: the default engine or an
+    /// engine a page is open on supports the command's feature.
+    let isOffered: @MainActor (ShortcutCommand) -> Bool
     let readerModeActionTitle: LocalizedStringResource
     let canToggleReaderMode: Bool
     let canToggleTranslationToolbar: Bool
@@ -41,7 +46,7 @@ struct MobileBrowserCommandContext {
     let selectPreviousTab: () -> Void
     let selectNextTab: () -> Void
     let selectMostRecentTab: () -> Void
-    let selectTab: (Int) -> Void
+    let selectTab: (UUID) -> Void
     let splitWithNextTab: () -> Void
     let focusNextSplitCard: () -> Void
     let focusPreviousSplitCard: () -> Void
@@ -51,7 +56,7 @@ struct MobileBrowserCommandContext {
     let moveFocusedSplitCard: (Int) -> Void
     let selectPreviousSpace: () -> Void
     let selectNextSpace: () -> Void
-    let selectSpace: (Int) -> Void
+    let selectSpace: (UUID) -> Void
     let toggleReaderMode: () -> Void
     let setTranslationToolbarVisible: (Bool) -> Void
     let toggleContentBlocking: () async -> Void

@@ -94,11 +94,12 @@ final class BrowserTabDragSafetyTests: XCTestCase {
                 id: .tab(anchor.id), space: assignment, section: saved,
                 frame: targetFrame), owner: UUID())
         state.register(zone: BrowserSidebarReorderZone(target: .section(saved), frame: targetFrame), for: UUID())
-        let request = BrowserTabBatchRequest(ids: tabs.prefix(40).map(\.id), in: space)
+        let request = try XCTUnwrap(browser.capturedSelection(ids: tabs.prefix(40).map(\.id)))
         let source = BrowserSidebarReorderInputSession.Source(
-            item: .tab(BrowserTabDragItem(tabID: tabs[0].id, spaceID: space.id, profileID: space.profile.id)),
+            item: .tab(BrowserTabDragItem(tabID: tabs[0].id, spaceID: space.id, profileID: space.profileID)),
             section: current)
-        state.begin(item: source.item.selecting(request), section: current, at: CGPoint(x: 10, y: 10))
+        let lifted = source.item.selecting(request)
+        state.begin(item: lifted, section: current, at: CGPoint(x: 10, y: 10), plan: reorder.plan(for: lifted))
         let input = BrowserSidebarReorderInputSession()
         input.retainPointerContinuation(source: source, reorder: reorder, windowDrop: nil)
         let point = CGPoint(x: targetFrame.midX, y: targetFrame.minY + 1)
@@ -106,8 +107,8 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         XCTAssertEqual(state.resolvedTarget?.kind, .insert(section: saved, beforeID: .tab(anchor.id), index: 0))
         XCTAssertEqual(state.lift?.item.selection?.ids, request.ids)
         state.forwardPointerContinuation(at: point, released: true, eventTimestamp: 2)
-        XCTAssertEqual(browser.selectedSpace?.savedTabs.map(\.id), request.ids + [anchor.id])
-        XCTAssertEqual(browser.selectedSpace?.currentTabs.map(\.id), [tabs[40].id])
+        XCTAssertEqual(browser.shownSpace?.savedTabs.map(\.id), request.ids + [anchor.id])
+        XCTAssertEqual(browser.shownSpace?.currentTabs.map(\.id), [tabs[40].id])
         XCTAssertFalse(state.hasLiftInFlight)
     }
 
@@ -168,144 +169,111 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         }
     #endif
 
-    func testExactUnlockedDragActionMovesOnlyIntoItsCapturedDestination() throws {
+    func testExactUnlockedDragMovesOnlyIntoItsCapturedDestination() throws {
         let context = makeContext()
-        let action = BrowserTabDragAction(
-            browser: context.browser,
-            spaceAccess: context.spaceAccess
-        )
+        let target: BrowserSidebarReorderTarget.Kind = .space(context.destinationAssignment)
 
-        XCTAssertTrue(action.canMove(context.item, into: context.destinationAssignment))
-        context.browser.selectSpace(context.destinationAssignment.spaceID)
-        XCTAssertTrue(
-            action.move(
-                context.item,
-                to: .pinned,
-                matching: context.destinationAssignment
-            )
-        )
+        let plan = try XCTUnwrap(context.browser.liftPlan(for: .tab(context.item), spaceAccess: context.spaceAccess))
+        XCTAssertEqual(plan.verdict(on: BrowserSidebarReorderTarget(kind: target)), .allowed)
+        XCTAssertTrue(context.browser.sidebarDrop(.tab(context.item), on: target, spaceAccess: context.spaceAccess))
 
         let source = try XCTUnwrap(
-            context.browser.session.space(id: context.sourceAssignment.spaceID)
+            context.browser.spaceModel(context.sourceAssignment.spaceID)
         )
         let destination = try XCTUnwrap(
-            context.browser.session.space(id: context.destinationAssignment.spaceID)
+            context.browser.spaceModel(context.destinationAssignment.spaceID)
         )
-        XCTAssertFalse(source.tabs.contains(where: { $0.id == context.tab.id }))
+        XCTAssertFalse(source.tabs.contains(context.tab.id))
         XCTAssertEqual(
-            destination.tabs.first(where: { $0.id == context.tab.id })?.placement,
-            .pinned
+            destination.tabs.models.first(where: { $0.id == context.tab.id })?.placement,
+            .current
         )
     }
 
-    func testDragActionRejectsLockedSourceAndDestinationSpaces() {
+    /// The core refuses a lift from a locked Space, and a drop onto one, as
+    /// the lift begins and again when it lands.
+    func testDragRejectsLockedSourceAndDestinationSpaces() {
         let lockedSource = makeContext(sourceAccessPolicy: .deviceOwnerAuthentication)
-        let lockedSourceAction = BrowserTabDragAction(
-            browser: lockedSource.browser,
-            spaceAccess: lockedSource.spaceAccess
-        )
+        XCTAssertEqual(
+            lockedSource.browser.liftPlan(for: .tab(lockedSource.item))?.targets?.refusal,
+            .spaceLocked(SpaceLocked(spaceID: lockedSource.sourceAssignment.spaceID)))
         XCTAssertFalse(
-            lockedSourceAction.canMove(
-                lockedSource.item,
-                into: lockedSource.destinationAssignment
-            )
-        )
+            lockedSource.browser.sidebarDrop(
+                .tab(lockedSource.item), on: .space(lockedSource.destinationAssignment),
+                spaceAccess: lockedSource.spaceAccess))
 
         let lockedDestination = makeContext(
             destinationAccessPolicy: .deviceOwnerAuthentication
         )
-        let lockedDestinationAction = BrowserTabDragAction(
-            browser: lockedDestination.browser,
-            spaceAccess: lockedDestination.spaceAccess
-        )
+        let destinationID = lockedDestination.destinationAssignment.spaceID
+        XCTAssertEqual(
+            lockedDestination.browser.liftPlan(for: .tab(lockedDestination.item))?
+                .verdict(on: BrowserSidebarReorderTarget(kind: .space(lockedDestination.destinationAssignment))),
+            .refused(.spaceLocked(SpaceLocked(spaceID: destinationID))))
         XCTAssertFalse(
-            lockedDestinationAction.canMove(
-                lockedDestination.item,
-                into: lockedDestination.destinationAssignment
-            )
-        )
+            lockedDestination.browser.sidebarDrop(
+                .tab(lockedDestination.item), on: .space(lockedDestination.destinationAssignment),
+                spaceAccess: lockedDestination.spaceAccess))
+        // The core refuses a locked Space, and the window says so in its words.
+        XCTAssertEqual(
+            lockedDestination.browser.tabMultiSelection.message,
+            Rejection.spaceLocked(SpaceLocked(spaceID: destinationID)).placementExplanation)
     }
 
-    func testDragActionRejectsReplacedSourceAndDestinationProfiles() {
+    func testDragRejectsReplacedSourceAndDestinationProfiles() {
         let replacedSource = makeContext()
-        let replacedSourceAction = BrowserTabDragAction(
-            browser: replacedSource.browser,
-            spaceAccess: replacedSource.spaceAccess
-        )
         replaceProfile(
             matching: replacedSource.sourceAssignment,
             with: Self.uuid(20),
             in: replacedSource.browser
         )
         XCTAssertFalse(
-            replacedSourceAction.canMove(
-                replacedSource.item,
-                into: replacedSource.destinationAssignment
-            )
-        )
+            replacedSource.browser.sidebarDrop(
+                .tab(replacedSource.item), on: .space(replacedSource.destinationAssignment),
+                spaceAccess: replacedSource.spaceAccess))
 
         let replacedDestination = makeContext()
-        let replacedDestinationAction = BrowserTabDragAction(
-            browser: replacedDestination.browser,
-            spaceAccess: replacedDestination.spaceAccess
-        )
         replaceProfile(
             matching: replacedDestination.destinationAssignment,
             with: Self.uuid(21),
             in: replacedDestination.browser
         )
         XCTAssertFalse(
-            replacedDestinationAction.canMove(
-                replacedDestination.item,
-                into: replacedDestination.destinationAssignment
-            )
-        )
+            replacedDestination.browser.sidebarDrop(
+                .tab(replacedDestination.item), on: .space(replacedDestination.destinationAssignment),
+                spaceAccess: replacedDestination.spaceAccess))
     }
 
-    func testDragActionRejectsDeletingSourceAndDestinationSpaces() {
+    /// A Space whose deletion has begun takes no drop, from it or onto it:
+    /// the core refuses both, as it refuses every edit of a departing Space.
+    func testDragRejectsDeletingSourceAndDestinationSpaces() {
         let deletingSource = makeContext()
-        let deletingSourceAction = BrowserTabDragAction(
-            browser: deletingSource.browser,
-            spaceAccess: deletingSource.spaceAccess
-        )
-        XCTAssertTrue(
-            deletingSource.browser.family.beginDeletingSpace(
-                deletingSource.sourceAssignment.spaceID
-            )
-        )
-        defer {
-            deletingSource.browser.family.finishDeletingSpace(
-                deletingSource.sourceAssignment.spaceID
-            )
-        }
+        XCTAssertNoThrow(try beginDeleting(deletingSource.sourceAssignment.spaceID, in: deletingSource.browser))
         XCTAssertFalse(
-            deletingSourceAction.canMove(
-                deletingSource.item,
-                into: deletingSource.destinationAssignment
-            )
-        )
+            deletingSource.browser.sidebarDrop(
+                .tab(deletingSource.item), on: .space(deletingSource.destinationAssignment),
+                spaceAccess: deletingSource.spaceAccess))
 
         let deletingDestination = makeContext()
-        let deletingDestinationAction = BrowserTabDragAction(
-            browser: deletingDestination.browser,
-            spaceAccess: deletingDestination.spaceAccess
-        )
-        XCTAssertTrue(
-            deletingDestination.browser.family.beginDeletingSpace(
-                deletingDestination.destinationAssignment.spaceID
-            )
-        )
-        defer {
-            deletingDestination.browser.family.finishDeletingSpace(
-                deletingDestination.destinationAssignment.spaceID
-            )
-        }
+        let destinationID = deletingDestination.destinationAssignment.spaceID
+        XCTAssertNoThrow(try beginDeleting(destinationID, in: deletingDestination.browser))
         XCTAssertFalse(
-            deletingDestinationAction.canMove(
-                deletingDestination.item,
-                into: deletingDestination.destinationAssignment
-            )
-        )
+            deletingDestination.browser.sidebarDrop(
+                .tab(deletingDestination.item), on: .space(deletingDestination.destinationAssignment),
+                spaceAccess: deletingDestination.spaceAccess))
+        XCTAssertEqual(
+            deletingDestination.browser.tabMultiSelection.message,
+            Rejection.spaceBeingDeleted(SpaceBeingDeleted(spaceID: destinationID)).placementExplanation)
+    }
+
+    /// Begins deleting a Space in the core, as the first step of deleting it
+    /// does, without erasing anything.
+    private func beginDeleting(_ spaceID: UUID, in browser: BrowserStore) throws {
+        try browser.family.commit(
+            BeginDeletingSpace(
+                workspaceID: browser.family.workspaceID, windowID: browser.windowID, spaceID: spaceID,
+                operationID: UUID()),
+            from: browser)
     }
 
     func testStaleDragSessionCannotEndANewerDragWithTheSameTabID() {
@@ -329,7 +297,7 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         XCTAssertNil(context.sidebarInteraction.tabDragState.sessionToken)
     }
 
-    func testExactStoreMoveWithDuplicateTabIDsMutatesOnlyTheCapturedSource() throws {
+    func testRepairedDuplicateIDsRejectTheStaleDragAndMoveOnlyTheCapturedSource() throws {
         let duplicateTabID = Self.tabID(30)
         let decoyTab = Self.makeTab(
             id: duplicateTabID,
@@ -359,14 +327,20 @@ final class BrowserTabDragSafetyTests: XCTestCase {
             name: "Destination",
             tabs: []
         )
-        let browser = Self.makeBrowser(
-            spaces: [decoy, capturedSource, destination],
-            selectedSpaceID: destination.id
-        )
+        let restored = SessionState.Seed(spaces: [decoy, capturedSource, destination])
+        let browser = BrowserStore(
+            seed: restored, showing: destination.id)
+        let repairedID = try XCTUnwrap(browser.spaceModel(capturedSource.id)?.tabs.models.first?.id)
+        XCTAssertNotEqual(repairedID, duplicateTabID)
+        let stale = BrowserTabDragItem(
+            tabID: duplicateTabID, spaceID: capturedSource.id, profileID: capturedSource.profileID)
+        let before = browser.sessionSeed
+        XCTAssertFalse(browser.moveTab(stale, to: .pinned, matching: BrowserSpaceRuntimeAssignment(space: destination)))
+        XCTAssertEqual(browser.sessionSeed, before)
         let item = BrowserTabDragItem(
-            tabID: duplicateTabID,
+            tabID: repairedID,
             spaceID: capturedSource.id,
-            profileID: capturedSource.profile.id
+            profileID: capturedSource.profileID
         )
         let sidebarInteraction = BrowserSidebarInteractionState.connected(to: browser)
         let token = sidebarInteraction.tabDragState.begin(item: item, placement: .current)
@@ -380,72 +354,17 @@ final class BrowserTabDragSafetyTests: XCTestCase {
             )
         )
 
-        let currentDecoy = try XCTUnwrap(browser.session.space(id: decoy.id))
+        let currentDecoy = try XCTUnwrap(browser.spaceModel(decoy.id))
         let currentSource = try XCTUnwrap(
-            browser.session.space(id: capturedSource.id)
+            browser.spaceModel(capturedSource.id)
         )
         let currentDestination = try XCTUnwrap(
-            browser.session.space(id: destination.id)
+            browser.spaceModel(destination.id)
         )
-        XCTAssertEqual(currentDecoy.tabs.map(\.title), ["Decoy"])
-        XCTAssertTrue(currentSource.tabs.isEmpty)
-        XCTAssertEqual(currentDestination.tabs.map(\.title), ["Captured"])
-        XCTAssertEqual(currentDestination.tabs.first?.placement, .pinned)
-    }
-
-    func testExactStoreMoveRejectsADuplicateTabIDInTheDestination() {
-        let duplicateTabID = Self.tabID(37)
-        let sourceTab = Self.makeTab(
-            id: duplicateTabID,
-            title: "Source",
-            placement: .current
-        )
-        let destinationTab = Self.makeTab(
-            id: duplicateTabID,
-            title: "Destination",
-            placement: .saved
-        )
-        let source = Self.makeSpace(
-            id: Self.spaceID(38),
-            profileID: Self.uuid(39),
-            name: "Source",
-            tabs: [sourceTab]
-        )
-        let destination = Self.makeSpace(
-            id: Self.spaceID(40),
-            profileID: Self.uuid(41),
-            name: "Destination",
-            tabs: [destinationTab]
-        )
-        let browser = Self.makeBrowser(
-            spaces: [source, destination],
-            selectedSpaceID: destination.id
-        )
-        let originalSession = browser.session
-        let item = BrowserTabDragItem(
-            tabID: duplicateTabID,
-            spaceID: source.id,
-            profileID: source.profile.id
-        )
-        let destinationAssignment = BrowserSpaceRuntimeAssignment(
-            space: destination
-        )
-        let action = BrowserTabDragAction(
-            browser: browser,
-            spaceAccess: BrowserSpaceAccessController(
-                authenticator: InMemoryAuthenticator()
-            )
-        )
-
-        XCTAssertFalse(action.canMove(item, into: destinationAssignment))
-        XCTAssertFalse(
-            action.move(
-                item,
-                to: .pinned,
-                matching: destinationAssignment
-            )
-        )
-        XCTAssertEqual(browser.session, originalSession)
+        XCTAssertEqual(currentDecoy.tabs.models.map(\.title), ["Decoy"])
+        XCTAssertTrue(currentSource.tabs.models.isEmpty)
+        XCTAssertEqual(currentDestination.tabs.models.filter { !$0.isStartPage }.map(\.title), ["Captured"])
+        XCTAssertEqual(currentDestination.tabs.models.first?.placement, .pinned)
     }
 
     func testStaleMenuCloseAndDeleteActionsRejectChangedPlacement() throws {
@@ -469,10 +388,10 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         )
         XCTAssertEqual(
             try XCTUnwrap(
-                closeContext.browser.session.space(
-                    id: closeContext.sourceAssignment.spaceID
+                closeContext.browser.spaceModel(
+                    closeContext.sourceAssignment.spaceID
                 )
-            ).tabs.first(where: { $0.id == closeContext.tab.id })?.placement,
+            ).tabs.model(closeContext.tab.id)?.placement,
             .pinned
         )
 
@@ -496,49 +415,44 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         )
         XCTAssertEqual(
             try XCTUnwrap(
-                deleteContext.browser.session.space(
-                    id: deleteContext.sourceAssignment.spaceID
+                deleteContext.browser.spaceModel(
+                    deleteContext.sourceAssignment.spaceID
                 )
-            ).tabs.first(where: { $0.id == deleteContext.tab.id })?.placement,
+            ).tabs.model(deleteContext.tab.id)?.placement,
             .saved
         )
     }
 
     // MARK: - Split group drags
 
-    /// A resolved section drop routes the whole run through `moveSplitGroup`,
-    /// keeping the members contiguous and in order at their new anchor.
-    func testSplitGroupDropCommitsTheWholeRunThroughMoveSplitGroup() throws {
+    /// A resolved section drop moves the whole run as one drop, keeping the
+    /// members contiguous and in order at their new anchor.
+    func testSplitGroupDropCommitsTheWholeRunAsOneDrop() throws {
         let context = makeSplitContext()
-        let commit = BrowserSidebarReorderCommit(
-            browser: context.browser,
-            spaceAccess: context.spaceAccess
-        )
 
         // Appending: the run leaves its place at the head of the list and lands
         // after the tab that was behind it.
         XCTAssertTrue(
-            commit.apply(
-                BrowserSidebarReorderTarget(
-                    kind: .insert(
-                        section: .tabs(placement: .current, folderID: nil),
-                        beforeID: nil,
-                        index: 1
-                    )
+            context.browser.sidebarDrop(
+                .splitGroup(context.item),
+                on: .insert(
+                    section: .tabs(placement: .current, folderID: nil),
+                    beforeID: nil,
+                    index: 1
                 ),
-                for: .splitGroup(context.item)
+                spaceAccess: context.spaceAccess
             )
         )
 
         let space = try XCTUnwrap(
-            context.browser.session.space(id: context.assignment.spaceID)
+            context.browser.spaceModel(context.assignment.spaceID)
         )
         XCTAssertEqual(
-            space.tabs.map(\.title),
+            space.tabs.models.map(\.title),
             ["Outsider", "Head", "Tail"]
         )
         XCTAssertEqual(
-            space.splitGroupMembers(of: context.groupID).map(\.title),
+            space.splitMembers(of: context.groupID).map(\.title),
             ["Head", "Tail"],
             "The run must stay contiguous after the move."
         )
@@ -586,7 +500,9 @@ final class BrowserTabDragSafetyTests: XCTestCase {
             for: UUID()
         )
 
-        state.stage(item: .splitGroup(context.item), section: section)
+        state.stage(
+            item: .splitGroup(context.item), section: section,
+            plan: context.browser.liftPlan(for: .splitGroup(context.item), spaceAccess: context.spaceAccess))
         XCTAssertFalse(state.isDragging)
 
         // Past the tab's midpoint: the group lands behind it.
@@ -605,19 +521,16 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         let drop = try XCTUnwrap(state.end())
         XCTAssertEqual(drop.item, .splitGroup(context.item))
         XCTAssertTrue(
-            BrowserSidebarReorderCommit(
-                browser: context.browser,
-                spaceAccess: context.spaceAccess
-            )
-            .apply(drop.target, for: drop.item)
+            BrowserSidebarDropCommit(browser: context.browser)
+                .commit(drop.target, for: drop.item, plan: try XCTUnwrap(drop.plan))
         )
 
         let space = try XCTUnwrap(
-            context.browser.session.space(id: context.assignment.spaceID)
+            context.browser.spaceModel(context.assignment.spaceID)
         )
-        XCTAssertEqual(space.tabs.map(\.title), ["Outsider", "Head", "Tail"])
+        XCTAssertEqual(space.tabs.models.map(\.title), ["Outsider", "Head", "Tail"])
         XCTAssertEqual(
-            space.splitGroupMembers(of: context.groupID).map(\.title),
+            space.splitMembers(of: context.groupID).map(\.title),
             ["Head", "Tail"]
         )
     }
@@ -650,8 +563,7 @@ final class BrowserTabDragSafetyTests: XCTestCase {
             tabs: [firstPin, secondPin, current]
         )
         let browser = Self.makeBrowser(
-            spaces: [space],
-            selectedSpaceID: space.id
+            spaces: [space]
         )
         let sidebarInteraction = BrowserSidebarInteractionState.connected(to: browser)
         let state = sidebarInteraction.sidebarReorderState
@@ -714,7 +626,7 @@ final class BrowserTabDragSafetyTests: XCTestCase {
                 BrowserTabDragItem(
                     tabID: current.id,
                     spaceID: space.id,
-                    profileID: space.profile.id
+                    profileID: space.profileID
                 )
             ),
             section: currentSection,
@@ -748,7 +660,7 @@ final class BrowserTabDragSafetyTests: XCTestCase {
     func testACollapsedFolderReportsItselfAsTheNestingTargetWhileLifted() {
         let context = makeSplitContext()
         let state = context.sidebarInteraction.sidebarReorderState
-        let folderID = FolderID()
+        let folderID = UUID()
         let section = BrowserSidebarReorderSection.tabs(
             placement: .current,
             folderID: nil
@@ -790,7 +702,7 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         let item = BrowserTabDragItem(
             tabID: context.outsider.id,
             spaceID: context.space.id,
-            profileID: context.space.profile.id
+            profileID: context.space.profileID
         )
         state.begin(
             item: .tab(item),
@@ -828,7 +740,7 @@ final class BrowserTabDragSafetyTests: XCTestCase {
     /// that mapping the drop would silently append to the end of the section.
     func testATabDroppedOnAGroupRowLandsBeforeItsFirstMember() throws {
         let context = makeSplitContext()
-        let commit = BrowserSidebarReorderCommit(
+        let commit = BrowserSidebarTestDrops(
             browser: context.browser,
             spaceAccess: context.spaceAccess
         )
@@ -852,22 +764,22 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         )
 
         let space = try XCTUnwrap(
-            context.browser.session.space(id: context.assignment.spaceID)
+            context.browser.spaceModel(context.assignment.spaceID)
         )
-        XCTAssertEqual(space.tabs.map(\.title), ["Outsider", "Head", "Tail"])
+        XCTAssertEqual(space.tabs.models.map(\.title), ["Outsider", "Head", "Tail"])
     }
 
     func testIndividualMemberDropsDetachWithoutMovingTheSurvivingSplit() throws {
         for memberIndex in 0...1 {
             for destination in SplitMemberDropDestination.allCases {
-                let context = makeSplitContext()
                 let member = Self.makeTab(
-                    id: Self.tabID(56), title: "Moved Member", placement: .current, splitGroupID: context.groupID)
-                context.browser.session.spaces[0].tabs.insert(member, at: memberIndex)
-                let folder = try XCTUnwrap(context.browser.session.addFolder(in: context.space.id))
+                    id: Self.tabID(56), title: "Moved Member", placement: .current,
+                    splitGroupID: Self.uuid(50))
+                let context = makeSplitContext(adding: member, at: memberIndex)
+                let folder = try XCTUnwrap(context.browser.addFolder(in: context.space.id))
                 let originalMembers = context.members
                 let item = BrowserTabDragItem(
-                    tabID: member.id, spaceID: context.space.id, profileID: context.space.profile.id)
+                    tabID: member.id, spaceID: context.space.id, profileID: context.space.profileID)
                 let kind: BrowserSidebarReorderTarget.Kind =
                     switch destination {
                     case .beforeGroup:
@@ -882,22 +794,24 @@ final class BrowserTabDragSafetyTests: XCTestCase {
                     }
 
                 XCTAssertTrue(
-                    BrowserSidebarReorderCommit(browser: context.browser, spaceAccess: context.spaceAccess)
+                    BrowserSidebarTestDrops(browser: context.browser, spaceAccess: context.spaceAccess)
                         .apply(BrowserSidebarReorderTarget(kind: kind), for: .tab(item)), "\(destination)")
 
-                let updated = try XCTUnwrap(context.browser.selectedSpace)
-                XCTAssertEqual(updated.splitGroupMembers(of: context.groupID), originalMembers, "\(destination)")
-                let moved = try XCTUnwrap(updated.tabs.first { $0.id == member.id })
+                let updated = try XCTUnwrap(context.browser.shownSpace)
+                XCTAssertEqual(
+                    updated.splitMembers(of: context.groupID).map(\.id), originalMembers.map(\.id),
+                    "\(destination)")
+                let moved = try XCTUnwrap(updated.tabs.models.first { $0.id == member.id })
                 XCTAssertNil(moved.splitGroupID, "\(destination)")
                 XCTAssertEqual(moved.url, member.url)
-                XCTAssertEqual(updated.tabs.count, context.space.tabs.count + 1)
+                XCTAssertEqual(updated.tabs.models.count, context.space.tabs.count)
                 switch destination {
-                case .beforeGroup: XCTAssertEqual(updated.tabs.first?.id, member.id)
+                case .beforeGroup: XCTAssertEqual(updated.tabs.models.first?.id, member.id)
                 case .beforeFolder: XCTAssertEqual(moved.placement, .saved)
                 case .insideFolder: XCTAssertEqual(moved.folderID, folder)
                 case .newFolder:
                     XCTAssertNotNil(moved.folderID)
-                    XCTAssertEqual(updated.tabs.first { $0.id == context.outsider.id }?.folderID, moved.folderID)
+                    XCTAssertEqual(updated.tabs.models.first { $0.id == context.outsider.id }?.folderID, moved.folderID)
                 case .pinned: XCTAssertEqual(moved.placement, .pinned)
                 }
             }
@@ -907,28 +821,28 @@ final class BrowserTabDragSafetyTests: XCTestCase {
     func testRefusedMemberDropLeavesTheOriginalSplitIntact() {
         let context = makeSplitContext()
         let item = BrowserTabDragItem(
-            tabID: context.members[0].id, spaceID: context.space.id, profileID: context.space.profile.id)
-        let commit = BrowserSidebarReorderCommit(browser: context.browser, spaceAccess: context.spaceAccess)
-        let before = context.browser.session
+            tabID: context.members[0].id, spaceID: context.space.id, profileID: context.space.profileID)
+        let commit = BrowserSidebarTestDrops(browser: context.browser, spaceAccess: context.spaceAccess)
+        let before = context.browser.sessionSeed
 
-        XCTAssertFalse(commit.apply(BrowserSidebarReorderTarget(kind: .intoFolder(FolderID())), for: .tab(item)))
+        XCTAssertFalse(commit.apply(BrowserSidebarReorderTarget(kind: .intoFolder(UUID())), for: .tab(item)))
         XCTAssertFalse(
             commit.apply(
                 BrowserSidebarReorderTarget(
-                    kind: .insert(section: .tabs(placement: .saved, folderID: nil), beforeID: .tab(TabID()), index: 0)),
+                    kind: .insert(section: .tabs(placement: .saved, folderID: nil), beforeID: .tab(UUID()), index: 0)),
                 for: .tab(item)))
-        XCTAssertEqual(context.browser.session, before)
+        XCTAssertEqual(context.browser.sessionSeed, before)
     }
 
-    /// Pinned tabs cannot be split members, and a group is not a folder or Space
-    /// payload, so those targets commit nothing at all.
+    /// Pinned tabs cannot be split members, and a group is not a folder row or
+    /// a move to its own Space, so those targets commit nothing at all.
     func testSplitGroupDropsRefusePinnedFolderAndSpaceTargets() {
         let context = makeSplitContext()
-        let commit = BrowserSidebarReorderCommit(
+        let commit = BrowserSidebarTestDrops(
             browser: context.browser,
             spaceAccess: context.spaceAccess
         )
-        let original = context.browser.session
+        let original = context.browser.sessionSeed
 
         XCTAssertFalse(
             commit.apply(
@@ -942,21 +856,16 @@ final class BrowserTabDragSafetyTests: XCTestCase {
                 for: .splitGroup(context.item)
             )
         )
+        // A split row never competes for a folder list's slots.
         XCTAssertFalse(
-            commit.apply(
-                BrowserSidebarReorderTarget(
-                    kind: .insert(
-                        section: .folders(parentID: nil),
-                        beforeID: nil,
-                        index: 0
-                    )
-                ),
-                for: .splitGroup(context.item)
+            BrowserSidebarReorderPolicy.accepts(
+                item: .splitGroup(context.item),
+                in: .folders(parentID: nil)
             )
         )
         XCTAssertFalse(
             commit.apply(
-                BrowserSidebarReorderTarget(kind: .intoFolder(FolderID())),
+                BrowserSidebarReorderTarget(kind: .intoFolder(UUID())),
                 for: .splitGroup(context.item)
             )
         )
@@ -966,51 +875,40 @@ final class BrowserTabDragSafetyTests: XCTestCase {
                 for: .splitGroup(context.item)
             )
         )
-        XCTAssertEqual(context.browser.session, original)
+        XCTAssertEqual(context.browser.sessionSeed, original)
     }
 
-    /// The group guard reuses the tab guard's access rules: a locked Space refuses
-    /// the move, and so does a Space whose profile was replaced under the drag.
+    /// A group drop keeps the tab drop's access rules: a locked Space refuses
+    /// the move, and so does a Space whose profile was replaced under the drag,
+    /// or a run the Space no longer holds as the split that was lifted.
     func testSplitGroupMovesRefuseLockedAndForeignSpaces() {
+        let current: BrowserSidebarReorderTarget.Kind = .insert(
+            section: .tabs(placement: .current, folderID: nil), beforeID: nil, index: 1)
         let locked = makeSplitContext(accessPolicy: .deviceOwnerAuthentication)
-        let lockedAction = BrowserTabDragAction(
-            browser: locked.browser,
-            spaceAccess: locked.spaceAccess
-        )
-        XCTAssertFalse(lockedAction.canMove(locked.item, into: locked.assignment))
+        let lockedSession = locked.browser.sessionSeed
         XCTAssertFalse(
-            lockedAction.move(
-                locked.item,
-                to: .current,
-                matching: locked.assignment
-            )
-        )
+            locked.browser.sidebarDrop(.splitGroup(locked.item), on: current, spaceAccess: locked.spaceAccess))
+        XCTAssertEqual(locked.browser.sessionSeed, lockedSession)
 
         let foreign = makeSplitContext()
-        let foreignAction = BrowserTabDragAction(
-            browser: foreign.browser,
-            spaceAccess: foreign.spaceAccess
-        )
+        var reprofiled = foreign.item
+        reprofiled = BrowserSplitGroupDragItem(
+            groupID: reprofiled.groupID, spaceID: reprofiled.spaceID, profileID: Self.uuid(60),
+            memberTabIDs: reprofiled.memberTabIDs)
         XCTAssertFalse(
-            foreignAction.canMove(
-                foreign.item,
-                into: BrowserSpaceRuntimeAssignment(
-                    spaceID: foreign.assignment.spaceID,
-                    profileID: Self.uuid(60)
-                )
-            ),
+            foreign.browser.sidebarDrop(.splitGroup(reprofiled), on: current, spaceAccess: foreign.spaceAccess),
             "A split never spans Spaces, so only its own assignment can accept it."
         )
-        XCTAssertFalse(
-            foreignAction.canMove(
-                BrowserSplitGroupDragItem(
-                    groupID: SplitGroupID(rawValue: Self.uuid(61)),
-                    spaceID: foreign.assignment.spaceID,
-                    profileID: foreign.assignment.profileID,
-                    memberTabIDs: foreign.item.memberTabIDs
-                ),
-                into: foreign.assignment
-            ),
+        XCTAssertNil(
+            foreign.browser.liftPlan(
+                for: .splitGroup(
+                    BrowserSplitGroupDragItem(
+                        groupID: Self.uuid(61),
+                        spaceID: foreign.assignment.spaceID,
+                        profileID: foreign.assignment.profileID,
+                        memberTabIDs: foreign.item.memberTabIDs
+                    )),
+                spaceAccess: foreign.spaceAccess),
             "A group the Space no longer holds cannot move."
         )
     }
@@ -1021,7 +919,7 @@ final class BrowserTabDragSafetyTests: XCTestCase {
     /// pointer resolved, and the newcomer takes focus.
     func testAContentAreaDropJoinsTheSelectedTabsSplitAtThatSlot() throws {
         let context = makeSplitContext()
-        let commit = BrowserSidebarReorderCommit(
+        let commit = BrowserSidebarTestDrops(
             browser: context.browser,
             spaceAccess: context.spaceAccess
         )
@@ -1041,14 +939,14 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         )
 
         let space = try XCTUnwrap(
-            context.browser.session.space(id: context.assignment.spaceID)
+            context.browser.spaceModel(context.assignment.spaceID)
         )
-        XCTAssertEqual(space.tabs.map(\.title), ["Head", "Outsider", "Tail"])
+        XCTAssertEqual(space.tabs.models.map(\.title), ["Head", "Outsider", "Tail"])
         XCTAssertEqual(
-            space.splitGroupMembers(of: context.groupID).map(\.title),
+            space.splitMembers(of: context.groupID).map(\.title),
             ["Head", "Outsider", "Tail"]
         )
-        XCTAssertEqual(space.selectedTabID, context.outsider.id)
+        XCTAssertEqual(context.browser.selectedTabID(in: space.id), context.outsider.id)
     }
 
     /// The first drop is the same commit as every later one: a window presenting
@@ -1072,7 +970,7 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         )
         let browser = Self.makeBrowser(spaces: [space], selectedSpaceID: space.id)
         let assignment = BrowserSpaceRuntimeAssignment(space: space)
-        let commit = BrowserSidebarReorderCommit(
+        let commit = BrowserSidebarTestDrops(
             browser: browser,
             spaceAccess: BrowserSpaceAccessController(
                 authenticator: InMemoryAuthenticator()
@@ -1094,25 +992,26 @@ final class BrowserTabDragSafetyTests: XCTestCase {
             )
         )
 
-        let updated = try XCTUnwrap(browser.session.space(id: space.id))
-        XCTAssertEqual(updated.tabs.map(\.title), ["Joiner", "Selected"])
-        let groupID = try XCTUnwrap(updated.tabs.first?.splitGroupID)
+        let updated = try XCTUnwrap(browser.spaceModel(space.id))
+        XCTAssertEqual(updated.tabs.models.map(\.title), ["Joiner", "Selected"])
+        let groupID = try XCTUnwrap(updated.tabs.models.first?.splitGroupID)
         XCTAssertEqual(
-            updated.splitGroupMembers(of: groupID).map(\.title),
+            updated.splitMembers(of: groupID).map(\.title),
             ["Joiner", "Selected"]
         )
-        XCTAssertEqual(updated.selectedTabID, joiner.id)
+        XCTAssertEqual(browser.selectedTabID(in: space.id), joiner.id)
     }
 
-    /// Only a tab becomes a card, and only in its own window's Space. Everything
-    /// else the content area could be handed commits nothing at all.
-    func testContentAreaDropsRefuseFoldersGroupsAndForeignSpaces() {
+    /// Only tabs become cards: one tab, or a whole split as a selection of it
+    /// would, and only in its own window's Space. A folder, or a lift from
+    /// another Space, commits nothing at all.
+    func testContentAreaDropsRefuseFoldersAndForeignSpaces() {
         let context = makeSplitContext()
-        let commit = BrowserSidebarReorderCommit(
+        let commit = BrowserSidebarTestDrops(
             browser: context.browser,
             spaceAccess: context.spaceAccess
         )
-        let original = context.browser.session
+        let original = context.browser.sessionSeed
         let target = BrowserSidebarReorderTarget(
             kind: .splitInsert(assignment: context.assignment, index: 0)
         )
@@ -1122,14 +1021,16 @@ final class BrowserTabDragSafetyTests: XCTestCase {
                 target,
                 for: .folder(
                     BrowserFolderDragItem(
-                        folderID: FolderID(),
+                        folderID: UUID(),
                         spaceID: context.assignment.spaceID,
                         profileID: context.assignment.profileID
                     )
                 )
             )
         )
-        XCTAssertFalse(commit.apply(target, for: .splitGroup(context.item)))
+        XCTAssertEqual(
+            context.browser.liftPlan(for: .splitGroup(context.item), spaceAccess: context.spaceAccess)?
+                .verdict(on: target), .allowed)
         XCTAssertFalse(
             commit.apply(
                 BrowserSidebarReorderTarget(
@@ -1150,7 +1051,7 @@ final class BrowserTabDragSafetyTests: XCTestCase {
                 )
             )
         )
-        XCTAssertEqual(context.browser.session, original)
+        XCTAssertEqual(context.browser.sessionSeed, original)
     }
 
     func testOffscreenExpandedFolderCannotStealAPinnedDrop() {
@@ -1193,7 +1094,7 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         )
         state.register(
             zone: BrowserSidebarReorderZone(
-                target: .folder(FolderID()),
+                target: .folder(UUID()),
                 frame: CGRect(x: 8, y: 64, width: 374, height: 44)
             ),
             for: UUID(),
@@ -1372,10 +1273,12 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         )
     }
 
+    /// A Space whose first tabs, Head and Tail, are one split, then Outsider;
+    /// `member` joins the split at `index` among them when given.
     private func makeSplitContext(
-        accessPolicy: BrowserSpaceAccessPolicy = .open
+        accessPolicy: SpaceAccessPolicy = .open, adding member: TabState.Seed? = nil, at index: Int = 0
     ) -> SplitContext {
-        let groupID = SplitGroupID(rawValue: Self.uuid(50))
+        let groupID = Self.uuid(50)
         let head = Self.makeTab(
             id: Self.tabID(51),
             title: "Head",
@@ -1393,18 +1296,17 @@ final class BrowserTabDragSafetyTests: XCTestCase {
             title: "Outsider",
             placement: .current
         )
+        var tabs = [head, tail, outsider]
+        if let member { tabs.insert(member, at: index) }
         let space = Self.makeSpace(
             id: Self.spaceID(54),
             profileID: Self.uuid(55),
             name: "Split Source",
-            tabs: [head, tail, outsider],
+            tabs: tabs,
             accessPolicy: accessPolicy
         )
         return SplitContext(
-            browser: Self.makeBrowser(
-                spaces: [space],
-                selectedSpaceID: space.id
-            ),
+            browser: Self.makeBrowser(spaces: [space]),
             spaceAccess: BrowserSpaceAccessController(
                 authenticator: InMemoryAuthenticator()
             ),
@@ -1420,8 +1322,8 @@ final class BrowserTabDragSafetyTests: XCTestCase {
     }
 
     private func makeContext(
-        sourceAccessPolicy: BrowserSpaceAccessPolicy = .open,
-        destinationAccessPolicy: BrowserSpaceAccessPolicy = .open,
+        sourceAccessPolicy: SpaceAccessPolicy = .open,
+        destinationAccessPolicy: SpaceAccessPolicy = .open,
         sourcePlacement: TabPlacement = .current
     ) -> Context {
         let tab = Self.makeTab(
@@ -1444,10 +1346,7 @@ final class BrowserTabDragSafetyTests: XCTestCase {
             accessPolicy: destinationAccessPolicy
         )
         return Context(
-            browser: Self.makeBrowser(
-                spaces: [source, destination],
-                selectedSpaceID: source.id
-            ),
+            browser: Self.makeBrowser(spaces: [source, destination]),
             spaceAccess: BrowserSpaceAccessController(
                 authenticator: InMemoryAuthenticator()
             ),
@@ -1462,65 +1361,51 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         with profileID: UUID,
         in browser: BrowserStore
     ) {
-        guard
-            let index = browser.session.spaces.firstIndex(where: {
-                $0.id == assignment.spaceID
-            })
-        else {
-            XCTFail("Expected the captured Space.")
-            return
-        }
-        let space = browser.session.spaces[index]
-        browser.session.spaces[index] = Self.makeSpace(
-            id: space.id,
-            profileID: profileID,
-            name: space.name,
-            tabs: space.tabs,
-            accessPolicy: space.accessPolicy
-        )
+        browser.replaceProfileForTesting(of: assignment.spaceID, with: profileID)
     }
 
+    /// A window showing `selectedSpaceID` (else the first Space), with every
+    /// Space showing its first tab.
     private static func makeBrowser(
-        spaces: [BrowserSpace],
-        selectedSpaceID: SpaceID
+        spaces: [SpaceState.Seed],
+        selectedSpaceID: UUID? = nil
     ) -> BrowserStore {
-        BrowserStore(
-            session: BrowserSession(
-                spaces: spaces,
-                selectedSpaceID: selectedSpaceID
-            ),
-            persistence: InMemoryBrowserSessionPersistence(),
-            browsingMode: .privateBrowsing
+        var tabs: [UUID: UUID] = [:]
+        for space in spaces {
+            tabs[space.id] = space.tabs.first?.id
+        }
+        return BrowserStore(
+            seed: SessionState.Seed(spaces: spaces),
+            showing: selectedSpaceID ?? spaces.first?.id ?? UUID(), tabs: tabs
         )
     }
 
     private static func makeSpace(
-        id: SpaceID,
+        id: UUID,
         profileID: UUID,
         name: String,
-        tabs: [BrowserTab],
-        accessPolicy: BrowserSpaceAccessPolicy = .open
-    ) -> BrowserSpace {
-        BrowserSpace(
+        tabs: [TabState.Seed],
+        accessPolicy: SpaceAccessPolicy = .open
+    ) -> SpaceState.Seed {
+        SpaceState.Seed(
             id: id,
-            profile: BrowsingProfile(id: profileID),
+            profileID: profileID,
             name: name,
             symbol: "rectangle.stack",
             accent: .indigo,
             folders: [],
             tabs: tabs,
-            accessPolicy: accessPolicy,
-            selectedTabID: tabs.first?.id
+            accessPolicy: accessPolicy
         )
     }
 
     private static func makeTab(
-        id: TabID,
+        id: UUID,
         title: String,
         placement: TabPlacement,
-        splitGroupID: SplitGroupID? = nil
-    ) -> BrowserTab {
-        BrowserTab(
+        splitGroupID: UUID? = nil
+    ) -> TabState.Seed {
+        TabState.Seed(
             id: id,
             title: title,
             url: URL(fileURLWithPath: "/crest-tab-drag-safety/\(title)"),
@@ -1530,12 +1415,12 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         )
     }
 
-    private static func tabID(_ finalByte: UInt8) -> TabID {
-        TabID(rawValue: uuid(finalByte))
+    private static func tabID(_ finalByte: UInt8) -> UUID {
+        uuid(finalByte)
     }
 
-    private static func spaceID(_ finalByte: UInt8) -> SpaceID {
-        SpaceID(rawValue: uuid(finalByte))
+    private static func spaceID(_ finalByte: UInt8) -> UUID {
+        uuid(finalByte)
     }
 
     private static func uuid(_ finalByte: UInt8) -> UUID {
@@ -1552,13 +1437,13 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         let sidebarInteraction: BrowserSidebarInteractionState
         let browser: BrowserStore
         let spaceAccess: BrowserSpaceAccessController
-        let source: BrowserSpace
-        let destination: BrowserSpace
-        let tab: BrowserTab
+        let source: SpaceState.Seed
+        let destination: SpaceState.Seed
+        let tab: TabState.Seed
 
         init(
-            browser: BrowserStore, spaceAccess: BrowserSpaceAccessController, source: BrowserSpace,
-            destination: BrowserSpace, tab: BrowserTab
+            browser: BrowserStore, spaceAccess: BrowserSpaceAccessController, source: SpaceState.Seed,
+            destination: SpaceState.Seed, tab: TabState.Seed
         ) {
             self.browser = browser
             self.spaceAccess = spaceAccess
@@ -1580,7 +1465,7 @@ final class BrowserTabDragSafetyTests: XCTestCase {
             BrowserTabDragItem(
                 tabID: tab.id,
                 spaceID: source.id,
-                profileID: source.profile.id
+                profileID: source.profileID
             )
         }
     }
@@ -1590,14 +1475,14 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         let sidebarInteraction: BrowserSidebarInteractionState
         let browser: BrowserStore
         let spaceAccess: BrowserSpaceAccessController
-        let space: BrowserSpace
-        let groupID: SplitGroupID
-        let members: [BrowserTab]
-        let outsider: BrowserTab
+        let space: SpaceState.Seed
+        let groupID: UUID
+        let members: [TabState.Seed]
+        let outsider: TabState.Seed
 
         init(
-            browser: BrowserStore, spaceAccess: BrowserSpaceAccessController, space: BrowserSpace,
-            groupID: SplitGroupID, members: [BrowserTab], outsider: BrowserTab
+            browser: BrowserStore, spaceAccess: BrowserSpaceAccessController, space: SpaceState.Seed,
+            groupID: UUID, members: [TabState.Seed], outsider: TabState.Seed
         ) {
             self.browser = browser
             self.spaceAccess = spaceAccess
@@ -1616,7 +1501,7 @@ final class BrowserTabDragSafetyTests: XCTestCase {
             BrowserSplitGroupDragItem(
                 groupID: groupID,
                 spaceID: space.id,
-                profileID: space.profile.id,
+                profileID: space.profileID,
                 memberTabIDs: members.map(\.id)
             )
         }

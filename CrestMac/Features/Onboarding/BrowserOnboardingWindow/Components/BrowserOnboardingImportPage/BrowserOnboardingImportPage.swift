@@ -1,18 +1,16 @@
 import SwiftUI
 
 struct BrowserOnboardingImportPage: View {
-    let entryPoint: BrowserOnboardingEntryPoint
     let sources: [BrowserInstalledImportSource]
-    let selectedApplications: Set<BrowserImportApplication>
+    let selectedApplications: Set<ImportSource>
     let isReading: Bool
     let isLocked: Bool
     let failure: BrowserOnboardingFailureText?
     let accessLabel: (BrowserInstalledImportSource) -> String
-    let toggleSelection: (BrowserImportApplication) -> Void
+    let toggleSelection: (ImportSource) -> Void
     let beginManualSetup: () -> Void
     let continueImport: () -> Void
-    let back: () -> Void
-    let close: () -> Void
+    let back: BrowserOnboardingBackAction
 
     var body: some View {
         VStack(spacing: 0) {
@@ -82,16 +80,16 @@ struct BrowserOnboardingImportPage: View {
             )
 
             HStack {
-                if entryPoint.isGuidedSetup {
-                    Button("Back", action: back)
-                        .buttonStyle(BrowserOnboardingSecondaryButtonStyle())
-                        .disabled(isLocked)
-                        .accessibilityIdentifier("onboarding-back")
-                } else {
-                    Button("Close", action: close)
+                if back.closes {
+                    Button("Close", action: back.action)
                         .buttonStyle(BrowserOnboardingSecondaryButtonStyle())
                         .disabled(isLocked)
                         .accessibilityIdentifier("onboarding-import-close")
+                } else {
+                    Button("Back", action: back.action)
+                        .buttonStyle(BrowserOnboardingSecondaryButtonStyle())
+                        .disabled(isLocked)
+                        .accessibilityIdentifier("onboarding-back")
                 }
                 Spacer()
                 BrowserOnboardingImportSelectionAction(

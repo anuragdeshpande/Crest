@@ -12,7 +12,7 @@ final class BrowserCredentialDetailModelTests: XCTestCase {
             descriptor: descriptor,
             password: "test-password"
         )
-        var receivedCredentialID: CredentialID?
+        var receivedCredentialID: UUID?
         var receivedAssignment: BrowserSpaceRuntimeAssignment?
         let model = makeModel(
             descriptor: descriptor,
@@ -152,7 +152,7 @@ extension BrowserCredentialDetailModelTests {
         private var continuation: CheckedContinuation<BrowserCredential, Error>?
 
         func call(
-            _: CredentialID,
+            _: UUID,
             _: BrowserSpaceRuntimeAssignment,
             _: String
         ) async throws -> BrowserCredential {
@@ -215,8 +215,8 @@ extension BrowserCredentialDetailModelTests {
             )
         )
         return CredentialDescriptor(
-            id: CredentialID(rawValue: fixedUUID(1)),
-            spaceID: SpaceID(rawValue: fixedUUID(2)),
+            id: fixedUUID(1),
+            spaceID: fixedUUID(2),
             origin: origin,
             username: "person@example.com",
             createdAt: Date(timeIntervalSince1970: 1_000)

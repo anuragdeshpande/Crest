@@ -2,21 +2,13 @@ import SwiftUI
 
 struct BrowserSiteControlContent: View {
     let configuration: BrowserSiteControlConfiguration
-    let actions: [BrowserExtensionActionPresentation]
     @Binding var permissionsExpansion: Bool
     let dismiss: () -> Void
-    let manageExtensions: () -> Void
-    let performExtensionAction: (BrowserExtensionActionPresentation, BrowserExtensionPopupAnchor?) -> Void
-    let togglePinned: (BrowserExtensionActionPresentation) -> Void
     let reviewCertificate: () -> Void
-    var presentExtensionMenu:
-        (BrowserExtensionActionPresentation, BrowserExtensionPopupAnchor?) ->
-            Void = { _, _ in }
-
     var body: some View {
         VStack(alignment: .leading, spacing: CrestSpacing.medium) {
             BrowserSiteControlHeader(page: configuration.page)
-            if let notice = configuration.page.blockedPopupState.notice {
+            if let notice = configuration.page.blockedPopupNotice {
                 BrowserBlockedPopupSiteControlNotice(
                     notice: notice,
                     allow: {
@@ -29,12 +21,11 @@ struct BrowserSiteControlContent: View {
                 page: configuration.page,
                 dismiss: dismiss
             )
-            BrowserSiteExtensionsSection(
-                actions: actions,
-                manageExtensions: manageExtensions,
-                perform: performExtensionAction,
-                togglePinned: togglePinned,
-                presentMenu: presentExtensionMenu
+            BrowserEngineSiteControlsSection(
+                page: configuration.page,
+                space: configuration.space,
+                url: configuration.page.live.documentURL,
+                dismiss: dismiss
             )
             Divider()
             BrowserSiteSettingsContent(

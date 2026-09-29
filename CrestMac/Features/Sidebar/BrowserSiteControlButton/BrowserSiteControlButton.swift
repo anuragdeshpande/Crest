@@ -4,11 +4,12 @@ struct BrowserSiteControlButton: View {
     let configuration: BrowserSiteControlConfiguration
 
     @State private var isPresented = false
+    @Environment(\.browserSiteControlAnchor) private var anchor
 
     var body: some View {
         BrowserSiteControlTrigger(
             isPresented: presentationBinding,
-            blockedPopupNotice: configuration.page.blockedPopupState.notice
+            blockedPopupNotice: configuration.page.blockedPopupNotice
         )
         .popover(isPresented: presentationBinding, arrowEdge: .top) {
             Group {
@@ -25,6 +26,12 @@ struct BrowserSiteControlButton: View {
                 }
             }
             .modifier(BrowserSiteControlPopoverStyle())
+        }
+        // This control opens the window's extension list, so it is where an
+        // extension popup goes when the keyboard asked for one and the
+        // extension has no pinned tile to anchor to.
+        .background {
+            if let anchor { BrowserSiteControlAnchorHost(anchor: anchor) }
         }
         .pagePermissionHost(configuration.page.sitePermissionRequests)
         .onChange(of: configuration.page.sitePermissionRequests.current?.id) {

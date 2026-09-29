@@ -25,7 +25,7 @@ struct MobileBrowserRootSurface<Compact: View, Regular: View, Palette: View>:
             if presentation == .regular {
                 SpaceBackdropBlend(
                     spaces: BrowserSidebarAccessPolicy.availableSpaces(in: browser),
-                    selectedSpace: browser.selectedSpace
+                    selectedSpace: browser.shownSpace
                 ) {
                     BrowserWindowAtmosphere(space: $0)
                 }
@@ -84,8 +84,8 @@ struct MobileBrowserRootSurface<Compact: View, Regular: View, Palette: View>:
                 }
             }
         }
-        .onChange(of: browser.session, initial: true) {
-            transientBrowsing.reconcilePeeks(in: browser.session)
+        .onChange(of: transientBrowsing.orphanedPeeks(in: browser), initial: true) {
+            transientBrowsing.reconcilePeeks(in: browser)
         }
         .onChange(of: transientBrowsing.peekRequests, initial: true) {
             pages.retainPeekPages(for: transientBrowsing.peekRequests)
@@ -96,7 +96,7 @@ struct MobileBrowserRootSurface<Compact: View, Regular: View, Palette: View>:
             }
         }
         .animation(
-            chromeAnimation(CrestMotion.pane),
+            chromeAnimation(BrowserCommandSurfaceMorph.animation),
             value: isCommandPalettePresented
         )
     }

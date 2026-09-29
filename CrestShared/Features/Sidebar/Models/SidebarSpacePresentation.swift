@@ -1,24 +1,19 @@
 import SwiftUI
 
-/// The values a retained sidebar page draws from, independent of the session's
-/// selected Space. This is presentation data, never authority for an action.
+/// The values a retained sidebar page draws from, independent of the Space the
+/// window shows: whose page it is, whether it is unlocked, and the look it
+/// wears. It names no tab or folder, so it changes only when the page's lock
+/// or look does. This is presentation data, never authority for an action.
 struct SidebarSpacePresentation: Equatable {
     let assignment: BrowserSpaceRuntimeAssignment
     let isUnlocked: Bool
-    let tabIDs: Set<TabID>
-    let folderIDs: Set<FolderID>
-    let splitGroupIDs: Set<SplitGroupID>
-    let branding: BrowserSpaceBranding
-    let splitGroups: [BrowserSplitGroupMetadata]
+    let branding: SpaceBranding
 
-    init(space: BrowserSpace, isUnlocked: Bool) {
-        assignment = BrowserSpaceRuntimeAssignment(space: space)
+    @MainActor
+    init(space: SpaceModel, isUnlocked: Bool) {
+        assignment = BrowserSpaceRuntimeAssignment(spaceID: space.id, profileID: space.profileID)
         self.isUnlocked = isUnlocked
-        tabIDs = Set(space.tabs.map(\.id))
-        folderIDs = Set(space.folders.map(\.id))
-        splitGroupIDs = Set(space.tabs.compactMap(\.splitGroupID))
-        branding = space.branding
-        splitGroups = space.splitGroups
+        branding = space.settings.look
     }
 
     func isAvailable(matching assignment: BrowserSpaceRuntimeAssignment) -> Bool {
@@ -39,4 +34,8 @@ extension EnvironmentValues {
     @Entry var sidebarSpacePresentation: SidebarSpacePresentation? = nil
     /// Read by interaction and editor-cleanup leaves, not row configurations.
     @Entry var sidebarSpaceIsSelected: Bool? = nil
+    /// Set by every shell surface that draws a Space's rows. Leaves that would
+    /// otherwise reach the network for a row's content (favicons) must not do so
+    /// while the Space is locked: the request itself discloses the hostnames.
+    @Entry var browserSpaceContentIsLocked: Bool = false
 }

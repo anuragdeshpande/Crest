@@ -14,23 +14,18 @@ final class BrowserSidebarUtilityCoordinatorTests: XCTestCase {
         let port = RecordedPlatformActions()
         let coordinator = makeCoordinator(context, port: port)
         let assignment = BrowserSpaceRuntimeAssignment(space: context.source)
+        let entry = try XCTUnwrap(context.browser.spaceModel(context.source.id)?.history.entries.first)
 
         coordinator.actions.restoreArchivedTab(context.archived.id, assignment)
-        coordinator.actions.openHistoryEntry(context.history, assignment)
+        coordinator.actions.openHistoryEntry(entry, assignment)
 
         let source = try XCTUnwrap(
-            context.browser.session.space(id: context.source.id)
+            context.browser.spaceModel(context.source.id)
         )
-        XCTAssertFalse(
-            source.archivedTabs.contains(where: {
-                $0.id == context.archived.id
-            }))
-        XCTAssertTrue(
-            source.tabs.contains(where: {
-                $0.id == context.archived.id
-            }))
+        XCTAssertFalse(source.archive.contains(tabID: context.archived.id))
+        XCTAssertTrue(source.tabs.contains(context.archived.id))
         XCTAssertEqual(port.restoredTabs, [context.archived.id])
-        XCTAssertEqual(port.openedURLs, [context.history.url])
+        XCTAssertEqual(port.openedURLs.map(\.absoluteString), [context.history.url])
     }
 
     func testCapturedUtilityActionsRejectSelectionAndProfileChanges() throws {
@@ -216,24 +211,25 @@ final class BrowserSidebarUtilityCoordinatorTests: XCTestCase {
         let port = RecordedPlatformActions()
         let coordinator = makeCoordinator(context, port: port)
         let assignment = BrowserSpaceRuntimeAssignment(space: context.source)
+        let entry = try XCTUnwrap(context.browser.spaceModel(context.source.id)?.history.entries.first)
         mutation(context)
 
         coordinator.actions.restoreArchivedTab(context.archived.id, assignment)
-        coordinator.actions.openHistoryEntry(context.history, assignment)
+        coordinator.actions.openHistoryEntry(entry, assignment)
 
         XCTAssertTrue(port.restoredTabs.isEmpty, file: file, line: line)
         XCTAssertTrue(port.openedURLs.isEmpty, file: file, line: line)
         let source = try XCTUnwrap(
-            context.browser.session.space(id: context.source.id)
+            context.browser.spaceModel(context.source.id)
         )
         XCTAssertEqual(
-            source.archivedTabs.map(\.id),
+            source.archive.entries.map(\.tab.id),
             [context.archived.id],
             file: file,
             line: line
         )
         XCTAssertFalse(
-            source.tabs.contains(where: { $0.url == context.history.url }),
+            source.tabs.models.contains(where: { $0.url == context.history.url }),
             file: file,
             line: line
         )
@@ -252,34 +248,34 @@ final class BrowserSidebarUtilityCoordinatorTests: XCTestCase {
     }
 
     private func makeContext(isProtected: Bool = false) -> Context {
-        let selectedTab = BrowserTab(
-            id: TabID(rawValue: Self.uuid(1)),
+        let selectedTab = TabState.Seed(
+            id: Self.uuid(1),
             title: "Selected",
             url: URL(string: "about:blank"),
             placement: .current,
             lastActivatedAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
-        let archivedTab = BrowserTab(
-            id: TabID(rawValue: Self.uuid(2)),
+        let archivedTab = TabState.Seed(
+            id: Self.uuid(2),
             title: "Archived",
             url: URL(string: "about:blank#archived"),
             placement: .current,
             lastActivatedAt: Date(timeIntervalSince1970: 1_700_000_001)
         )
-        let archived = ArchivedTab(
+        let archived = ArchivedTabState.Seed(
             tab: archivedTab,
             archivedAt: Date(timeIntervalSince1970: 1_700_000_002),
             reason: .closed
         )
-        let history = BrowserHistoryEntry(
+        let history = HistoryEntryState(
             url: URL(fileURLWithPath: "/crest-sidebar-history"),
             title: "History",
             firstVisitedAt: Date(timeIntervalSince1970: 1_700_000_003),
             lastVisitedAt: Date(timeIntervalSince1970: 1_700_000_003)
         )
-        let source = BrowserSpace(
-            id: SpaceID(rawValue: Self.uuid(3)),
-            profile: BrowsingProfile(id: Self.uuid(4)),
+        let source = SpaceState.Seed(
+            id: Self.uuid(3),
+            profileID: Self.uuid(4),
             name: "Source",
             symbol: "sidebar.left",
             accent: .indigo,
@@ -287,36 +283,27 @@ final class BrowserSidebarUtilityCoordinatorTests: XCTestCase {
             tabs: [selectedTab],
             archivedTabs: [archived],
             history: [history],
-            accessPolicy: isProtected ? .deviceOwnerAuthentication : .open,
-            selectedTabID: selectedTab.id
+            accessPolicy: isProtected ? .deviceOwnerAuthentication : .open
         )
-        let destination = BrowserSpace(
-            id: SpaceID(rawValue: Self.uuid(5)),
-            profile: BrowsingProfile(id: Self.uuid(6)),
+        let destination = SpaceState.Seed(
+            id: Self.uuid(5),
+            profileID: Self.uuid(6),
             name: "Destination",
             symbol: "square.grid.2x2",
             accent: .rose,
             folders: [],
-            tabs: [],
-            selectedTabID: nil
+            tabs: []
         )
-        let browser = BrowserStore(
-            session: BrowserSession(
-                spaces: [source, destination],
-                selectedSpaceID: source.id
-            ),
-            persistence: InMemoryBrowserSessionPersistence(),
-            browsingMode: .privateBrowsing
-        )
-        var ledger = BrowserDownloadLedger()
-        let downloadItemID = ledger.begin(
-            profileID: source.profile.id,
+        let browser = BrowserStore(seed: SessionState.Seed(spaces: [source, destination]))
+        let downloadCenter = BrowserDownloadCenter()
+        let downloadItemID = downloadCenter.begin(
+            profileID: source.profileID,
             filename: "Crest.dmg",
             createdAt: Date(timeIntervalSince1970: 1_700_000_004)
         )
         return Context(
             browser: browser,
-            downloadCenter: BrowserDownloadCenter(ledger: ledger),
+            downloadCenter: downloadCenter,
             downloadItemID: downloadItemID,
             access: BrowserSpaceAccessController(
                 authenticator: AcceptingAuthenticator()
@@ -328,47 +315,14 @@ final class BrowserSidebarUtilityCoordinatorTests: XCTestCase {
         )
     }
 
-    private func replaceProfile(of space: BrowserSpace, in browser: BrowserStore) {
-        guard
-            let index = browser.session.spaces.firstIndex(where: {
-                $0.id == space.id
-            })
-        else {
-            XCTFail("Expected the captured Space.")
-            return
-        }
-        let current = browser.session.spaces[index]
-        browser.session.spaces[index] = BrowserSpace(
-            id: current.id,
-            profile: BrowsingProfile(id: Self.uuid(7)),
-            name: current.name,
-            symbol: current.symbol,
-            accent: current.accent,
-            branding: current.branding,
-            folders: current.folders,
-            tabs: current.tabs,
-            archivedTabs: current.archivedTabs,
-            history: current.history,
-            browsingPreferences: current.browsingPreferences,
-            credentialPreferences: current.credentialPreferences,
-            accessPolicy: current.accessPolicy,
-            isSavedTabsExpanded: current.isSavedTabsExpanded,
-            savedTabsExpansionModifiedAt: current.savedTabsExpansionModifiedAt,
-            selectedTabID: current.selectedTabID
-        )
+    private func replaceProfile(of space: SpaceState.Seed, in browser: BrowserStore) {
+        browser.replaceProfileForTesting(of: space.id, with: Self.uuid(7))
     }
 
-    private func downloadItem(profileID: UUID, id: UUID) -> BrowserDownloadItem {
-        BrowserDownloadItem(
-            id: id,
-            profileID: profileID,
-            createdAt: Date(timeIntervalSince1970: 1_700_000_004),
-            filename: "Crest.dmg",
-            destinationURL: nil,
-            progress: 0.5,
-            state: .downloading,
-            riskAssessment: nil
-        )
+    private func downloadItem(profileID: UUID, id: UUID) -> DownloadState {
+        DownloadState.fixture(
+            id: id, profileID: profileID, createdAt: Date(timeIntervalSince1970: 1_700_000_004),
+            filename: "Crest.dmg", progress: 0.5, phase: .downloading)
     }
 
     private static func uuid(_ finalByte: UInt8) -> UUID {
@@ -384,19 +338,19 @@ final class BrowserSidebarUtilityCoordinatorTests: XCTestCase {
         let downloadCenter: BrowserDownloadCenter
         let downloadItemID: UUID
         let access: BrowserSpaceAccessController
-        let source: BrowserSpace
-        let destination: BrowserSpace
-        let archived: ArchivedTab
-        let history: BrowserHistoryEntry
+        let source: SpaceState.Seed
+        let destination: SpaceState.Seed
+        let archived: ArchivedTabState.Seed
+        let history: HistoryEntryState
     }
 
     /// A stand-in for either shell's binding, so a guard can be tested by what
     /// it lets through rather than by what a particular shell does next.
     @MainActor
     private final class RecordedPlatformActions {
-        var restoredTabs: [TabID] = []
+        var restoredTabs: [UUID] = []
         var openedURLs: [URL] = []
-        var openedDownloads: [(item: BrowserDownloadItem, destination: BrowserUtilityDownloadDestination)] = []
+        var openedDownloads: [(item: DownloadState, destination: BrowserUtilityDownloadDestination)] = []
         var canceledDownloads: [UUID] = []
         var clearedDownloads: [UUID] = []
 

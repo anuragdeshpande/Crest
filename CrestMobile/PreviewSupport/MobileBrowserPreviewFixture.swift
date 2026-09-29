@@ -9,104 +9,89 @@ struct MobileBrowserPreviewFixture {
     let spaceAccess: BrowserSpaceAccessController
     let passkeyAccess: BrowserPasskeyAccessController
     let windowState: BrowserWindowStateStore
-    let space: BrowserSpace
-    let alternateSpace: BrowserSpace
+    let space: SpaceModel
+    let alternateSpace: SpaceModel
 
     init() {
-        let space = BrowserSpace(
-            id: SpaceID(
-                rawValue: UUID(
-                    uuid: (
-                        0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00,
-                        0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
-                    )
+        let space = SpaceState.Seed(
+            id: UUID(
+                uuid: (
+                    0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00,
+                    0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
                 )
             ),
-            profile: BrowsingProfile(
-                id: UUID(
-                    uuid: (
-                        0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00,
-                        0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
-                    )
+            profileID: UUID(
+                uuid: (
+                    0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00,
+                    0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
                 )
             ),
             name: "Work",
             symbol: "briefcase.fill",
             accent: .indigo,
-            branding: .house(.lion, symbol: "briefcase.fill"),
-            folders: [],
-            tabs: [],
-            selectedTabID: nil
+            branding: BrowserSpaceHousePalette.lion.look,
+            tabs: []
         )
-        let alternateSpace = BrowserSpace(
-            id: SpaceID(
-                rawValue: UUID(
-                    uuid: (
-                        0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00,
-                        0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02
-                    )
+        let alternateSpace = SpaceState.Seed(
+            id: UUID(
+                uuid: (
+                    0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00,
+                    0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02
                 )
             ),
-            profile: BrowsingProfile(
-                id: UUID(
-                    uuid: (
-                        0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00,
-                        0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02
-                    )
+            profileID: UUID(
+                uuid: (
+                    0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00,
+                    0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02
                 )
             ),
             name: "Personal",
             symbol: "house.fill",
             accent: .orange,
-            branding: .house(.winter, symbol: "house.fill"),
-            folders: [],
-            tabs: [],
-            selectedTabID: nil
+            branding: BrowserSpaceHousePalette.winter.look,
+            tabs: []
         )
         let browser = BrowserStore(
-            session: BrowserSession(
-                spaces: [space, alternateSpace],
-                selectedSpaceID: space.id
-            ),
-            persistence: InMemoryBrowserSessionPersistence(),
-            browsingMode: .privateBrowsing
-        )
-        let contentRuleListProvider = BrowserContentRuleListProvider(
-            ruleListStore: nil
-        )
+            seed: SessionState.Seed(spaces: [space, alternateSpace]), browsingMode: .privateBrowsing)
+        guard let workSpace = browser.spaceModel(space.id), let personalSpace = browser.spaceModel(alternateSpace.id)
+        else { preconditionFailure("The preview store must open both preview Spaces.") }
+        browser.core.engines.register(
+            WebKitEngineBinding(
+                keepsProfilesInMemory: true,
+                contentRuleLists: BrowserContentRuleListProvider(core: browser.core, ruleListStore: nil)),
+            isDefault: true)
         let pages = MobileBrowserPageStore(
+            browser: browser,
             browsingMode: .privateBrowsing,
             usesEphemeralWebsiteDataStores: true,
-            permissionCenter: BrowserSitePermissionCenter(),
-            contentRuleListProvider: contentRuleListProvider
+            permissionCenter: BrowserSitePermissionCenter()
         )
 
-        self.space = space
-        self.alternateSpace = alternateSpace
+        self.space = workSpace
+        self.alternateSpace = personalSpace
         self.browser = browser
         self.pages = pages
         windowState = BrowserWindowStateStore(
-            id: BrowserWindowID(
-                rawValue: UUID(
-                    uuid: (
-                        0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00,
-                        0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
-                    )
+            id: UUID(
+                uuid: (
+                    0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00,
+                    0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
                 )
             ),
-            session: browser.session,
-            persistence: InMemoryBrowserWindowStatePersistence()
+            browser: browser,
+            layouts: BrowserWindowLayouts(defaults: nil)
         )
         windowState.captureSidebar(
             width: Double(MobileBrowserRootLayout.defaultRegularSidebarWidth),
             isPresented: true
         )
-        cloudSync = .isolated(browser: browser)
+        cloudSync = .isolated(core: browser.core)
         onboardingCoordinator = BrowserOnboardingCoordinator()
         spaceAccess = BrowserSpaceAccessController(
             authenticator: BrowserPreviewAuthenticator(result: false)
         )
         passkeyAccess = BrowserPasskeyAccessController(
+            core: browser.core,
             capabilityCheck: { true },
             deviceConfigurationCheck: { .configured },
             authorizationCheck: { .authorized },

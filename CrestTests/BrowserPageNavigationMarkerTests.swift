@@ -5,9 +5,13 @@ import XCTest
 
 @MainActor
 final class BrowserPageNavigationMarkerTests: XCTestCase {
+    /// The pool of the page a test drives, which keeps its window and
+    /// workspace open: a workspace that closes takes its pages with it.
+    private var pool: BrowserPagePool?
+
     func testSameDocumentNavigationRetiresPendingURLAcrossHistoryTraversal() async throws {
         let page = try makePage()
-        defer { page.prepareForSpaceDeletion() }
+        defer { page.release(keepingState: false) }
         let root = try XCTUnwrap(URL(string: "https://history.crest.test/feed"))
         let post = try XCTUnwrap(URL(string: "https://history.crest.test/post"))
         page.webView.loadSimulatedRequest(
@@ -19,28 +23,30 @@ final class BrowserPageNavigationMarkerTests: XCTestCase {
         // document. No didFinish callback will retire its pending destination.
         page.prepareForNavigation(to: post)
         _ = try await page.webView.evaluateJavaScript("history.pushState({}, '', '/post')")
-        try await waitForNavigation { page.url == post }
-        XCTAssertNil(page.pendingNavigationURL)
-        XCTAssertEqual(page.displayURL, post)
+        // The core hears the address and the retired destination once the
+        // engine's history settles, which can be a turn after the address.
+        try await waitForNavigation { page.live.documentURL == post && page.live.pendingNavigationURL == nil }
+        XCTAssertNil(page.live.pendingNavigationURL)
+        XCTAssertEqual(page.live.displayURL, post)
         XCTAssertEqual(page.backHistory.map(\.url), page.webView.backForwardList.backList.reversed().map(\.url))
 
         _ = try await page.webView.evaluateJavaScript("history.back()")
-        try await waitForNavigation { page.url == root }
-        XCTAssertEqual(page.displayURL, root)
+        try await waitForNavigation { page.live.documentURL == root }
+        XCTAssertEqual(page.live.displayURL, root)
         XCTAssertEqual(page.committedNavigationCount, commits)
 
         _ = try await page.webView.evaluateJavaScript("history.forward()")
-        try await waitForNavigation { page.url == post }
+        try await waitForNavigation { page.live.documentURL == post }
         _ = try await page.webView.evaluateJavaScript("history.replaceState({}, '', '/updated-post')")
         let replaced = try XCTUnwrap(URL(string: "https://history.crest.test/updated-post"))
-        try await waitForNavigation { page.url == replaced }
-        XCTAssertEqual(page.displayURL, replaced)
-        XCTAssertNil(page.pendingNavigationURL)
+        try await waitForNavigation { page.live.documentURL == replaced && page.live.pendingNavigationURL == nil }
+        XCTAssertEqual(page.live.displayURL, replaced)
+        XCTAssertNil(page.live.pendingNavigationURL)
     }
 
     func testLinkHistoryRetainsSameDocumentEntriesAndDiscardsForwardBranch() async throws {
         let page = try makePage()
-        defer { page.prepareForSpaceDeletion() }
+        defer { page.release(keepingState: false) }
         let root = try XCTUnwrap(URL(string: "https://history.crest.test/root"))
         page.webView.loadSimulatedRequest(
             URLRequest(url: root), responseHTML: "<html><title>History</title><body>History</body></html>")
@@ -51,31 +57,31 @@ final class BrowserPageNavigationMarkerTests: XCTestCase {
             page.navigationHistory.recordLink(to: destination, in: page.webView.backForwardList)
             page.prepareForNavigation(to: destination)
             _ = try await page.webView.evaluateJavaScript("history.pushState({}, '', '\(destination.path)')")
-            try await waitForNavigation { page.url == destination }
+            try await waitForNavigation { page.live.documentURL == destination }
         }
         XCTAssertEqual(page.backHistory.map(\.url), [feed, root])
         page.goBack()
-        try await waitForNavigation { page.url == feed }
-        XCTAssertEqual(page.displayURL, feed)
+        try await waitForNavigation { page.live.documentURL == feed }
+        XCTAssertEqual(page.live.displayURL, feed)
         XCTAssertEqual(page.forwardHistory.map(\.url), [post])
         page.goForward(toDepth: 1)
-        try await waitForNavigation { page.url == post }
+        try await waitForNavigation { page.live.documentURL == post }
         page.goBack(toDepth: 2)
-        try await waitForNavigation { page.url == root }
+        try await waitForNavigation { page.live.documentURL == root }
         XCTAssertEqual(page.forwardHistory.map(\.url), [feed, post])
         page.goForward()
-        try await waitForNavigation { page.url == feed }
+        try await waitForNavigation { page.live.documentURL == feed }
 
         // Replacing the current entry must not create a duplicate. A new link
         // after Back must discard the old forward branch, even for equal URLs.
         _ = try await page.webView.evaluateJavaScript("history.replaceState({}, '', '/updated-feed')")
         let updated = try XCTUnwrap(URL(string: "https://history.crest.test/updated-feed"))
-        try await waitForNavigation { page.url == updated }
+        try await waitForNavigation { page.live.documentURL == updated }
         XCTAssertEqual(page.backHistory.map(\.url), [root])
         page.navigationHistory.recordLink(to: root, in: page.webView.backForwardList)
         page.prepareForNavigation(to: root)
         _ = try await page.webView.evaluateJavaScript("history.pushState({}, '', '/root')")
-        try await waitForNavigation { page.url == root }
+        try await waitForNavigation { page.live.documentURL == root }
         XCTAssertEqual(page.backHistory.map(\.url), [updated, root])
         XCTAssertTrue(page.forwardHistory.isEmpty)
 
@@ -86,6 +92,48 @@ final class BrowserPageNavigationMarkerTests: XCTestCase {
             URLRequest(url: replacement), responseHTML: "<html><body>New document</body></html>")
         try await waitForNavigation { page.completedNavigationCount == 2 }
         XCTAssertEqual(page.backHistory.map(\.url), page.webView.backForwardList.backList.reversed().map(\.url))
+    }
+
+    func testForwardReturnsToThePageAScriptOpenedAfterGoingBack() async throws {
+        // WebKit stops listing an entry a script created without user
+        // activation once the page leaves it, and its canGoForward follows.
+        let server = try BrowserPrivacyHTTPServer()
+        server.overrideResponse = { request in
+            let script =
+                request.path == "/start"
+                ? """
+                <script>
+                if (!sessionStorage.getItem('left')) {
+                  sessionStorage.setItem('left', '1');
+                  setTimeout(() => { location.href = '/next'; }, 100);
+                }
+                </script>
+                """ : ""
+            return (
+                "200 OK", "Content-Type: text/html\r\n",
+                Data("<html><title>\(request.path)</title><body>\(script)</body></html>".utf8)
+            )
+        }
+        try await server.start()
+        defer { server.stop() }
+        let page = try makePage()
+        defer { page.release(keepingState: false) }
+        let start = server.url(host: "127.0.0.1", path: "/start")
+        let next = server.url(host: "127.0.0.1", path: "/next")
+        page.load(start)
+        try await waitForNavigation { page.live.documentURL == next && !page.live.isLoading }
+
+        page.goBack()
+        try await waitForNavigation { page.live.documentURL == start && !page.live.isLoading }
+        // The core hears the history with the page's next snapshot, which can
+        // be a turn after the address.
+        try await waitForNavigation { page.live.canGoForward }
+        XCTAssertEqual(page.forwardHistory.map(\.url), [next])
+
+        page.goForward()
+        try await waitForNavigation { page.live.documentURL == next && !page.live.isLoading }
+        try await waitForNavigation { !page.live.canGoForward }
+        XCTAssertEqual(page.backHistory.map(\.url), [start])
     }
 
     private func waitForNavigation(_ condition: () -> Bool) async throws {
@@ -114,7 +162,7 @@ final class BrowserPageNavigationMarkerTests: XCTestCase {
             "Web content must not be able to replay a file URL Crest once loaded."
         )
         XCTAssertEqual(
-            BrowserExternalSchemePolicy.disposition(
+            BrowserCorePolicy.externalSchemeDisposition(
                 for: fileURL,
                 isAppInitiated: page.isAppInitiated(replay)
             ),
@@ -140,56 +188,18 @@ final class BrowserPageNavigationMarkerTests: XCTestCase {
         XCTAssertFalse(page.isAppInitiated(replay))
     }
 
-    func testANewWindowRequestFromAnExtensionPageIsNotATopLevelNavigation() throws {
-        let page = try makePage()
-        let extensionURL = try XCTUnwrap(
-            URL(string: "crest-extension://abcdef/options.html")
-        )
-        let destinationURL = try XCTUnwrap(URL(string: "https://example.com/docs"))
-        let newWindowAction = NewWindowNavigationAction(url: destinationURL)
-
-        XCTAssertNil(
-            newWindowAction.targetFrame,
-            "WebKit reports no target frame for a new-window request."
-        )
-        XCTAssertFalse(
-            page.isTopLevelNavigation(newWindowAction),
-            "A missing target frame is a new window, not this page's main frame."
-        )
-        XCTAssertFalse(
-            BrowserExtensionExternalNavigationPolicy.shouldReplaceCurrentTabRuntime(
-                currentURL: extensionURL,
-                destinationURL: destinationURL,
-                isTopLevel: page.isTopLevelNavigation(newWindowAction),
-                isAppInitiated: false
-            ),
-            "A target=\"_blank\" link on an extension page must not be cancelled and reloaded in place."
-        )
-        XCTAssertTrue(
-            BrowserExtensionExternalNavigationPolicy.shouldReplaceCurrentTabRuntime(
-                currentURL: extensionURL,
-                destinationURL: destinationURL,
-                isTopLevel: true,
-                isAppInitiated: false
-            ),
-            "A top-level navigation away from an extension page replaces that runtime in its existing tab."
-        )
-    }
-
     private func makePage() throws -> BrowserPage {
-        let tab = BrowserTab.startPage()
-        let space = BrowserSpace(
-            id: SpaceID(),
-            profile: BrowsingProfile(),
+        let tab = TabState.Seed.startPage()
+        let space = SpaceState.Seed(
             name: "Marker",
             symbol: "circle",
             accent: .indigo,
             folders: [],
-            tabs: [tab],
-            selectedTabID: tab.id
+            tabs: [tab]
         )
-        let pool = BrowserPagePool()
-        pool.select(tab: tab, space: space)
+        let pool = BrowserPagePool(browser: .hostingPages(SessionState.Seed(spaces: [space])))
+        self.pool = pool
+        pool.present(tab: tab.id, in: space.id)
         return try XCTUnwrap(pool.activePage)
     }
 
@@ -211,22 +221,7 @@ private final class ReplayNavigationAction: WKNavigationAction,
     override var request: URLRequest { stubRequest }
     override var navigationType: WKNavigationType { .other }
     override var targetFrame: WKFrameInfo? { nil }
-    var browserSourceOrigin: BrowserSiteOrigin? {
-        BrowserSiteOrigin(scheme: "https", host: "replay.crest.test", port: 443)
+    var browserSourceOrigin: SiteOrigin? {
+        SiteOrigin(scheme: "https", host: "replay.crest.test", port: 443)
     }
-}
-
-/// The action WebKit hands `decidePolicyFor` for a `target="_blank"` link or a
-/// `window.open()`: no target frame at all, because the frame does not exist yet.
-private final class NewWindowNavigationAction: WKNavigationAction {
-    private let stubRequest: URLRequest
-
-    init(url: URL) {
-        stubRequest = URLRequest(url: url)
-        super.init()
-    }
-
-    override var request: URLRequest { stubRequest }
-    override var navigationType: WKNavigationType { .linkActivated }
-    override var targetFrame: WKFrameInfo? { nil }
 }

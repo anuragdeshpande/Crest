@@ -53,6 +53,23 @@ final class BrowserWebHostViewTests: XCTestCase {
         XCTAssertEqual(terminal.unhandledSelectors, [#selector(NSResponder.keyDown(with:))])
     }
 
+    /// A page sees a shortcut before Crest only while focus is in the page's
+    /// own view; Crest's views beside it keep Crest's shortcuts first.
+    func testOnlyThePageViewAndViewsInsideItArePageContent() {
+        let setup = focusHostSetup()
+        let inside = NSView()
+        setup.webView.addSubview(inside)
+        let field = NSTextField(string: "Native field")
+        setup.host.addSubview(field)
+
+        XCTAssertTrue(BrowserWebHostView.isPageContent(setup.webView))
+        XCTAssertTrue(BrowserWebHostView.isPageContent(inside))
+        XCTAssertFalse(BrowserWebHostView.isPageContent(setup.host))
+        XCTAssertFalse(BrowserWebHostView.isPageContent(field))
+        XCTAssertFalse(BrowserWebHostView.isPageContent(setup.window))
+        XCTAssertFalse(BrowserWebHostView.isPageContent(nil))
+    }
+
     func testNativeHandlerCanChangeTheResponderChainDuringWebFallback() throws {
         let setup = focusHostSetup()
         let handler = BrowserKeyboardHandlerProbe()
@@ -133,6 +150,80 @@ final class BrowserWebHostViewTests: XCTestCase {
         newHost.detach()
         oldHost.attach(webView)
         XCTAssertTrue(webView.superview === oldHost, "A released web view may return to its previous host")
+    }
+
+    func testNativeEngineSurfaceKeepsOwnershipAndLifecycleAcrossHosts() {
+        let view = BrowserNativeSurfaceProbe()
+        let oldHost = BrowserWebHostView()
+        let newHost = BrowserWebHostView()
+        oldHost.attach(view)
+        newHost.attach(view)
+        oldHost.attach(view)
+        oldHost.detach()
+
+        XCTAssertTrue(view.superview === newHost)
+        XCTAssertEqual(
+            view.attachedHosts.map(ObjectIdentifier.init),
+            [ObjectIdentifier(oldHost), ObjectIdentifier(newHost)])
+        XCTAssertTrue(
+            view.detachedHosts.isEmpty,
+            "A stale host must not detach the surface now owned by another window")
+        newHost.detach()
+        XCTAssertNil(view.superview)
+        XCTAssertTrue(view.detachedHosts.first === newHost)
+    }
+
+    func testAPageReturnsToTheSurvivingHostWhenTheNewerHostGoesFirst() {
+        let view = BrowserNativeSurfaceProbe()
+        let survivingHost = BrowserWebHostView()
+        let outgoingHost = BrowserWebHostView()
+
+        // A page shown fullscreen replaces the window's chrome, and the
+        // outgoing chrome, still rendering during its removal, builds a host
+        // for the page after the incoming one did.
+        survivingHost.attach(view)
+        outgoingHost.attach(view)
+        survivingHost.attach(view)
+        XCTAssertTrue(view.superview === outgoingHost)
+
+        BrowserPlatformWebView.dismantleNSView(outgoingHost, coordinator: ())
+
+        XCTAssertTrue(view.superview === survivingHost, "The page must stay on screen in the host SwiftUI keeps.")
+        XCTAssertTrue(view.attachedHosts.last === survivingHost)
+    }
+
+    /// A Space the window stops showing keeps its page's view in its host,
+    /// so leaving it and coming back never moves the view; the host tells the
+    /// page it left the screen and came back instead, once each, as a tab
+    /// switch does.
+    func testASpaceRoundTripHidesAndShowsItsPageOnceWithoutMovingItsView() {
+        let view = BrowserNativeSurfaceProbe()
+        let host = BrowserWebHostView()
+        host.attach(view)
+
+        host.updatePresentation(presentsPage: false)
+        host.updatePresentation(presentsPage: false)
+        host.updatePresentation(presentsPage: true)
+        host.updatePresentation(presentsPage: true)
+
+        XCTAssertTrue(view.superview === host)
+        XCTAssertEqual(view.presentedOnAttach, [true])
+        XCTAssertEqual(view.presentations, [false, true])
+        XCTAssertTrue(view.detachedHosts.isEmpty)
+    }
+
+    /// A page that joins the host of a Space the window does not show learns
+    /// it is off screen as it joins, and comes on screen once its Space does.
+    func testAPageJoiningAHiddenSpaceShowsOnlyWhenItsSpaceReturns() {
+        let view = BrowserNativeSurfaceProbe()
+        let host = BrowserWebHostView()
+        host.updatePresentation(presentsPage: false)
+        host.attach(view)
+
+        host.updatePresentation(presentsPage: true)
+
+        XCTAssertEqual(view.presentedOnAttach, [false])
+        XCTAssertEqual(view.presentations, [true])
     }
 
     func testFocusPolicyRequiresAPermittedOwnerAndNoCompetingPresentation() {
@@ -725,4 +816,20 @@ private final class BrowserFocusRefusingWindow: NSWindow {
         }
         return super.makeFirstResponder(responder)
     }
+}
+
+@MainActor
+private final class BrowserNativeSurfaceProbe: NSView, BrowserNativePageSurfaceLifecycle {
+    var attachedHosts: [BrowserWebHostView] = []
+    var detachedHosts: [BrowserWebHostView] = []
+    /// Whether each host presented the page as the surface joined it.
+    var presentedOnAttach: [Bool] = []
+    /// Each presentation the surface heard of while it stayed in its host.
+    var presentations: [Bool] = []
+    func didAttach(to host: BrowserWebHostView) {
+        attachedHosts.append(host)
+        presentedOnAttach.append(host.presentsPage)
+    }
+    func willDetach(from host: BrowserWebHostView) { detachedHosts.append(host) }
+    func presentationDidChange(in host: BrowserWebHostView) { presentations.append(host.presentsPage) }
 }

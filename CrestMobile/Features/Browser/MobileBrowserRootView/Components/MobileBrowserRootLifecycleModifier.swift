@@ -24,12 +24,10 @@ struct MobileBrowserRootLifecycleModifier: ViewModifier {
         _isAddressEditing = isAddressEditing
         _storedSidebarWidth = storedSidebarWidth
         _runtimeSessionProjection = State(
-            initialValue: BrowserRuntimeSessionProjection(
-                session: model.browser.session
-            )
+            initialValue: model.pages.runtimeProjection
         )
         _tabRuntimeAssignments = State(
-            initialValue: model.browser.session.tabRuntimeAssignments
+            initialValue: model.pages.tabRuntimeAssignments
         )
     }
 
@@ -54,35 +52,17 @@ struct MobileBrowserRootLifecycleModifier: ViewModifier {
 
         let pageObservedContent =
             preparedContent
-            .onChange(of: model.renderedPageSelection, initial: true) { _, selection in
-                model.recordRenderedSelection(selection)
-            }
-            .onChange(of: model.selectedPage?.displayURL) {
+            .onChange(of: model.selectedPage?.live.displayURL) {
                 synchronizePageMetadata()
-            }
-            .onChange(of: model.selectedPage?.title) {
-                synchronizePageMetadata()
-            }
-            .onChange(of: model.selectedPage?.faviconData) {
-                synchronizePageMetadata()
-            }
-            .onChange(of: model.selectedPage?.themeColor) {
-                synchronizePageMetadata()
-            }
-            .onChange(of: model.selectedPage?.completedNavigationCount) {
-                model.recordCompletedNavigation(
-                    isAddressEditing: isAddressEditing
-                )
             }
 
         let runtimeObservedContent =
             pageObservedContent
             .onChange(of: model.browser.sessionRevision, initial: true) {
-                runtimeSessionProjection = BrowserRuntimeSessionProjection(
-                    session: model.browser.session
-                )
+                model.browser.followSession()
+                runtimeSessionProjection = model.pages.runtimeProjection
                 tabRuntimeAssignments =
-                    model.browser.session.tabRuntimeAssignments
+                    model.pages.tabRuntimeAssignments
             }
             .onChange(of: tabRuntimeAssignments, initial: true) {
                 model.reconcileResidentPages()

@@ -1,41 +1,61 @@
 import SwiftUI
 import Translation
-import WebKit
 
 struct BrowserTranslationHost: ViewModifier {
     @Bindable var translation: BrowserPageTranslation
-    let webView: WKWebView
+    /// The page, not one engine's view. Whole-page translation rewrites a live
+    /// DOM through Apple's Translation session, which only the WebKit port
+    /// exposes; an engine that does not declare `translation` supplies no
+    /// target and the modifier stays inert rather than the shells having to
+    /// know which engine they composed.
+    let page: BrowserPlatformPage
     let isActive: Bool
     let isLoading: Bool
     let isReaderActive: Bool
 
     @State private var hostID = UUID()
     @Environment(\.scenePhase) private var scenePhase
-    @AppStorage(BrowserTranslationPreference.automaticKey, store: BrowserTranslationPreference.defaults)
-    private var automaticallyTranslates = false
-    @AppStorage(BrowserTranslationPreference.offersKey, store: BrowserTranslationPreference.defaults)
-    private var offersTranslation = true
+    private var preferences: AppPreferences { BrowserAppPreferenceStore.shared.preferences }
+    private var automaticallyTranslates: Bool { preferences.automaticallyTranslates }
+    private var offersTranslation: Bool { preferences.offersTranslation }
+    private var languageRules: [TranslationRule] { preferences.translationRules }
 
-    @AppStorage(BrowserTranslationPreference.rulesKey, store: BrowserTranslationPreference.defaults)
-    private var languageRulesRawValue = ""
+    private var translationTarget: (any BrowserPageEngine)? {
+        page.pageEngine.registration.supports(.translation) ? page.pageEngine : nil
+    }
 
-    private var detectionID: String {
-        "\(translation.documentRevision)-\(isActive)-\(isLoading)-\(isReaderActive)-\(scenePhase == .background)-\(automaticallyTranslates)-\(languageRulesRawValue)"
+    /// What detecting the page's language depends on; detection runs again
+    /// whenever any of it changes.
+    private struct Detection: Equatable {
+        let documentRevision: Int
+        let isActive: Bool
+        let isLoading: Bool
+        let isReaderActive: Bool
+        let isInBackground: Bool
+        let automaticallyTranslates: Bool
+        let languageRules: [TranslationRule]
+    }
+
+    private var detection: Detection {
+        Detection(
+            documentRevision: translation.documentRevision, isActive: isActive, isLoading: isLoading,
+            isReaderActive: isReaderActive, isInBackground: scenePhase == .background,
+            automaticallyTranslates: automaticallyTranslates, languageRules: languageRules)
     }
 
     func body(content: Content) -> some View {
         let configuration = translation.configuration
         return
             content
-            .task(id: detectionID) {
-                guard !Task.isCancelled else { return }
+            .task(id: detection) {
+                guard !Task.isCancelled, let engine = translationTarget else { return }
                 translation.updatePreferences(
                     automaticallyTranslates: automaticallyTranslates, offersTranslation: offersTranslation,
-                    languageRules: .init(rawValue: languageRulesRawValue))
+                    languageRules: languageRules)
                 translation.setActive(
-                    isActive && !isReaderActive && scenePhase != .background, in: webView, hostID: hostID)
+                    isActive && !isReaderActive && scenePhase != .background, in: engine, hostID: hostID)
                 guard !isLoading, !isReaderActive, isActive else { return }
-                await translation.detect(in: webView)
+                await translation.detect(in: engine)
                 await translation.automaticallyTranslateIfAvailable(enabled: automaticallyTranslates)
             }
             .task(id: "\(translation.languageStatusID)-\(translation.isOffered)-\(isActive)-\(scenePhase)") {
@@ -48,9 +68,13 @@ struct BrowserTranslationHost: ViewModifier {
             .onChange(of: offersTranslation) {
                 translation.updatePreferences(
                     automaticallyTranslates: automaticallyTranslates, offersTranslation: offersTranslation,
-                    languageRules: .init(rawValue: languageRulesRawValue))
+                    languageRules: languageRules)
             }
-            .onDisappear { translation.setActive(false, in: webView, hostID: hostID) }
+            .onDisappear {
+                if let engine = translationTarget {
+                    translation.setActive(false, in: engine, hostID: hostID)
+                }
+            }
             .sheet(isPresented: $translation.showsInformation) {
                 BrowserTranslationInformation(translation: translation)
             }

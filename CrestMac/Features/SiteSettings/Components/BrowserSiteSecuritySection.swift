@@ -2,7 +2,7 @@ import SwiftUI
 
 struct BrowserSiteSecuritySection: View {
     let page: BrowserPage
-    let origin: BrowserSiteOrigin
+    let origin: SiteOrigin
     var reviewCertificate: (() -> Void)?
 
     var body: some View {
@@ -29,36 +29,58 @@ struct BrowserSiteSecuritySection: View {
             } else {
                 securityLabel
             }
+            if let detail {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
     private var canReviewCertificate: Bool {
-        BrowserSiteCertificatePresentationPolicy.isAvailable(
-            url: page.displayURL,
-            hasServerTrust: page.webView.serverTrust != nil
-        )
+        page.canReviewCertificate
+    }
+
+    /// The connection as the core holds it for the page.
+    private var security: PageSecurity { page.live.security }
+
+    /// An HTTPS page the engine judged secure but whose verified trust it could
+    /// not hand over. Without a certificate to show, the page is not called
+    /// secure; the engine's warnings for other states still stand.
+    private var isUnconfirmedSecure: Bool {
+        security.isSecure
+            && page.live.displayURL?.scheme?.lowercased() == "https"
+            && !canReviewCertificate
     }
 
     private var securityLabel: some View {
-        Label(
-            page.hasOnlySecureContent ? "Secure" : "Not Secure",
-            systemImage: page.hasOnlySecureContent
-                ? "lock.fill"
-                : "lock.open.fill"
-        )
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(page.hasOnlySecureContent ? .green : .orange)
+        Label(title, systemImage: symbol)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(tint)
     }
+
+    private var title: LocalizedStringResource {
+        isUnconfirmedSecure ? "Connection Details Unavailable" : security.title
+    }
+
+    private var symbol: String {
+        isUnconfirmedSecure ? "lock" : security.symbol
+    }
+
+    private var tint: Color {
+        if isUnconfirmedSecure { return .secondary }
+        if security.isSecure { return .green }
+        return security.isHazardous ? .red : .orange
+    }
+
+    private var detail: LocalizedStringResource? { security.detail }
 
     private func presentCertificate() {
         if let reviewCertificate {
             reviewCertificate()
             return
         }
-        guard let trust = page.webView.serverTrust else { return }
-        BrowserSiteCertificatePresenter.present(
-            trust: trust,
-            for: page.webView.window
-        )
+        page.reviewCertificate()
     }
 }

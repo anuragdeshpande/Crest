@@ -10,10 +10,10 @@ struct BrowserQuickWindowAddressControl: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            BrowserQuickWindowSourceSpaceIndicator(space: model.space)
+            BrowserQuickWindowSourceSpaceIndicator(space: model.spaceModel?.identity)
             Divider().frame(height: 16)
             BrowserQuickWindowAddressSecurityIcon(
-                isSecure: model.page?.hasOnlySecureContent == true
+                isSecure: model.page?.live.security.isSecure == true
             )
             BrowserAddressContent(
                 text: $addressText,
@@ -37,7 +37,7 @@ struct BrowserQuickWindowAddressControl: View {
         .browserAddressFieldSurface(
             leadingPadding: BrowserQuickWindowLayout.sourceChipLeadingInset,
             progress: model.page?.estimatedProgress ?? 0,
-            isLoading: model.page?.isLoading == true,
+            isLoading: model.page?.live.isLoading == true,
             isEditing: isAddressEditing
         )
         .frame(
@@ -47,11 +47,10 @@ struct BrowserQuickWindowAddressControl: View {
     }
 
     private func openAddress() {
-        guard let space = model.space,
-            let url = AddressResolver.resolve(
-                addressText,
-                searchProvider: space.browsingPreferences.searchProvider
-            )
+        guard let space = model.spaceModel,
+            let resolved = try? model.browser.core.query(
+                ResolveAddress(workspaceID: model.browser.family.workspaceID, spaceID: space.id, input: addressText)),
+            let url = resolved.url.flatMap(URL.init(string:))
         else { return }
         addressText = url.absoluteString
         model.open(url, isActive: scenePhase == .active)

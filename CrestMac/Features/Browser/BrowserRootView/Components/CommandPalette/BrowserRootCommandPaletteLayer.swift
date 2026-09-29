@@ -6,20 +6,21 @@ struct BrowserRootCommandPaletteLayer: View {
     let commandSurfaceNamespace: Namespace.ID
     var contentInsets = EdgeInsets()
 
-    @Environment(\.openWindow) private var openWindow
+    @Environment(\.browserMacWindows) private var windows
     @Environment(\.layoutDirection) private var layoutDirection
 
     @ViewBuilder
     var body: some View {
         if let mode = model.chrome.commandPaletteMode,
-            isSourceAvailable
+            model.isCommandPaletteShown
         {
             BrowserCommandPalette(
-                space: model.browser.selectedSpace,
-                selectedTabID: model.browser.selectedTab?.id,
+                browser: model.browser,
+                space: paletteSpace,
+                selectedTabID: model.browser.shownTab?.id,
                 initialQuery: mode.initialQuery,
-                commands: commandActions.paletteRegistry(shortcuts: shortcuts),
-                isPrivateBrowsing: model.browser.isPrivateBrowsing,
+                commands: model.paletteRegistry(
+                    windows: windows, layoutDirection: layoutDirection, shortcuts: shortcuts),
                 isSourceAvailable: model.isPaletteSourceAvailable,
                 selectTab: model.selectPaletteTab,
                 openURL: { source, url in
@@ -27,16 +28,13 @@ struct BrowserRootCommandPaletteLayer: View {
                 },
                 dismiss: model.chrome.dismissCommandPalette,
                 morphNamespace: commandSurfaceNamespace,
-                morphID: BrowserRootCommandSurfaceID.address(
-                    spaceID: model.browser.selectedSpace?.id
-                ),
                 overlayContentInsets: contentInsets,
-                emptySelectionActions: emptySelectionActions
+                emptySelectionActions: model.emptySelectionPaletteActions
             )
             .id(
                 BrowserCommandPalettePresentationIdentity(
                     mode: mode,
-                    space: model.browser.selectedSpace,
+                    space: paletteSpace,
                     source: model.selectedTabAssignment
                 )
             )
@@ -45,36 +43,8 @@ struct BrowserRootCommandPaletteLayer: View {
         }
     }
 
-    private var isSourceAvailable: Bool {
-        if let source = model.selectedTabAssignment {
-            return model.isPaletteSourceAvailable(source)
-        }
-        return emptySelectionActions?.isAvailable == true
-    }
-
-    private var emptySelectionActions: BrowserEmptySelectionPaletteActions? {
-        guard let space = model.browser.selectedSpace, model.browser.selectedTab == nil else { return nil }
-        return BrowserEmptySelectionPaletteActions(
-            source: BrowserSpaceRuntimeAssignment(space: space),
-            browser: model.browser,
-            accessController: model.spaceAccess,
-            didSelectTab: {
-                model.pages.select(session: model.browser.session)
-                model.address = model.browser.selectedTab?.url?.absoluteString ?? ""
-            }
-        )
-    }
-
-    private var commandActions: BrowserCommandActions {
-        BrowserCommandActions(
-            browser: model.browser,
-            pages: model.pages,
-            chrome: model.chrome,
-            openWindow: openWindow,
-            spaceAccess: model.spaceAccess,
-            targetWindowID: model.windowState?.id,
-            layoutDirection: layoutDirection,
-            extensionSidebar: model.extensionSidebar
-        )
+    /// The Space the window shows, unless it is being deleted.
+    private var paletteSpace: SpaceModel? {
+        model.browser.shownSpace
     }
 }

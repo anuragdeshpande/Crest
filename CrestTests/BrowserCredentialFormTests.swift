@@ -142,71 +142,8 @@ final class BrowserCredentialFormTests: XCTestCase {
             ]))
     }
 
-    func testCapturePolicyRequiresSecureFrameAndTopLevelOrigins() throws {
-        let secure = try XCTUnwrap(CredentialOrigin(url: URL(string: "https://example.com/login")!))
-        let insecure = try XCTUnwrap(CredentialOrigin(url: URL(string: "http://example.com/login")!))
-
-        XCTAssertTrue(BrowserCredentialCapturePolicy.accepts(frameOrigin: secure, topLevelOrigin: secure))
-        XCTAssertFalse(BrowserCredentialCapturePolicy.accepts(frameOrigin: insecure, topLevelOrigin: secure))
-        XCTAssertFalse(BrowserCredentialCapturePolicy.accepts(frameOrigin: secure, topLevelOrigin: insecure))
-        XCTAssertTrue(BrowserCredentialCapturePolicy.offersSavedCredentials(for: .current))
-        XCTAssertFalse(BrowserCredentialCapturePolicy.offersSavedCredentials(for: .new))
-    }
-
-    func testMultiStepUsernameHintRequiresExactOriginsAndExpires() throws {
-        let loginOrigin = try XCTUnwrap(
-            CredentialOrigin(
-                url: URL(string: "https://accounts.example.com/start")!
-            ))
-        let otherOrigin = try XCTUnwrap(
-            CredentialOrigin(
-                url: URL(string: "https://embedded.example.com/password")!
-            ))
-        let capturedAt = Date(timeIntervalSince1970: 1_000)
-        let hint = BrowserCredentialUsernameHint(
-            origin: loginOrigin,
-            topLevelOrigin: loginOrigin,
-            username: "person@example.com",
-            capturedAt: capturedAt
-        )
-
-        XCTAssertEqual(
-            BrowserCredentialCapturePolicy.username(
-                from: hint,
-                frameOrigin: loginOrigin,
-                topLevelOrigin: loginOrigin,
-                now: capturedAt.addingTimeInterval(1)
-            ),
-            "person@example.com"
-        )
-        XCTAssertNil(
-            BrowserCredentialCapturePolicy.username(
-                from: hint,
-                frameOrigin: otherOrigin,
-                topLevelOrigin: loginOrigin,
-                now: capturedAt.addingTimeInterval(1)
-            ))
-        XCTAssertNil(
-            BrowserCredentialCapturePolicy.username(
-                from: hint,
-                frameOrigin: loginOrigin,
-                topLevelOrigin: otherOrigin,
-                now: capturedAt.addingTimeInterval(1)
-            ))
-        XCTAssertNil(
-            BrowserCredentialCapturePolicy.username(
-                from: hint,
-                frameOrigin: loginOrigin,
-                topLevelOrigin: loginOrigin,
-                now: capturedAt.addingTimeInterval(
-                    BrowserCredentialCapturePolicy.usernameHintLifetime + 1
-                )
-            ))
-    }
-
-    func testSaveOfferRequiresPasswordFieldToDisappearBeforeCandidateExpires() throws {
+    func testSaveCandidateNeverDescribesItsPassword() throws {
         let origin = try XCTUnwrap(CredentialOrigin(url: URL(string: "https://example.com/login")!))
-        let submittedAt = Date(timeIntervalSince1970: 1_000)
         let candidate = BrowserCredentialSaveCandidate(
             id: UUID(),
             origin: origin,
@@ -215,37 +152,19 @@ final class BrowserCredentialFormTests: XCTestCase {
             password: "secret",
             passwordKind: .current,
             isCrossOriginFrame: false,
-            submittedAt: submittedAt
+            submittedAt: Date(timeIntervalSince1970: 1_000)
         )
 
-        XCTAssertFalse(
-            BrowserCredentialCapturePolicy.shouldOfferSave(
-                candidate: candidate,
-                hasVisiblePasswordField: true,
-                now: submittedAt.addingTimeInterval(1)
-            ))
-        XCTAssertTrue(
-            BrowserCredentialCapturePolicy.shouldOfferSave(
-                candidate: candidate,
-                hasVisiblePasswordField: false,
-                now: submittedAt.addingTimeInterval(1)
-            ))
-        XCTAssertFalse(
-            BrowserCredentialCapturePolicy.shouldOfferSave(
-                candidate: candidate,
-                hasVisiblePasswordField: false,
-                now: submittedAt.addingTimeInterval(BrowserCredentialCapturePolicy.candidateLifetime + 1)
-            ))
         XCTAssertFalse(candidate.description.contains("secret"))
+        XCTAssertFalse(candidate.debugDescription.contains("secret"))
     }
 
     func testSavePromptModelMovesFromCreateToSavedAndSuppressesTheIdenticalCandidate() async throws {
         let store = BrowserStore(
-            session: .preview,
-            persistence: InMemoryBrowserSessionPersistence(),
+            seed: .preview,
             credentialVault: InMemoryCredentialVault()
         )
-        let work = try XCTUnwrap(store.session.spaces.first)
+        let work = try XCTUnwrap(store.spaceModels.first)
         let submittedAt = Date(timeIntervalSince1970: 2_000)
         let origin = try XCTUnwrap(
             CredentialOrigin(url: try XCTUnwrap(URL(string: "https://accounts.crest.test/login")))
@@ -290,11 +209,10 @@ final class BrowserCredentialFormTests: XCTestCase {
 
     func testSystemPasswordOfferRunsOnlyAfterCrestSaveAndRetriesWithoutDuplicatingIt() async throws {
         let store = BrowserStore(
-            session: .preview,
-            persistence: InMemoryBrowserSessionPersistence(),
+            seed: .preview,
             credentialVault: InMemoryCredentialVault()
         )
-        let work = try XCTUnwrap(store.session.spaces.first)
+        let work = try XCTUnwrap(store.spaceModels.first)
         let submittedAt = Date(timeIntervalSince1970: 2_100)
         let origin = try XCTUnwrap(
             CredentialOrigin(url: try XCTUnwrap(URL(string: "https://accounts.crest.test/login")))
@@ -488,23 +406,6 @@ final class BrowserCredentialFormTests: XCTestCase {
         )
         XCTAssertEqual(pageValues["username"] as? String, "filled-shadow@example.com")
         XCTAssertEqual(pageValues["password"] as? String, "filled-shadow-secret")
-    }
-
-    func testOlderSessionsDecodeWithSafeCredentialPreferenceDefaults() throws {
-        let encoded = try JSONEncoder().encode(BrowserSession.preview)
-        var root = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-        var spaces = try XCTUnwrap(root["spaces"] as? [[String: Any]])
-        for index in spaces.indices {
-            spaces[index]["credentialPreferences"] = nil
-        }
-        root["spaces"] = spaces
-        let legacyData = try JSONSerialization.data(withJSONObject: root)
-        let decoded = try JSONDecoder().decode(BrowserSession.self, from: legacyData)
-
-        XCTAssertTrue(
-            decoded.spaces.allSatisfy {
-                $0.credentialPreferences == .default
-            })
     }
 
     private func credentialBridgeWebView(

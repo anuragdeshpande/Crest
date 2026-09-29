@@ -1,9 +1,11 @@
 import Dispatch
 import Foundation
 
-/// Stores per-tab `WKWebView.interactionState` blobs so a tab that lost its web
-/// view — to residency trimming, to a relaunch — comes back with its
-/// back/forward list and scroll positions instead of a bare reload.
+/// Stores each tab's engine history on disk, so a tab that lost its page to a
+/// relaunch comes back with its back/forward list and scroll positions instead
+/// of a bare reload. The core hands a page it unloads back its state within a
+/// run, but keeps it in memory only, never in a saved file, so this archive is
+/// what survives a relaunch.
 ///
 /// Blobs run to hundreds of kilobytes, so they are kept out of the session JSON
 /// and written as one file per tab, off the main thread. Nothing here decides
@@ -11,14 +13,14 @@ import Foundation
 /// archive at all, so they cannot write one by accident.
 protocol BrowserTabStateArchiving: AnyObject, Sendable {
     /// The framed envelope stored for one tab, or nil when there is none.
-    func archivedState(profileID: UUID, tabID: TabID) -> Data?
-    func archive(interactionState: Data, url: URL?, profileID: UUID, tabID: TabID)
-    func removeState(profileID: UUID, tabID: TabID)
+    func archivedState(profileID: UUID, tabID: UUID) -> Data?
+    func archive(interactionState: Data, url: URL?, profileID: UUID, tabID: UUID)
+    func removeState(profileID: UUID, tabID: UUID)
     /// Drops every state belonging to one profile. Space deletion calls this, so
     /// per-Space isolation survives a Space being deleted.
     func removeStates(profileID: UUID)
     /// Drops states for tabs a profile no longer has, current or archived.
     /// Profiles absent from the map are left untouched.
-    func pruneStates(keeping tabIDsByProfileID: [UUID: Set<TabID>])
+    func pruneStates(keeping tabIDsByProfileID: [UUID: Set<UUID>])
     func flushPendingWrites() async
 }

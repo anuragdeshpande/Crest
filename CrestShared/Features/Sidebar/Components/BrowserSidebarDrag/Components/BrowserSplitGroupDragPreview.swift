@@ -9,11 +9,12 @@ import SwiftUI
 /// the default lift plate is the full row rectangle — wider than the surface it
 /// is meant to be lifting, with the plate's own background showing around it.
 struct BrowserSplitGroupDragPreview: View {
-    let members: [BrowserTab]
+    let members: [TabStateModel]
+    let favicons: FaviconAssets
     let profileID: UUID
     var rowWidth = BrowserTabDragPreviewLayout.rowSize.width
     var sourceHeight: CGFloat?
-    var loadedTabIDs: Set<TabID>?
+    var loadedTabIDs: Set<UUID>?
 
     private static let containerPadding: CGFloat = CrestSpacing.extraSmall
     private static let lineSpacing: CGFloat = CrestSpacing.extraExtraSmall
@@ -31,7 +32,7 @@ struct BrowserSplitGroupDragPreview: View {
 
         VStack(spacing: Self.lineSpacing) {
             header
-            ForEach(members) { member in
+            ForEach(members, id: \.id) { member in
                 line(for: member)
             }
         }
@@ -59,11 +60,11 @@ struct BrowserSplitGroupDragPreview: View {
         .frame(height: Self.headerHeight)
     }
 
-    private func line(for member: BrowserTab) -> some View {
+    private func line(for member: TabStateModel) -> some View {
         HStack(spacing: CrestSpacing.small) {
-            TabFaviconView(tab: member, profileID: profileID, size: 18)
+            TabStateFaviconView(tab: member, favicons: favicons, profileID: profileID, size: 18)
                 .frame(width: 20)
-            Text(member.displayTitle)
+            Text(member.shownTitle)
                 .lineLimit(1)
                 .foregroundStyle(.primary)
             Spacer(minLength: 0)

@@ -10,7 +10,7 @@ import SwiftUI
 /// and atmosphere fill the rest. Moving the sidebar to the other edge slides it
 /// across the crop, with the page giving way underneath, as the window does.
 struct BrowserLookAndFeelSidebarCrop: View {
-    var space: BrowserSpace?
+    var space: BrowserSpaceAppearance?
 
     @AppStorage(BrowserChromeAppearancePreference.sidebarOnRightKey, store: BrowserChromeAppearancePreference.defaults)
     private var sidebarOnRight = BrowserLookAndFeelDefaults.sidebarOnRight
@@ -26,7 +26,7 @@ struct BrowserLookAndFeelSidebarCrop: View {
     @State private var sidebarContentHeight: CGFloat = 0
 
     // Swift versions before 6.4 make the synthesized initializer private because of pageZoom.
-    init(space: BrowserSpace? = nil) {
+    init(space: BrowserSpaceAppearance? = nil) {
         self.space = space
     }
 
@@ -149,8 +149,8 @@ struct BrowserLookAndFeelSidebarCrop: View {
 
     private var edge: HorizontalEdge { appearance.sidebarEdge(in: layoutDirection) }
 
-    private var branding: BrowserSpaceBranding {
-        space?.branding ?? .house(.winter, symbol: "paintpalette")
+    private var branding: SpaceBranding {
+        space?.branding ?? BrowserSpaceHousePalette.winter.look
     }
 
     private var stateDescription: String {

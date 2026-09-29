@@ -1,12 +1,24 @@
 import SwiftUI
 
+/// A Space no window shows, as its sidebar would draw it: a preview, a setup
+/// draft or an import under review.
 struct BrowserSpaceSidebarPreview: View {
-    let space: BrowserSpace
+    let space: SpaceModel
+    /// The images the Space's tabs wear. A draft or a preview wears none.
+    var favicons = FaviconAssets()
     @Environment(\.browserInteractionCapabilities) private var capabilities
+    @Environment(CrestCore.self) private var core: CrestCore?
+
+    /// No window shows a previewed Space, so it highlights the tab the core
+    /// would show first.
+    private var selectedTabID: UUID? { core?.fallbackTabID(in: space) }
+
+    private var branding: SpaceBranding { space.settings.look }
 
     var body: some View {
+        let branding = branding
         ZStack {
-            BrowserSpaceBannerBackground(branding: space.branding)
+            BrowserSpaceBannerBackground(branding: branding)
 
             VStack(spacing: 0) {
                 HStack(
@@ -27,7 +39,7 @@ struct BrowserSpaceSidebarPreview: View {
                 .frame(
                     height: BrowserManualSetupSidebarPreviewMetrics.addressHeight
                 )
-                .browserAddressFieldSurface(progress: 0, isLoading: false, isEditing: false, branding: space.branding)
+                .browserAddressFieldSurface(progress: 0, isLoading: false, isEditing: false, branding: branding)
                 .padding(
                     BrowserManualSetupSidebarPreviewMetrics.addressOuterPadding
                 )
@@ -40,26 +52,24 @@ struct BrowserSpaceSidebarPreview: View {
                     ) {
                         if !space.pinnedTabs.isEmpty {
                             PinnedTabGrid(
-                                tabs: space.pinnedTabs,
-                                assignment: BrowserSpaceRuntimeAssignment(
-                                    space: space
-                                ),
-                                selectedTabID: space.selectedTabID,
-                                select: { _ in },
-                                capabilities: capabilities
+                                tabs: space.pinnedTabs, favicons: favicons,
+                                assignment: BrowserSpaceRuntimeAssignment(space: space),
+                                selectedTabID: selectedTabID, select: { _ in }, capabilities: capabilities
                             )
                         }
                         BrowserSpaceSidebarSection(
                             title: "SAVED",
                             tabs: space.unfiledSavedTabs,
-                            profileID: space.profile.id,
-                            selectedTabID: space.selectedTabID
+                            favicons: favicons,
+                            profileID: space.profileID,
+                            selectedTabID: selectedTabID
                         )
                         BrowserSpaceSidebarSection(
                             title: "OPEN TABS",
                             tabs: space.currentTabs,
-                            profileID: space.profile.id,
-                            selectedTabID: space.selectedTabID
+                            favicons: favicons,
+                            profileID: space.profileID,
+                            selectedTabID: selectedTabID
                         )
                     }
                     .padding(
@@ -98,22 +108,23 @@ struct BrowserSpaceSidebarPreview: View {
         }
         .environment(
             \.colorScheme,
-            BrowserSpaceForegroundPolicy.colorScheme(for: space.branding)
+            BrowserSpaceForegroundPolicy.colorScheme(for: branding)
         )
         .allowsHitTesting(false)
         .environment(\.sidebarSpacePresentation, SidebarSpacePresentation(space: space, isUnlocked: true))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Branding preview of \(space.name)")
+        .accessibilityLabel("Branding preview of \(space.settings.name)")
         .accessibilityValue(accessibilitySummary)
     }
 
     private var accessibilitySummary: String {
+        let branding = branding
         let mode =
-            switch space.branding.themeMode {
+            switch branding.themeMode {
             case .banner: String(localized: "Banner")
             case .gradient: String(localized: "Gradient")
             }
-        let colors = space.branding.colors.map(\.title).joined(separator: ", ")
-        return "\(mode), \(colors), \(space.branding.iconStyle.title)"
+        let colors = branding.colors.map(\.title).joined(separator: ", ")
+        return "\(mode), \(colors), \(branding.iconStyle.title)"
     }
 }

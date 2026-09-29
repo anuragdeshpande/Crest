@@ -8,20 +8,24 @@ struct BrowserStartPageContent: View {
     /// through `BrowserCommandPaletteActionPolicy`, which answers "unavailable"
     /// for a card that is not the focused one — an unfocused start page reads
     /// but does not act until a click makes it the focused card.
-    let tab: BrowserTab?
-    let space: BrowserSpace?
+    let tab: TabStateModel?
+    let space: SpaceModel?
     let browser: BrowserStore
     let pages: BrowserPagePool
     let spaceAccess: BrowserSpaceAccessController
     let tabPromotionNamespace: Namespace.ID
     let focusRequest: Int
     let isCommandPalettePresented: Bool
+    /// The window's commands, which the page's palette offers once what is
+    /// typed matches one. They run exactly as they do from the overlay.
+    let commands: BrowserCommandPaletteCommandRegistry
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         if let space {
             BrowserStartPage(
+                browser: browser,
                 space: space,
                 isPrivateBrowsing: browser.isPrivateBrowsing,
                 selectedTabID: tab?.id,
@@ -30,7 +34,7 @@ struct BrowserStartPageContent: View {
                 openURL: openStartPageURL,
                 isCommandPaletteObscured: isCommandPalettePresented,
                 layout: .macOSPage,
-                focusRequest: space.id == browser.session.selectedSpaceID && tab?.id == browser.selectedTab?.id
+                focusRequest: space.id == browser.selectedSpaceID && tab != nil && tab?.id == browser.shownTab?.id
                     ? focusRequest
                     : nil,
                 promotion: tab.map { tab in
@@ -38,7 +42,8 @@ struct BrowserStartPageContent: View {
                         namespace: tabPromotionNamespace,
                         id: BrowserTabPromotionID.value(for: tab.id)
                     )
-                }
+                },
+                commands: commands
             )
         } else {
             BrowserUnloadedPageSurface()
@@ -77,7 +82,7 @@ struct BrowserStartPageContent: View {
         else { return false }
         browser.selectSpace(destination.space.id)
         browser.selectTab(destination.tab.id)
-        pages.select(session: browser.session)
+        pages.select()
         return true
     }
 

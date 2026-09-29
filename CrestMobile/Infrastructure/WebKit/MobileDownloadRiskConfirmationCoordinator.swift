@@ -30,24 +30,56 @@ final class MobileDownloadRiskConfirmationCoordinator {
     }
 
     func requestApproval(
-        assessment: BrowserDownloadRiskAssessment,
+        assessment: DownloadRiskAssessment,
         sourceURL: URL?,
-        spaceName: String
+        spaceName: String,
+        profileID: UUID
+    ) async -> Bool {
+        await requestApproval(
+            MobileDownloadRiskConfirmationRequest(
+                assessment: assessment,
+                sourceHost: sourceURL?.host() ?? sourceURL?.absoluteString,
+                spaceName: spaceName,
+                profileID: profileID
+            ),
+            dismissal: nil)
+    }
+
+    /// Asks whether to go on with a download the core judged dangerous, for
+    /// its reasons, until the core settles the question.
+    func requestApproval(
+        for asked: DownloadApprovalAsked, spaceName: String, profileID: UUID, dismissal: BrowserPromptDismissal
+    ) async -> Bool {
+        await requestApproval(
+            MobileDownloadRiskConfirmationRequest(
+                assessment: DownloadRiskAssessment(sanitizedFilename: asked.filename, reasons: asked.reasons),
+                sourceHost: asked.sourceHost,
+                spaceName: spaceName,
+                profileID: profileID
+            ),
+            dismissal: dismissal)
+    }
+
+    private func requestApproval(
+        _ request: MobileDownloadRiskConfirmationRequest, dismissal: BrowserPromptDismissal?
     ) async -> Bool {
         await withCheckedContinuation { continuation in
-            let pending = PendingRequest(
-                request: MobileDownloadRiskConfirmationRequest(
-                    assessment: assessment,
-                    sourceURL: sourceURL,
-                    spaceName: spaceName
-                ),
-                continuation: continuation
-            )
+            let pending = PendingRequest(request: request, continuation: continuation)
             if current == nil {
                 present(pending)
             } else {
                 queued.append(pending)
             }
+            dismissal?.attach { [weak self] in self?.withdraw(request.id) }
+        }
+    }
+
+    /// Takes back a request nobody waits on any more, as declined.
+    private func withdraw(_ requestID: UUID) {
+        if current?.request.id == requestID {
+            cancel()
+        } else if let index = queued.firstIndex(where: { $0.request.id == requestID }) {
+            queued.remove(at: index).continuation.resume(returning: false)
         }
     }
 
@@ -68,6 +100,19 @@ final class MobileDownloadRiskConfirmationCoordinator {
         activeContinuation?.resume(returning: false)
         for continuation in queuedContinuations {
             continuation.resume(returning: false)
+        }
+    }
+
+    /// Cancels the requests of the given profiles, such as one window's
+    /// private browsing, and leaves every other window's requests waiting.
+    func cancelAll(profileIDs: Set<UUID>) {
+        let canceled = queued.filter { profileIDs.contains($0.request.profileID) }
+        queued.removeAll { profileIDs.contains($0.request.profileID) }
+        for pending in canceled {
+            pending.continuation.resume(returning: false)
+        }
+        if let request, profileIDs.contains(request.profileID) {
+            cancel()
         }
     }
 

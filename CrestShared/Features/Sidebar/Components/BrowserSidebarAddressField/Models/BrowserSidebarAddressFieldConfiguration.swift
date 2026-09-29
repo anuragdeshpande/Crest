@@ -29,12 +29,19 @@ struct BrowserSidebarAddressFieldConfiguration {
     let activate: (() -> Void)?
     let submit: () -> Void
     let morphNamespace: Namespace.ID
-    let morphID: String
+    /// The Space this field belongs to. It names the field's identities in
+    /// `morphNamespace`, so a window never morphs one Space's field into
+    /// another Space's surface.
+    let spaceID: UUID
+    /// Whether the field holds its identity for the command palette or has
+    /// handed it to the open palette. A shell without an overlay palette
+    /// leaves the field out of the hand-off.
+    var commandPaletteHandoff = BrowserCommandPaletteHandoff.neither
     var addressAccessibilityLabel: LocalizedStringKey = "Address and search"
     var addressAccessibilityIdentifier = "address-field"
     var addressDisplayAccessibilityIdentifier = "address-display"
     var prompt: LocalizedStringKey = "Search or enter website"
-    var branding: BrowserSpaceBranding? = nil
+    var branding: SpaceBranding? = nil
 
     var metrics: BrowserSidebarAddressFieldMetrics {
         BrowserSidebarInteractionPolicy.addressFieldMetrics(capabilities)

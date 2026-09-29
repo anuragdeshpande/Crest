@@ -17,14 +17,14 @@ struct BrowserEmptySelectionPaletteActions {
                 accessController: accessController
             )
         else { return false }
-        return space.selectedTabID == nil
+        return browser.selectedTabID(in: space.id) == nil
     }
 
     func selectTab(_ target: BrowserTabRuntimeAssignment) -> Bool {
         guard isAvailable,
             target.spaceID == source.spaceID,
             target.profileID == source.profileID,
-            browser.selectedSpace?.contains(target.tabID) == true
+            browser.shownSpace?.tabs.model(target.tabID) != nil
         else { return false }
         browser.selectTab(target.tabID)
         didSelectTab()

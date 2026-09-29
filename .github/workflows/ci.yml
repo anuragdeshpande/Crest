@@ -38,6 +38,28 @@ jobs:
       - name: Test retained script contracts
         run: python3 -m unittest discover -s Scripts/Tests
 
+  core:
+    name: .NET core contracts and lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the repository shell
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zsh
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 10.0.201
+
+      - name: Test core contracts
+        run: dotnet test CrestCore/tests/CrestCore.Tests/CrestCore.Tests.csproj --nologo
+
+      - name: Check core analyzers and code style
+        run: Scripts/control-plane/lint-dotnet.sh
+
   app:
     name: Compile macOS and iOS
     runs-on: xcode-27
@@ -49,6 +71,7 @@ jobs:
         run: |
           command -v xcodegen >/dev/null || brew install xcodegen
           command -v rg >/dev/null || brew install ripgrep
+          Scripts/control-plane/install-dotnet.sh
 
       - name: Generate the project
         run: Scripts/bootstrap.sh

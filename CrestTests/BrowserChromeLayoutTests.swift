@@ -8,22 +8,10 @@ import XCTest
 final class BrowserChromeLayoutTests: XCTestCase {
 
     @MainActor
-    func testSetupActivationRejectsBrowserWithSetupPageTitle() {
-        let browser = NSWindow()
-        browser.identifier = NSUserInterfaceItemIdentifier(BrowserSceneID.browser.rawValue)
-        browser.title = BrowserOnboardingWindowActivation.windowTitle
-        XCTAssertFalse(BrowserOnboardingWindowActivation.isSetupWindow(browser))
-        let setup = NSWindow()
-        setup.identifier = NSUserInterfaceItemIdentifier(BrowserOnboardingCoordinator.sceneID)
-        setup.title = ""
-        XCTAssertTrue(BrowserOnboardingWindowActivation.isSetupWindow(setup))
-    }
-
-    @MainActor
     func testSettingsPresentationKeepsTheLatestDestinationAndSpace() {
         let presentation = BrowserSpaceSettingsPresentationState()
-        let first = SpaceID()
-        let second = SpaceID()
+        let first = UUID()
+        let second = UUID()
         let firstAssignment = BrowserSpaceRuntimeAssignment(
             spaceID: first,
             profileID: UUID()
@@ -34,135 +22,42 @@ final class BrowserChromeLayoutTests: XCTestCase {
         )
 
         presentation.present(assignment: firstAssignment)
-        presentation.present(.extensions, assignment: secondAssignment)
+        presentation.present(.shortcuts, assignment: secondAssignment)
 
         XCTAssertEqual(presentation.requestedSpaceID, second)
         XCTAssertEqual(presentation.requestedAssignment, secondAssignment)
-        XCTAssertEqual(presentation.requestedDestination, .extensions)
+        XCTAssertEqual(presentation.requestedDestination, .shortcuts)
         XCTAssertEqual(presentation.revision, 2)
     }
 
     @MainActor
     func testRepeatedSettingsPresentationStillPublishesANewRequest() {
         let presentation = BrowserSpaceSettingsPresentationState()
-        let spaceID = SpaceID()
+        let spaceID = UUID()
         let assignment = BrowserSpaceRuntimeAssignment(
             spaceID: spaceID,
             profileID: UUID()
         )
 
-        presentation.present(.extensions, assignment: assignment)
-        presentation.present(.extensions, assignment: assignment)
+        presentation.present(.shortcuts, assignment: assignment)
+        presentation.present(.shortcuts, assignment: assignment)
 
-        XCTAssertEqual(presentation.requestedDestination, .extensions)
+        XCTAssertEqual(presentation.requestedDestination, .shortcuts)
         XCTAssertEqual(presentation.requestedSpaceID, spaceID)
         XCTAssertEqual(presentation.revision, 2)
     }
 
     @MainActor
     func testSettingsPresentationRejectsAReplacementBrowsingProfile() throws {
-        let browser = BrowserStore(
-            session: .preview,
-            persistence: InMemoryBrowserSessionPersistence(),
-            browsingMode: .privateBrowsing
-        )
-        let original = try XCTUnwrap(browser.selectedSpace)
+        let browser = BrowserStore(seed: .preview)
+        let original = try XCTUnwrap(browser.shownSpace)
         let presentation = BrowserSpaceSettingsPresentationState()
         presentation.present(
             assignment: BrowserSpaceRuntimeAssignment(space: original)
         )
-        let replacement = BrowserSpace(
-            id: original.id,
-            profile: BrowsingProfile(),
-            name: original.name,
-            symbol: original.symbol,
-            accent: original.accent,
-            branding: original.branding,
-            folders: original.folders,
-            tabs: original.tabs,
-            archivedTabs: original.archivedTabs,
-            history: original.history,
-            browsingPreferences: original.browsingPreferences,
-            credentialPreferences: original.credentialPreferences,
-            accessPolicy: original.accessPolicy,
-            isSavedTabsExpanded: original.isSavedTabsExpanded,
-            savedTabsExpansionModifiedAt: original.savedTabsExpansionModifiedAt,
-            selectedTabID: original.selectedTabID
-        )
-        let index = try XCTUnwrap(
-            browser.session.spaces.firstIndex { $0.id == original.id }
-        )
-        browser.session.spaces[index] = replacement
+        browser.replaceProfileForTesting(of: original.id)
 
         XCTAssertNil(presentation.requestedSpaceID(in: browser))
-    }
-
-    @MainActor
-    func testExtensionCommandSettingsPresentationTargetsShortcuts() throws {
-        let presentation = BrowserSpaceSettingsPresentationState()
-        let spaceID = SpaceID()
-        let assignment = BrowserSpaceRuntimeAssignment(
-            spaceID: spaceID,
-            profileID: UUID()
-        )
-        let route = try XCTUnwrap(
-            BrowserExtensionCommandSettingsRoute(
-                url: URL(
-                    string: "chrome://extensions/configureCommands?command=eimadpbcbfnmbkopoojfekhnkhdbieeh-addSite"
-                )!
-            )
-        )
-
-        presentation.presentExtensionCommandSettings(
-            route,
-            assignment: assignment
-        )
-
-        XCTAssertEqual(presentation.requestedDestination, .shortcuts)
-        XCTAssertEqual(presentation.requestedSpaceID, spaceID)
-        XCTAssertEqual(presentation.requestedExtensionCommand, route)
-        XCTAssertEqual(presentation.revision, 1)
-    }
-
-    func testChromeExtensionCommandURLRoutesToCrestShortcuts() throws {
-        let route = try XCTUnwrap(
-            BrowserExtensionCommandSettingsRoute(
-                url: URL(
-                    string: "chrome://extensions/configureCommands?command=eimadpbcbfnmbkopoojfekhnkhdbieeh-addSite"
-                )!
-            )
-        )
-
-        XCTAssertEqual(
-            route.extensionID,
-            "eimadpbcbfnmbkopoojfekhnkhdbieeh"
-        )
-        XCTAssertEqual(route.commandID, "addSite")
-        XCTAssertNil(
-            BrowserExtensionCommandSettingsRoute(
-                url: URL(string: "https://example.com/extensions")!
-            )
-        )
-    }
-
-    func testWebExtensionShortcutKeysUseWebKitsSupportedCharacters() {
-        XCTAssertEqual(
-            BrowserExtensionShortcutPolicy.activationKey(
-                for: .character("a")
-            ),
-            "a"
-        )
-        XCTAssertEqual(
-            BrowserExtensionShortcutPolicy.activationKey(
-                for: .special(.leftArrow)
-            ),
-            "\u{F702}"
-        )
-        XCTAssertNil(
-            BrowserExtensionShortcutPolicy.activationKey(
-                for: .special(.escape)
-            )
-        )
     }
 
     func testCertificateReviewRequiresHTTPSAndServerTrust() {
@@ -187,72 +82,22 @@ final class BrowserChromeLayoutTests: XCTestCase {
     }
 
     @MainActor
-    func testExtensionPopupKeepsTheInvokingBrowserWindowAfterFocusChanges() {
-        let browserWindow = NSWindow(
-            contentRect: CGRect(x: 0, y: 0, width: 1_200, height: 800),
-            styleMask: .borderless,
-            backing: .buffered,
-            defer: false
-        )
-        let transientWindow = NSWindow(
-            contentRect: CGRect(x: 0, y: 0, width: 292, height: 420),
-            styleMask: .borderless,
-            backing: .buffered,
-            defer: false
-        )
-        let anchor = BrowserExtensionPopupAnchor(
-            screenPoint: CGPoint(x: 176, y: 742),
-            sourceWindow: browserWindow
-        )
-
-        XCTAssertTrue(
-            anchor.contentView(fallbackWindow: transientWindow)
-                === browserWindow.contentView
-        )
-    }
-
-    @MainActor
-    func testExtensionPopupStaysBoundToTheInvokingViewAfterWindowMoves()
-        throws
-    {
-        let browserWindow = NSWindow(
-            contentRect: CGRect(x: 40, y: 80, width: 1_200, height: 800),
-            styleMask: .borderless,
-            backing: .buffered,
-            defer: false
-        )
-        let iconView = NSView(
-            frame: CGRect(x: 72, y: 710, width: 24, height: 24)
-        )
-        browserWindow.contentView?.addSubview(iconView)
-        let anchor = BrowserExtensionPopupAnchor(sourceView: iconView)
-            .offsetBy(dy: -18)
-
-        browserWindow.setFrameOrigin(CGPoint(x: 320, y: 140))
-
-        let source = try XCTUnwrap(
-            anchor.presentationSource(fallbackWindow: nil)
-        )
-        XCTAssertTrue(source.view === iconView)
-        XCTAssertEqual(source.rect, iconView.bounds)
-    }
-
     func testSidebarClearHistoryKeepsTheInitiatingSpaceAfterSelectionChanges() throws {
-        var session = BrowserSession.preview
-        let initiatingSpace = try XCTUnwrap(session.selectedSpace)
+        let browser = BrowserStore(seed: .preview)
+        let initiatingSpace = try XCTUnwrap(browser.shownSpace)
         let laterSelectedSpace = try XCTUnwrap(
-            session.spaces.first { $0.id != initiatingSpace.id }
+            browser.spaceModels.first { $0.id != initiatingSpace.id }
         )
         let clearHistory = BrowserSidebarClearHistoryConfirmation(
             assignment: BrowserSpaceRuntimeAssignment(space: initiatingSpace),
-            spaceName: initiatingSpace.name
+            spaceName: initiatingSpace.settings.name
         )
 
-        session.selectSpace(laterSelectedSpace.id)
+        browser.selectSpace(laterSelectedSpace.id)
 
-        XCTAssertEqual(session.selectedSpaceID, laterSelectedSpace.id)
+        XCTAssertEqual(browser.selectedSpaceID, laterSelectedSpace.id)
         XCTAssertEqual(clearHistory.spaceID, initiatingSpace.id)
-        XCTAssertEqual(clearHistory.spaceName, initiatingSpace.name)
+        XCTAssertEqual(clearHistory.spaceName, initiatingSpace.settings.name)
     }
 
     @MainActor
@@ -293,35 +138,6 @@ final class BrowserChromeLayoutTests: XCTestCase {
                 forKeyCode: 36,
                 modifierFlags: [.command]
             )
-        )
-    }
-
-    func testSpaceAccessibilityReportsPositionAndMovesOnlyOneSpace() throws {
-        let session = BrowserSession.preview
-        let work = try XCTUnwrap(session.spaces.first)
-        let personal = try XCTUnwrap(session.spaces.last)
-
-        XCTAssertEqual(
-            BrowserChromeAccessibility.spaceValue(
-                spaces: session.spaces,
-                selectedSpaceID: work.id
-            ),
-            "Work, 1 of 2"
-        )
-        XCTAssertNil(
-            BrowserChromeAccessibility.adjacentSpaceID(
-                spaces: session.spaces,
-                selectedSpaceID: work.id,
-                direction: .previous
-            )
-        )
-        XCTAssertEqual(
-            BrowserChromeAccessibility.adjacentSpaceID(
-                spaces: session.spaces,
-                selectedSpaceID: work.id,
-                direction: .next
-            ),
-            personal.id
         )
     }
 
@@ -444,6 +260,14 @@ final class BrowserChromeLayoutTests: XCTestCase {
         }
     }
 
+    /// A swipe no page took, such as a mouse's Back action over a Chromium
+    /// page, moves the way WebKit's views and Chrome's windows move it.
+    func testUnhandledSwipeGoesBackOnAPositiveDeltaAsTheEnginesDo() {
+        XCTAssertEqual(BrowserSidebarMouseButtonPolicy.action(forSwipeDeltaX: 1), .previousSpace)
+        XCTAssertEqual(BrowserSidebarMouseButtonPolicy.action(forSwipeDeltaX: -1), .nextSpace)
+        XCTAssertNil(BrowserSidebarMouseButtonPolicy.action(forSwipeDeltaX: 0))
+    }
+
     func testAuxiliaryMouseButtonsRemainUnclaimedOutsidePageAndSidebar() {
         for action in [
             BrowserSidebarMouseButtonAction.previousSpace,
@@ -538,7 +362,7 @@ extension BrowserChromeLayoutTests {
         let defaults = BrowserChromeAppearancePreference.defaults(for: environment)
         defer {
             defaults.removePersistentDomain(
-                forName: BrowserLaunchIsolationPolicy.isolatedDefaultsSuiteName(isolationID: id))
+                forName: BrowserLaunchEnvironment.isolatedDefaultsSuiteName(isolationID: id))
         }
         XCTAssertFalse(defaults.bool(forKey: BrowserChromeAppearancePreference.sidebarOnRightKey))
         XCTAssertFalse(defaults.bool(forKey: BrowserChromeAppearancePreference.borderlessKey))
@@ -573,23 +397,25 @@ extension BrowserChromeLayoutTests {
     func testChromeAppearanceChangesPreserveLivePageHostsAndDocumentState() async throws {
         for split in [false, true] {
             var space = BrowserRootPreviewFixture.space
-            space.tabs = split ? BrowserRootPreviewFixture.splitMembers : [BrowserRootPreviewFixture.splitMembers[0]]
+            let members = BrowserRootPreviewFixture.splitMembers
+            space.tabs = split ? members : [members[0]]
             for index in space.tabs.indices {
-                space.tabs[index].url = URL(string: "about:blank")
+                space.tabs[index].url = "about:blank"
                 if !split { space.tabs[index].splitGroupID = nil }
             }
-            space.selectedTabID = space.tabs[0].id
-            let browser = BrowserStore(
-                session: BrowserSession(spaces: [space], selectedSpaceID: space.id),
-                persistence: InMemoryBrowserSessionPersistence())
-            let pages = BrowserPagePool()
-            pages.select(session: browser.session)
+            let selectedTabID = space.tabs[0].id
+            let browser = BrowserStore.hostingPages(
+                SessionState.Seed(spaces: [space]),
+                showing: space.id, tabs: [space.id: selectedTabID])
+            let pages = BrowserPagePool(browser: browser)
+            pages.select()
             let model = BrowserRootModel(
                 browser: browser, pages: pages, chrome: BrowserChromeState(sidebarIsPresented: true),
                 spaceAccess: BrowserSpaceAccessController(), windowState: nil, startupBehavior: .showStartPage,
                 persistedSidebarWidth: 289)
+            let spaceModel = try XCTUnwrap(browser.spaceModel(space.id))
             let livePages = try space.tabs.map { tab in
-                try XCTUnwrap(pages.surfacePage(for: tab, in: space, accessController: model.spaceAccess))
+                try XCTUnwrap(pages.surfacePage(for: tab.id, in: spaceModel, accessController: model.spaceAccess))
             }
             // Finish the pool's initial blank documents before starting this
             // navigation, so their late completion cannot contaminate the baseline.
@@ -637,8 +463,8 @@ extension BrowserChromeLayoutTests {
                 host.rootView = ChromeContinuityTestShell(model: model, appearance: appearance)
                 host.layoutSubtreeIfNeeded()
                 try await Task.sleep(for: .milliseconds(300))
-                XCTAssertEqual(browser.session.selectedSpaceID, space.id)
-                XCTAssertEqual(browser.selectedTab?.id, space.selectedTabID)
+                XCTAssertEqual(browser.selectedSpaceID, space.id)
+                XCTAssertEqual(browser.shownTab?.id, selectedTabID)
                 for (index, page) in livePages.enumerated() {
                     XCTAssertTrue(
                         page.webView.superview === parents[index], "A chrome change must not detach the live web view")
@@ -660,7 +486,7 @@ extension BrowserChromeLayoutTests {
                     persistedFractions: [0.8, 0.2])
                 for focusedIndex in [1, 0, 1] {
                     model.focusSplitCard(space.tabs[focusedIndex].id)
-                    pages.select(session: browser.session)
+                    pages.select()
                     host.layoutSubtreeIfNeeded()
                     try await Task.sleep(for: .milliseconds(300))
                     for (index, livePage) in livePages.enumerated() {

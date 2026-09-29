@@ -6,95 +6,81 @@ struct MobileBrowserCommandController {
     let pages: MobileBrowserPageStore
     var spaceAccess = BrowserSpaceAccessController()
 
-    var orderedTabs: [BrowserTab] {
-        browser.selectedSpace?.tabs ?? []
+    // MARK: - Variables
+
+    /// How many tabs the Space this window shows holds.
+    var tabCount: Int {
+        browser.shownSpace?.tabs.models.count ?? 0
     }
 
     var canArchiveSelectedTab: Bool {
-        browser.selectedTab?.placement == .current
-            && browser.selectedTab?.isStartPage == false
+        browser.allows(.archiveTab)
     }
 
     var canDismissSelectedTab: Bool {
-        BrowserTabDismissalPolicy.action(
-            for: browser.selectedTab,
-            tabCount: orderedTabs.count
-        ) != .closeWindow
+        guard let tab = browser.shownTab, let space = browser.shownSpace else { return false }
+        return !browser.closingLeavesOnlyTheWindow(tab.id, in: space.id)
     }
 
     var canDuplicateSelectedTab: Bool {
-        browser.selectedTab?.isStartPage == false
+        browser.allows(.duplicateTab)
     }
 
     var canReopenClosedTab: Bool {
-        browser.selectedSpace?.archivedTabs.isEmpty == false
+        browser.allows(.reopenClosedTab)
     }
 
+    // MARK: - Actions - Tabs
+
     @discardableResult
-    func toggleSelectedTabPinned() -> TabID? {
-        guard let tab = browser.selectedTab else { return nil }
-        let destination: TabPlacement = tab.placement == .pinned ? .current : .pinned
-        guard browser.moveTab(tab.id, to: destination) else { return nil }
+    func toggleSelectedTabPinned() -> UUID? {
+        guard let tab = browser.shownTab, browser.togglePin(tab.id) else { return nil }
         synchronizePages()
         return tab.id
     }
 
     @discardableResult
-    func archiveSelectedTab() -> TabID? {
+    func archiveSelectedTab() -> UUID? {
         guard let tabID = browser.archiveSelectedTab() else { return nil }
         synchronizePages()
         return tabID
     }
 
     @discardableResult
-    func dismissSelectedTab() -> TabID? {
-        guard let selectedTab = browser.selectedTab else { return nil }
-        switch BrowserTabDismissalPolicy.action(
-            for: selectedTab,
-            tabCount: orderedTabs.count
-        ) {
-        case .closeTab:
-            if selectedTab.isStartPage {
-                browser.closeTab(selectedTab.id)
-                synchronizePages()
-                return selectedTab.id
-            }
-            return archiveSelectedTab()
-        case .unloadPage:
-            guard let space = browser.selectedSpace,
-                BrowserDurableTabCloseAction(
-                    browser: browser, spaceAccess: spaceAccess,
-                    closePage: { pages.closeDurablePage($0, discardState: $1) }
-                ).perform(
+    func dismissSelectedTab() -> UUID? {
+        guard let selectedTab = browser.shownTab, canDismissSelectedTab else { return nil }
+        // A saved or pinned tab puts its page away, which the page host
+        // follows once the core records it.
+        if selectedTab.placement.isDurable {
+            guard let space = browser.shownSpace,
+                BrowserDurableTabCloseAction(browser: browser, spaceAccess: spaceAccess).perform(
                     BrowserTabRuntimeAssignment(
-                        tabID: selectedTab.id, spaceID: space.id, profileID: space.profile.id
+                        tabID: selectedTab.id, spaceID: space.id, profileID: space.profileID
                     ))
             else { return nil }
             synchronizePages()
             return selectedTab.id
-        case .closeWindow:
-            return nil
         }
+        if selectedTab.surface == .startPage {
+            browser.closeTab(selectedTab.id)
+            synchronizePages()
+            return selectedTab.id
+        }
+        return archiveSelectedTab()
     }
 
     @discardableResult
-    func duplicateSelectedTab() -> TabID? {
+    func duplicateSelectedTab() -> UUID? {
         guard let tabID = browser.duplicateSelectedTab() else { return nil }
         synchronizePages()
         return tabID
     }
 
     @discardableResult
-    func reopenClosedTab() -> TabID? {
-        guard
-            let archived = browser.selectedSpace?.archivedTabs.max(
-                by: { $0.archivedAt < $1.archivedAt }
-            )
-        else { return nil }
-        browser.restoreArchivedTab(archived.id)
-        browser.selectTab(archived.id)
+    func reopenClosedTab() -> UUID? {
+        guard browser.reopenClosedTab() else { return nil }
         synchronizePages()
-        return archived.id
+        return browser.shownTab?.id
     }
 
     func cleanupCurrentTabs() {
@@ -103,66 +89,61 @@ struct MobileBrowserCommandController {
     }
 
     @discardableResult
-    func selectPreviousTab() -> TabID? {
-        selectTab(offset: -1)
+    func selectPreviousTab() -> UUID? {
+        selectAdjacentTab(.previous)
     }
 
     @discardableResult
-    func selectNextTab() -> TabID? {
-        selectTab(offset: 1)
+    func selectNextTab() -> UUID? {
+        selectAdjacentTab(.next)
     }
 
     @discardableResult
-    func selectMostRecentTab() -> TabID? {
-        guard let selectedID = browser.selectedTab?.id,
-            let recent =
-                orderedTabs
-                .filter({ $0.id != selectedID })
-                .max(by: { $0.lastActivatedAt < $1.lastActivatedAt })
-        else {
-            return nil
-        }
-        return selectTab(recent.id)
+    func selectMostRecentTab() -> UUID? {
+        guard browser.showMostRecentTab() else { return nil }
+        synchronizePages()
+        return browser.shownTab?.id
+    }
+
+    /// Shows the tab a numbered command leads to, in the Space this window shows.
+    @discardableResult
+    func selectNumberedTab(_ tabID: UUID) -> UUID? {
+        guard browser.shownSpace?.tabs.model(tabID) != nil else { return nil }
+        return selectTab(tabID)
     }
 
     @discardableResult
-    func selectTab(at index: Int) -> TabID? {
-        guard orderedTabs.indices.contains(index) else { return nil }
-        return selectTab(orderedTabs[index].id)
-    }
-
-    @discardableResult
-    func selectPreviousSpace() -> SpaceID? {
+    func selectPreviousSpace() -> UUID? {
         selectSpace(.previous)
     }
 
     @discardableResult
-    func selectNextSpace() -> SpaceID? {
+    func selectNextSpace() -> UUID? {
         selectSpace(.next)
     }
 
+    /// Shows the Space a numbered command leads to.
     @discardableResult
-    func selectSpace(at index: Int) -> SpaceID? {
-        guard browser.session.spaces.indices.contains(index) else { return nil }
-        let id = browser.session.spaces[index].id
-        browser.selectSpace(id)
+    func selectNumberedSpace(_ spaceID: UUID) -> UUID? {
+        browser.selectSpace(spaceID)
+        guard browser.selectedSpaceID == spaceID else { return nil }
+        synchronizePages()
+        return spaceID
+    }
+
+    private func selectAdjacentTab(_ direction: AdjacentDirection) -> UUID? {
+        guard let id = browser.selectAdjacentTab(direction) else { return nil }
         synchronizePages()
         return id
     }
 
-    private func selectTab(offset: Int) -> TabID? {
-        guard let id = browser.selectAdjacentTab(offset: offset) else { return nil }
-        synchronizePages()
-        return id
-    }
-
-    private func selectTab(_ id: TabID) -> TabID? {
+    private func selectTab(_ id: UUID) -> UUID? {
         browser.selectTab(id)
         synchronizePages()
         return id
     }
 
-    private func selectSpace(_ direction: BrowserSpaceSwipeDirection) -> SpaceID? {
+    private func selectSpace(_ direction: BrowserSpaceSwipeDirection) -> UUID? {
         guard let id = browser.selectAdjacentSpace(direction) else { return nil }
         synchronizePages()
         return id
@@ -170,17 +151,16 @@ struct MobileBrowserCommandController {
 
     // MARK: - Split View
 
-    var presentedSplitMembers: [BrowserTab] {
-        guard let space = browser.selectedSpace else { return [] }
-        return space.presentedSplitMembers(for: space.selectedTabID)
+    var presentedSplitMembers: [TabStateModel] {
+        browser.shownCards
     }
 
     var isSelectedTabInSplit: Bool {
-        presentedSplitMembers.count > 1
+        browser.allows(.separateSplitTabs)
     }
 
     var canSplitWithNextTab: Bool {
-        browser.nextSplitJoinCandidate != nil
+        browser.allows(.splitWithNextTab)
     }
 
     /// Moves focus one card along the presented run and wraps at both ends.
@@ -193,10 +173,10 @@ struct MobileBrowserCommandController {
     /// find bar, and every page command follow the pipeline they already followed
     /// before splits existed.
     @discardableResult
-    func focusAdjacentSplitCard(offset: Int) -> TabID? {
+    func focusAdjacentSplitCard(offset: Int) -> UUID? {
         let members = presentedSplitMembers
         guard members.count > 1,
-            let selectedTabID = browser.selectedSpace?.selectedTabID,
+            let selectedTabID = browser.shownTab?.id,
             let index = members.firstIndex(where: { $0.id == selectedTabID })
         else { return nil }
         let count = members.count
@@ -207,28 +187,24 @@ struct MobileBrowserCommandController {
     /// Adds the next eligible tab in the selected tab's own section to its split,
     /// creating the group when there is none yet.
     @discardableResult
-    func splitWithNextTab() -> TabID? {
-        guard let space = browser.selectedSpace,
-            let selectedTabID = space.selectedTabID,
+    func splitWithNextTab() -> UUID? {
+        guard let space = browser.shownSpace,
+            let selectedTabID = browser.selectedTabID(in: space.id),
             let candidate = browser.nextSplitJoinCandidate,
             browser.addTabToSplit(
-                BrowserTabDragItem(
-                    tabID: candidate.id,
-                    spaceID: space.id,
-                    profileID: space.profile.id
-                ),
+                BrowserTabDragItem(tabID: candidate, spaceID: space.id, profileID: space.profileID),
                 joining: selectedTabID,
                 at: nil
             )
         else { return nil }
         synchronizePages()
-        return candidate.id
+        return candidate
     }
 
     /// Whether the focused card has anywhere to go `offset` slots along its run.
     func canMoveFocusedSplitCard(offset: Int) -> Bool {
-        guard let space = browser.selectedSpace,
-            let selectedTabID = space.selectedTabID
+        guard let space = browser.shownSpace,
+            let selectedTabID = browser.selectedTabID(in: space.id)
         else { return false }
         return browser.canMoveSplitMember(
             selectedTabID,
@@ -243,9 +219,9 @@ struct MobileBrowserCommandController {
     /// unchanged, so there is nothing for the pool to reconcile — only the
     /// column order the carousel reads back out of the session.
     @discardableResult
-    func moveFocusedSplitCard(offset: Int) -> TabID? {
-        guard let space = browser.selectedSpace,
-            let selectedTabID = space.selectedTabID,
+    func moveFocusedSplitCard(offset: Int) -> UUID? {
+        guard let space = browser.shownSpace,
+            let selectedTabID = browser.selectedTabID(in: space.id),
             browser.moveSplitMember(
                 selectedTabID,
                 by: offset,
@@ -257,9 +233,9 @@ struct MobileBrowserCommandController {
 
     /// Drops the focused card out of its split and leaves it an ordinary tab.
     @discardableResult
-    func removeSelectedTabFromSplit() -> TabID? {
-        guard let space = browser.selectedSpace,
-            let selectedTabID = space.selectedTabID,
+    func removeSelectedTabFromSplit() -> UUID? {
+        guard let space = browser.shownSpace,
+            let selectedTabID = browser.selectedTabID(in: space.id),
             browser.removeTabFromSplit(
                 selectedTabID,
                 matching: BrowserSpaceRuntimeAssignment(space: space)
@@ -271,9 +247,9 @@ struct MobileBrowserCommandController {
 
     /// "Separate All Tabs": every card in the presented split becomes a tab.
     @discardableResult
-    func separateSplitTabs() -> TabID? {
-        guard let space = browser.selectedSpace,
-            let selectedTabID = space.selectedTabID,
+    func separateSplitTabs() -> UUID? {
+        guard let space = browser.shownSpace,
+            let selectedTabID = browser.selectedTabID(in: space.id),
             browser.dissolveSplit(
                 containing: selectedTabID,
                 matching: BrowserSpaceRuntimeAssignment(space: space)
@@ -284,7 +260,7 @@ struct MobileBrowserCommandController {
     }
 
     private func synchronizePages() {
-        pages.reconcile(session: browser.session)
-        pages.select(session: browser.session)
+        pages.reconcile()
+        pages.select()
     }
 }

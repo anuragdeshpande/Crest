@@ -4,47 +4,33 @@ import XCTest
 
 @MainActor
 final class BrowserDurableTabCloseTests: XCTestCase {
-    func testMissingAndUnknownPreferencesResumeAndChosenPolicyPersists() throws {
-        let name = "crest.tests.durable-close.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
-        XCTAssertEqual(BrowserDurableTabPreferenceStore(defaults: defaults).closePolicy, .resumeLastLocation)
-        defaults.set("unknown-future-policy", forKey: BrowserDurableTabPreferenceStore.key)
-        XCTAssertEqual(BrowserDurableTabPreferenceStore(defaults: defaults).closePolicy, .resumeLastLocation)
-        let preferences = BrowserDurableTabPreferenceStore(defaults: defaults)
-        preferences.closePolicy = .returnToSavedURL
-        XCTAssertEqual(BrowserDurableTabPreferenceStore(defaults: defaults).closePolicy, .returnToSavedURL)
-    }
-
     func testCloseResumesByDefaultAndResetPersistsWithoutChangingDurableIdentity() throws {
         for placement: TabPlacement in [.pinned, .saved] {
-            for policy in BrowserDurableTabClosePolicy.allCases {
+            for policy in SavedTabClosePolicy.all {
                 let context = try makeContext(placement: placement)
-                let preferences = BrowserDurableTabPreferenceStore()
-                preferences.closePolicy = policy
-                var discardedState: Bool?
+                // The core puts the page away as the session's preferences say.
+                let preferences = BrowserAppPreferenceStore()
+                preferences.bind(to: context.browser, legacy: .unsaved)
+                preferences.savedTabClosePolicy = policy
+                let putAway = PutAwayPages(core: context.browser.core)
                 let action = BrowserDurableTabCloseAction(
-                    browser: context.browser,
-                    spaceAccess: BrowserSpaceAccessController(),
-                    preferences: preferences,
-                    closePage: { assignment, discardState in
-                        XCTAssertEqual(assignment, context.assignment)
-                        discardedState = discardState
-                        return true
-                    }
-                )
+                    browser: context.browser, spaceAccess: BrowserSpaceAccessController())
 
                 XCTAssertTrue(action.perform(context.assignment))
 
-                let closed = try XCTUnwrap(context.browser.selectedSpace?.tabs.first)
+                let space = try XCTUnwrap(context.browser.spaceModel(context.assignment.spaceID)).value.seed
                 var expected = context.tab
-                if policy == .returnToSavedURL { expected.url = expected.savedSiteURL }
-                XCTAssertEqual(closed, expected)
-                XCTAssertEqual(discardedState, policy == .returnToSavedURL)
-                XCTAssertNil(context.browser.selectedTab)
-                XCTAssertEqual(context.persistence.session?.selectedSpace?.tabs.first, expected)
-                XCTAssertEqual(context.browser.selectedSpace?.tabs.last, context.copy)
-                XCTAssertEqual(context.browser.selectedSpace?.archivedTabs, context.archived)
+                if policy == .returnToSavedURL { expected.url = expected.savedURL ?? expected.url }
+                XCTAssertEqual(space.tabs.first, expected)
+                // The window that asked hears which page went, and whether it
+                // keeps what brings it back.
+                XCTAssertEqual(
+                    putAway.pages.map { [$0.windowID, $0.spaceID, $0.tabID] },
+                    [[context.browser.windowID, context.assignment.spaceID, context.tab.id]])
+                XCTAssertEqual(putAway.pages.map(\.keepsState), [policy != .returnToSavedURL])
+                XCTAssertNil(context.browser.shownTab)
+                XCTAssertEqual(space.tabs.last, context.copy)
+                XCTAssertEqual(space.archivedTabs, context.archived)
             }
         }
     }
@@ -52,74 +38,136 @@ final class BrowserDurableTabCloseTests: XCTestCase {
     func testStaleLockedAndOrdinaryTabsDoNotCloseOrDiscardState() throws {
         for placement: TabPlacement in [.current, .pinned, .saved] {
             let context = try makeContext(placement: placement)
-            var closeCount = 0
+            let putAway = PutAwayPages(core: context.browser.core)
             let action = BrowserDurableTabCloseAction(
-                browser: context.browser,
-                spaceAccess: BrowserSpaceAccessController(),
-                preferences: BrowserDurableTabPreferenceStore(),
-                closePage: { _, _ in
-                    closeCount += 1
-                    return true
-                }
-            )
-            let original = context.browser.session
+                browser: context.browser, spaceAccess: BrowserSpaceAccessController())
+            let original = context.browser.sessionSeed
             let stale = BrowserTabRuntimeAssignment(
                 tabID: context.tab.id, spaceID: context.assignment.spaceID, profileID: UUID()
             )
             XCTAssertFalse(action.perform(stale))
             if placement == .current { XCTAssertFalse(action.perform(context.assignment)) }
-            XCTAssertEqual(context.browser.session, original)
+            XCTAssertEqual(context.browser.sessionSeed, original)
 
-            var locked = try XCTUnwrap(context.browser.selectedSpace)
-            locked.accessPolicy = .deviceOwnerAuthentication
-            context.browser.session = BrowserSession(spaces: [locked], selectedSpaceID: locked.id)
+            context.browser.updateSpaceAccessPolicy(.deviceOwnerAuthentication, in: context.assignment.spaceID)
             XCTAssertFalse(action.perform(context.assignment))
-            XCTAssertEqual(closeCount, 0)
+            XCTAssertTrue(putAway.pages.isEmpty)
         }
     }
 
-    func testMismatchedResidentPageLeavesTheSessionUntouched() throws {
+    func testDeferredCloseOnlyArchivesAfterApproval() throws {
+        let context = try makeContext(placement: .current)
+        let gate = DeferredDismissal()
+        context.browser.family.pageDismissalAuthorizer = gate
+        let original = context.browser.sessionSeed
+        XCTAssertFalse(context.browser.closeTab(context.tab.id))
+        XCTAssertEqual(context.browser.sessionSeed, original)
+        XCTAssertFalse(gate.resolve(false))
+        XCTAssertEqual(context.browser.sessionSeed, original)
+        XCTAssertFalse(context.browser.closeTab(context.tab.id))
+        XCTAssertTrue(gate.resolve(true))
+        XCTAssertFalse(context.browser.shownSpace!.tabs.contains(context.tab.id))
+        XCTAssertTrue(context.browser.shownSpace!.archive.contains(tabID: context.tab.id))
+    }
+
+    func testDeferredClearDoesNotCloseTabsOpenedWhileConfirmationWasPending() throws {
+        let context = try makeContext(placement: .current)
+        let gate = DeferredDismissal()
+        context.browser.family.pageDismissalAuthorizer = gate
+        let space = try XCTUnwrap(context.browser.shownSpace)
+        XCTAssertFalse(context.browser.clearCurrentTabs(matching: BrowserSpaceRuntimeAssignment(space: space)))
+        let newTab = try XCTUnwrap(context.browser.openNewTab(url: URL(string: "https://example.net/new")!))
+        let beforeReply = context.browser.sessionSeed
+        XCTAssertFalse(gate.resolve(true))
+        XCTAssertEqual(context.browser.sessionSeed, beforeReply)
+        XCTAssertTrue(context.browser.shownSpace!.tabs.contains(newTab))
+    }
+
+    func testDeferredCloseRechecksTheTabAssignment() throws {
+        let context = try makeContext(placement: .current)
+        let gate = DeferredDismissal()
+        context.browser.family.pageDismissalAuthorizer = gate
+        XCTAssertFalse(context.browser.closeTab(context.tab.id))
+        context.browser.family.pageDismissalAuthorizer = nil
+        context.browser.deleteTab(context.tab.id, in: context.assignment.spaceID)
+        let beforeReply = context.browser.sessionSeed
+        XCTAssertFalse(gate.resolve(true))
+        XCTAssertEqual(context.browser.sessionSeed, beforeReply)
+    }
+
+    func testDurablePageIsNotRetiredWhenCloseIsCanceled() throws {
         let context = try makeContext(placement: .saved)
-        let preferences = BrowserDurableTabPreferenceStore()
-        preferences.closePolicy = .returnToSavedURL
-        let original = context.browser.session
+        let gate = DeferredDismissal()
+        context.browser.family.pageDismissalAuthorizer = gate
+        let putAway = PutAwayPages(core: context.browser.core)
         let action = BrowserDurableTabCloseAction(
-            browser: context.browser, spaceAccess: BrowserSpaceAccessController(),
-            preferences: preferences, closePage: { _, _ in false }
-        )
+            browser: context.browser, spaceAccess: BrowserSpaceAccessController())
+        let original = context.browser.sessionSeed
         XCTAssertFalse(action.perform(context.assignment))
-        XCTAssertEqual(context.browser.session, original)
+        XCTAssertTrue(putAway.pages.isEmpty)
+        XCTAssertFalse(gate.resolve(false))
+        XCTAssertTrue(putAway.pages.isEmpty)
+        XCTAssertEqual(context.browser.sessionSeed, original)
+        XCTAssertFalse(action.perform(context.assignment))
+        XCTAssertTrue(gate.resolve(true))
+        XCTAssertEqual(putAway.pages.map(\.tabID), [context.tab.id])
+    }
+
+    /// Hears each saved or pinned tab's page the core puts away.
+    @MainActor
+    private final class PutAwayPages {
+        private(set) var pages: [TabPagePutAway] = []
+
+        init(core: CrestCore) {
+            core.followPutAwayPages(self) { [weak self] in self?.pages.append($0) }
+        }
+    }
+
+    private final class DeferredDismissal: BrowserPageDismissalAuthorizing {
+        var pending: (@MainActor () -> Bool)?
+        func performDismissal(
+            of assignments: [BrowserTabRuntimeAssignment], in browser: BrowserStore,
+            operation: @escaping @MainActor () -> Bool
+        ) -> Bool {
+            pending = operation
+            return false
+        }
+        func resolve(_ allowed: Bool) -> Bool {
+            let operation = pending
+            pending = nil
+            return allowed && operation?() == true
+        }
     }
 
     private func makeContext(placement: TabPlacement) throws -> Context {
         let root = try XCTUnwrap(URL(string: "https://example.com/root"))
         let child = try XCTUnwrap(URL(string: "https://example.com/child"))
-        let tab = BrowserTab(title: "Durable", url: child, savedURL: root, placement: placement)
-        let copy = BrowserTab(title: "Independent copy", url: child, placement: .current)
+        let tab = TabState.Seed(title: "Durable", url: child, savedURL: root, placement: placement)
+        let copy = TabState.Seed(title: "Independent copy", url: child, placement: .current)
         let archived = [
-            ArchivedTab(
-                tab: BrowserTab(title: "Archive", url: child, placement: .current), archivedAt: .now, reason: .closed)
+            ArchivedTabState.Seed(
+                tab: TabState.Seed(title: "Archive", url: child, placement: .current), archivedAt: .now,
+                reason: .closed)
         ]
-        let space = BrowserSpace(
-            id: SpaceID(), profile: BrowsingProfile(), name: "Test", symbol: "circle", accent: .indigo,
-            folders: [], tabs: [tab, copy], archivedTabs: archived, selectedTabID: tab.id
+        let space = SpaceState.Seed(
+            name: "Test", symbol: "circle", accent: .indigo,
+            folders: [], tabs: [tab, copy], archivedTabs: archived
         )
-        let persistence = InMemoryBrowserSessionPersistence()
         let browser = BrowserStore(
-            session: BrowserSession(spaces: [space], selectedSpaceID: space.id), persistence: persistence
+            seed: SessionState.Seed(spaces: [space]),
+            showing: space.id, tabs: [space.id: tab.id]
         )
         return Context(
-            browser: browser, persistence: persistence, tab: tab, copy: copy, archived: archived,
-            assignment: BrowserTabRuntimeAssignment(tabID: tab.id, spaceID: space.id, profileID: space.profile.id)
+            browser: browser, tab: tab, copy: copy, archived: archived,
+            assignment: BrowserTabRuntimeAssignment(tabID: tab.id, spaceID: space.id, profileID: space.profileID)
         )
     }
 
     private struct Context {
         let browser: BrowserStore
-        let persistence: InMemoryBrowserSessionPersistence
-        let tab: BrowserTab
-        let copy: BrowserTab
-        let archived: [ArchivedTab]
+        let tab: TabState.Seed
+        let copy: TabState.Seed
+        let archived: [ArchivedTabState.Seed]
         let assignment: BrowserTabRuntimeAssignment
     }
 }

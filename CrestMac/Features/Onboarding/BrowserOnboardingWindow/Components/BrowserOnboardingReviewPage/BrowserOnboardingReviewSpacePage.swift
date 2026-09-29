@@ -2,13 +2,12 @@ import SwiftUI
 
 struct BrowserOnboardingReviewSpacePage: View {
     let flow: BrowserOnboardingFlow
-    let browserSession: BrowserSession
-    let application: BrowserImportApplication?
-    let plan: BrowserImportReviewPlan
+    let application: ImportSource?
+    let spaces: [BrowserImportSpaceReview]
     let review: BrowserImportSpaceReview
-    @Binding var selectedSourceSpaceID: SpaceID?
 
     var body: some View {
+        let analysis = flow.reviewAnalysis()
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 BrowserOnboardingPreviewCardLabel(
@@ -18,8 +17,8 @@ struct BrowserOnboardingReviewSpacePage: View {
                 BrowserSourceImportPreview(
                     application: application,
                     review: review,
-                    overflowTabIDs: plan.overflowTabIDs(in: browserSession),
-                    duplicateTabIDs: plan.duplicateTabIDs(in: browserSession),
+                    overflowTabIDs: analysis.overflowTabIDs,
+                    duplicateTabIDs: analysis.duplicateTabIDs,
                     duplicateDestinationName: flow.duplicateDestinationName(
                         for: review
                     ),
@@ -54,11 +53,9 @@ struct BrowserOnboardingReviewSpacePage: View {
 
             BrowserOnboardingReviewSpaceControls(
                 flow: flow,
-                browserSession: browserSession,
                 application: application,
-                plan: plan,
-                review: review,
-                selectedSourceSpaceID: $selectedSourceSpaceID
+                spaces: spaces,
+                review: review
             )
 
             Spacer(minLength: 8)
@@ -70,12 +67,10 @@ struct BrowserOnboardingReviewSpacePage: View {
                 )
                 BrowserCrestImportPreview(
                     space: flow.previewDestinationSpace(for: review),
-                    sourceName: application?.name ?? "Browser",
+                    favicons: flow.previewFavicons,
+                    sourceName: application?.title ?? "Browser",
                     isSpaceIncluded: review.isIncluded,
-                    matchedTabIDs: plan.matchedDestinationTabIDs(
-                        for: review.id,
-                        in: browserSession
-                    )
+                    matchedTabIDs: analysis.matchedTabIDs(for: review.id)
                 )
                 .frame(width: 340)
                 .frame(maxHeight: .infinity)

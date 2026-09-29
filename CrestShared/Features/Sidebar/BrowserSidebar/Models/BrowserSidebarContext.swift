@@ -22,7 +22,7 @@ struct BrowserSidebarContext {
     let capabilities: BrowserInteractionCapabilities
 
     /// The Spaces the sidebar may show, with the ones being deleted left out.
-    let availableSpaces: [BrowserSpace]
+    let availableSpaces: [SpaceModel]
 
     let utilityPresentation: BrowserUtilityPresentationState
     let utilityActions: BrowserUtilityListActions
@@ -33,14 +33,14 @@ struct BrowserSidebarContext {
     let chromeActions: BrowserSidebarChromeActions
 
     /// Moves the selection, and whatever page presentation follows from it.
-    let selectSpace: (SpaceID) -> Void
+    let selectSpace: (UUID) -> Void
 
     /// Tells the root that the pager came to rest on a Space, which is what
     /// releases a deferred page selection.
 
     /// Asks for the clear-history confirmation for one Space. The root refuses
     /// unless that Space is still the selected, unlocked one.
-    let confirmClearHistory: (BrowserSpace) -> Void
+    let confirmClearHistory: (SpaceModel) -> Void
 
     /// Dismisses an open utility surface because the reader tapped the sidebar
     /// itself rather than anything in it.

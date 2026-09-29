@@ -6,17 +6,17 @@ import SwiftUI
 /// web history gestures continue to belong to WebKit.
 @MainActor
 final class SpaceContentPagerView<Content: View>: NSView {
-    private var spaces: [BrowserSpace] = []
-    private var selectedSpaceID: SpaceID?
-    private var lockedSpaceIDs: Set<SpaceID> = []
+    private var spaces: [SpaceModel] = []
+    private var selectedSpaceID: UUID?
+    private var lockedSpaceIDs: Set<UUID> = []
     private var layoutDirection = LayoutDirection.leftToRight
     private var presentation: SpacePagerPresentation?
     private var snapshot: SpacePagerPresentation.Snapshot?
     private var transition: SpacePagerSettlement?
     private var hosts: [BrowserSpaceRuntimeAssignment: SpacePageHost<Content>] = [:]
-    private var makeRoot: ((BrowserSpace, Bool) -> SpacePageRoot<Content>)?
+    private var makeRoot: ((SpaceModel, Bool) -> SpacePageRoot<Content>)?
     private var lastSize = CGSize.zero
-    private var preparedDestination: SpaceID?
+    private var preparedDestination: UUID?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -32,9 +32,9 @@ final class SpaceContentPagerView<Content: View>: NSView {
     }
 
     func update(
-        spaces: [BrowserSpace], selectedSpaceID: SpaceID, lockedSpaceIDs: Set<SpaceID>,
+        spaces: [SpaceModel], selectedSpaceID: UUID, lockedSpaceIDs: Set<UUID>,
         layoutDirection: LayoutDirection, presentation: SpacePagerPresentation?,
-        makeRoot: @escaping (BrowserSpace, Bool) -> SpacePageRoot<Content>
+        makeRoot: @escaping (SpaceModel, Bool) -> SpacePageRoot<Content>
     ) {
         let changedLocks = self.lockedSpaceIDs.symmetricDifference(lockedSpaceIDs)
         let assignments = Set(spaces.map(BrowserSpaceRuntimeAssignment.init(space:)))
@@ -98,7 +98,7 @@ final class SpaceContentPagerView<Content: View>: NSView {
         return value
     }
 
-    private func restingSnapshot(_ id: SpaceID) -> SpacePagerPresentation.Snapshot {
+    private func restingSnapshot(_ id: UUID) -> SpacePagerPresentation.Snapshot {
         .init(
             generation: 0, spaceIDs: spaces.map(\.id),
             position: CGFloat(spaces.firstIndex { $0.id == id } ?? 0), phase: .idle, destinationID: id)
@@ -156,7 +156,7 @@ final class SpaceContentPagerView<Content: View>: NSView {
     }
 
     private func prepareHosts(
-        at position: CGFloat, destination: SpaceID?, refresh: Bool, preparesNeighbors: Bool = true
+        at position: CGFloat, destination: UUID?, refresh: Bool, preparesNeighbors: Bool = true
     ) {
         guard !spaces.isEmpty, let makeRoot else { return }
         let center = min(spaces.count - 1, max(0, Int(position.rounded())))

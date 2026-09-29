@@ -3,7 +3,7 @@ import SwiftUI
 struct BrowserWebPageSurface: View {
     let page: BrowserPage
     let browser: BrowserStore
-    let pagePresentation: BrowserPagePresentation
+    let pagePresentation: PagePresentation
     let isPageActive: Bool
     let focusRestorationGate: BrowserWebFocusRestorationGate
 
@@ -14,7 +14,12 @@ struct BrowserWebPageSurface: View {
                 isPageActive: isPageActive,
                 focusRestorationGate: focusRestorationGate
             )
-            .accessibilityLabel(page.title.isEmpty ? "Web page" : page.title)
+            .onGeometryChange(for: CGRect.self) { geometry in
+                geometry.frame(in: .global)
+            } action: { _ in
+                (page.nativeView as? any BrowserNativePageSurfaceLifecycle)?.presentationGeometryDidChange()
+            }
+            .accessibilityLabel(page.live.title.isEmpty ? "Web page" : page.live.title)
             .opacity(
                 BrowserPageSurfacePolicy.revealsWebContent(
                     committedNavigationCount: page.committedNavigationCount
@@ -23,7 +28,7 @@ struct BrowserWebPageSurface: View {
 
             BrowserPageLoadingPresentation(page: page)
 
-            BrowserLinkHoverPreview(hover: page.linkHover)
+            if let hover = page.linkHover { BrowserLinkHoverPreview(hover: hover) }
 
             if page.isFindPresented {
                 BrowserFindBar(
@@ -39,11 +44,15 @@ struct BrowserWebPageSurface: View {
                 )
             }
 
+            if !page.engineInfoBars.isEmpty {
+                BrowserEngineInfoBarStack(page: page)
+            }
+
             BrowserWebPageFailureOverlay(
                 page: page,
-                branding: browser.space(
-                    matching: BrowserSpaceRuntimeAssignment(
-                        spaceID: page.spaceID, profileID: page.profileID))?.branding,
+                branding: browser.spaceModel(
+                    matching: BrowserSpaceRuntimeAssignment(spaceID: page.spaceID, profileID: page.profileID)
+                ).map(\.settings.look),
                 pagePresentation: pagePresentation
             )
 
@@ -78,6 +87,7 @@ struct BrowserWebPageSurface: View {
             },
             query: { page.findQuery },
             matchState: { page.findMatchState },
+            matches: { page.findMatches },
             focusRequest: { page.findFocusRequest },
             dismiss: page.dismissFind
         )
@@ -171,7 +181,7 @@ private struct BrowserPageLoadingPresentation: View {
     }
 
     private var openingLabel: Text {
-        guard let host = page.displayURL?.host(), !host.isEmpty else {
+        guard let host = page.live.displayURL?.host(), !host.isEmpty else {
             return Text(
                 "Opening page…",
                 comment: "Initial status while a web page begins navigating."
@@ -185,14 +195,14 @@ private struct BrowserPageLoadingPresentation: View {
 
     private var isNavigating: Bool {
         BrowserPageSurfacePolicy.isNavigating(
-            isLoading: page.isLoading,
-            hasPendingNavigation: page.pendingNavigationURL != nil,
+            isLoading: page.live.isLoading,
+            hasPendingNavigation: page.live.pendingNavigationURL != nil,
             committedNavigationCount: page.committedNavigationCount
         )
     }
 
     private var hasFailure: Bool {
-        page.navigationFailure != nil || page.webContentFailureMessage != nil
+        page.live.failure != nil || page.webContentFailureMessage != nil
     }
 
     private var showsInitialStatus: Bool {

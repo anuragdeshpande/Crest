@@ -1,13 +1,15 @@
 import SwiftUI
 
 struct BrowserCrestImportTabList: View {
-    let space: BrowserSpace
-    let matchedTabIDs: Set<TabID>
+    let space: SpaceModel
+    let favicons: FaviconAssets
+    let matchedTabIDs: Set<UUID>
+    let highlightedTabID: UUID?
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach(space.folders) { folder in
+                ForEach(space.folders.models) { folder in
                     let tabs = space.savedTabs(in: folder.id)
                     if !tabs.isEmpty {
                         BrowserImportSidebarFolderRow(folder: folder)
@@ -43,11 +45,12 @@ struct BrowserCrestImportTabList: View {
         }
     }
 
-    private func row(_ tab: BrowserTab) -> some View {
+    private func row(_ tab: TabStateModel) -> some View {
         BrowserImportSidebarResultTabRow(
             tab: tab,
-            profileID: space.profile.id,
-            isSelected: tab.id == space.selectedTabID,
+            favicons: favicons,
+            profileID: space.profileID,
+            isSelected: tab.id == highlightedTabID,
             isMatched: matchedTabIDs.contains(tab.id)
         )
     }

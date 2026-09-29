@@ -20,8 +20,8 @@ import SwiftUI
 /// with the focused card in `MobileBrowserDetailView`. A card renders content and
 /// nothing else.
 struct MobileSplitCardContent: View {
-    let member: BrowserTab
-    let space: BrowserSpace
+    let member: TabStateModel
+    let space: SpaceModel
     let pages: MobileBrowserPageStore
     let viewport: MobileBrowserPageViewport
     let failureLayout: BrowserNavigationFailureLayout
@@ -33,7 +33,7 @@ struct MobileSplitCardContent: View {
 
     var body: some View {
         let page = residentPage
-        switch presentation(for: page) {
+        switch PagePresentation.of(member.surface, page: page) {
         case .nativeContent:
             BrowserNativeTabHost(tab: member, space: space, bottomChromeHeight: viewport.bottomChromeHeight)
                 .modifier(MobileSplitCardFocusTapModifier(requestFocus: requestFocus))
@@ -44,10 +44,10 @@ struct MobileSplitCardContent: View {
                 unloadedSurface
             }
         case .navigationFailure:
-            if let page, let failure = page.navigationFailure {
+            if let page, let failure = page.live.failure {
                 BrowserNavigationFailureView(
                     failure: failure,
-                    branding: space.branding,
+                    branding: space.settings.look,
                     layout: failureLayout,
                     canGoBack: page.canReturnFromNavigationFailure,
                     canProceed: page.canProceedAfterCertificateFailure,
@@ -59,23 +59,7 @@ struct MobileSplitCardContent: View {
             } else {
                 unloadedSurface
             }
-        case .processFailure:
-            if let page {
-                BrowserNavigationFailureView(
-                    failure: .webContentProcessStopped(url: page.displayURL),
-                    branding: space.branding,
-                    layout: failureLayout,
-                    canGoBack: false,
-                    canProceed: false,
-                    retry: page.retryAfterProcessFailure,
-                    goBack: {},
-                    proceed: {}
-                )
-                .modifier(MobileSplitCardFocusTapModifier(requestFocus: requestFocus))
-            } else {
-                unloadedSurface
-            }
-        case .noSelection, .startPage, .unloaded, .automaticRestore:
+        default:
             // A Start Page has no committed navigation to render beside its
             // siblings, and an evicted neighbour is waiting for the carousel to
             // approach it again. Both read as an empty card rather than as
@@ -108,23 +92,7 @@ struct MobileSplitCardContent: View {
             matching: BrowserTabRuntimeAssignment(
                 tabID: member.id,
                 spaceID: space.id,
-                profileID: space.profile.id
-            )
-        )
-    }
-
-    private func presentation(
-        for page: MobileBrowserPage?
-    ) -> BrowserPagePresentation {
-        BrowserPagePresentationPolicy.resolve(
-            BrowserPagePresentationInput(
-                selection: member.pagePresentationSelection,
-                hasActivePage: page != nil,
-                hasNavigationFailure: page?.navigationFailure != nil,
-                hasProcessFailure: page?.showsProcessFailure == true,
-                // A card never self-restores. Membership decides what is on
-                // screen, and the surface that owns the card asks for the page.
-                unloadedBehavior: .remainUnloaded
+                profileID: space.profileID
             )
         )
     }

@@ -1,64 +1,152 @@
 import Foundation
 
+/// The actions a window takes on the tabs and folders its sidebar selected.
+/// Each is one intent whose rules the core owns: a menu asks `canSend` before
+/// it offers one, and `send` shows the window what the core did.
 extension BrowserStore {
-    func prepareTabBatch(_ request: BrowserTabBatchRequest, action: BrowserTabBatchAction) throws
-        -> (session: BrowserSession, result: BrowserTabBatchResult)
-    {
-        guard session.selectedSpaceID == request.assignment.spaceID,
-            !deletingSpaceIDs.contains(request.assignment.spaceID)
-        else { throw BrowserTabBatchError.staleSelection }
-        let source = try request.validate(in: session)
-        if case .moveToSpace(let destination) = action, deletingSpaceIDs.contains(destination.spaceID) {
-            throw BrowserTabBatchError.staleSelection
-        }
-        var history = tabSelectionHistory
-        let fallback = source.selectedTabID.flatMap {
-            history.fallbackTabID(
-                afterDismissing: $0, in: source.id,
-                availableTabIDs: Set(source.tabs.map(\.id)).subtracting(request.ids))
-        }
-        var draft = session
-        let result = try draft.applyTabBatch(request, action: action, fallbackTabID: fallback)
-        return (draft, result)
+    // MARK: - Actions - Batches
+
+    /// Archives the selected open tabs.
+    func closing(_ request: BrowserCapturedSelection) -> BrowserTabBatch {
+        BrowserTabBatch(
+            CloseTabs(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: request.spaceID,
+                selection: request.selection),
+            reselection: .cleared, closesPages: true)
     }
 
-    func commitTabBatch(_ request: BrowserTabBatchRequest, action: BrowserTabBatchAction) throws {
-        var prepared = try prepareTabBatch(request, action: action)
-        guard let source = space(matching: request.assignment),
-            let index = prepared.session.spaces.firstIndex(where: { $0.id == source.id })
-        else { throw BrowserTabBatchError.staleSelection }
-        for pair in prepared.result.copies {
-            guard let original = source.tabs.first(where: { $0.id == pair.source }),
-                let copyIndex = prepared.session.spaces[index].tabs.firstIndex(where: { $0.id == pair.copy })
-            else { continue }
-            tabCopying?.prepareTabCopy(from: original, to: &prepared.session.spaces[index].tabs[copyIndex], in: source)
+    /// Deletes the selected tabs, saved and pinned ones included.
+    func deleting(_ request: BrowserCapturedSelection) -> BrowserTabBatch {
+        BrowserTabBatch(
+            DeleteTabs(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: request.spaceID,
+                selection: request.selection),
+            reselection: .cleared, closesPages: true)
+    }
+
+    /// Copies the selected tabs to the end of the open tabs.
+    func duplicating(_ request: BrowserCapturedSelection) -> BrowserTabBatch {
+        BrowserTabBatch(
+            DuplicateTabs(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: request.spaceID,
+                selection: request.selection),
+            reselection: .copies)
+    }
+
+    /// Combines the selected tabs in the split of `target`, or of the first
+    /// selected tab, from member `index` on.
+    func splitting(_ request: BrowserCapturedSelection, joining target: UUID? = nil, at index: Int? = nil)
+        -> BrowserTabBatch
+    {
+        BrowserTabBatch(
+            SplitTabs(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: request.spaceID,
+                selection: request.selection,
+                targetTabID: target, index: index),
+            reselection: .items)
+    }
+
+    /// Dissolves the splits the selected tabs belong to.
+    func separatingSplits(_ request: BrowserCapturedSelection) -> BrowserTabBatch {
+        BrowserTabBatch(
+            SeparateSplits(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: request.spaceID,
+                selection: request.selection),
+            reselection: .items)
+    }
+
+    /// Keeps the selected tabs' pages loaded, or lets them unload.
+    func keepingLoaded(_ request: BrowserCapturedSelection, _ keeps: Bool) -> BrowserTabBatch {
+        BrowserTabBatch(
+            KeepTabsLoaded(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: request.spaceID,
+                selection: request.selection,
+                keeps: keeps),
+            reselection: .items)
+    }
+
+    /// Moves the selected tabs to another Space, which the window follows
+    /// them to when the person's link preferences say so.
+    func moving(_ request: BrowserCapturedSelection, to destination: BrowserSpaceRuntimeAssignment) -> BrowserTabBatch {
+        let follows = linkPreferences.preferences.followsMovedTabs
+        return BrowserTabBatch(
+            MoveTabsToSpace(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: request.spaceID,
+                selection: request.selection,
+                destinationSpaceID: destination.spaceID, follows: follows),
+            reselection: .cleared, following: follows ? destination : nil)
+    }
+
+    /// Files the selection into `folder` or at the top level of `placement`'s
+    /// section, before the tab `before` or the folder `beforeFolder`.
+    func filing(
+        _ request: BrowserCapturedSelection, _ placement: TabPlacement, folder: UUID? = nil, before: UUID? = nil,
+        beforeFolder: UUID? = nil
+    ) -> BrowserTabBatch {
+        BrowserTabBatch(
+            FileTabs(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: request.spaceID,
+                selection: request.selection,
+                placement: placement, folderID: folder, beforeTabID: before,
+                beforeFolderID: beforeFolder, leavesSplits: false),
+            reselection: .items)
+    }
+
+    /// Files the selection into a new folder at the top level of `placement`'s section.
+    func filingInNewFolder(_ request: BrowserCapturedSelection, in placement: TabPlacement) -> BrowserTabBatch {
+        BrowserTabBatch(
+            FolderTabs(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: request.spaceID,
+                selection: request.selection,
+                placement: placement),
+            reselection: .items)
+    }
+
+    /// Files the open tab `tabID` and then the selection into a new folder in
+    /// that tab's place.
+    func filingInNewFolder(_ request: BrowserCapturedSelection, around tabID: UUID) -> BrowserTabBatch {
+        BrowserTabBatch(
+            FolderTabsAround(
+                workspaceID: family.workspaceID, windowID: windowID, spaceID: request.spaceID,
+                selection: request.selection,
+                tabID: tabID),
+            reselection: .items)
+    }
+
+    // MARK: - Actions - Sending
+
+    /// Whether the core would accept the action now.
+    func canSend(_ batch: BrowserTabBatch) -> Bool { family.canSend(batch.intent, from: self) }
+
+    /// The rule that would refuse the action now, or nil when the core would take it.
+    func refusal(of batch: BrowserTabBatch) -> Rejection? { family.refusal(of: batch.intent, from: self) }
+
+    /// Sends the action, and then prepares the pages of the copies it made,
+    /// selects what the action leaves selected, and remembers the tab the
+    /// window follows to another Space. Throws the rule that refused it.
+    func send(_ batch: BrowserTabBatch, for request: BrowserCapturedSelection) throws(Rejection) {
+        let sources = spaceModel(matching: request.assignment).map(BrowserTabCopySources.init)
+        let changes = try family.commit(batch.intent, from: self)
+        let copies: [TabCopied] = changes.compactMap {
+            guard case .tabCopied(let copied) = $0, copied.workspaceID == family.workspaceID else { return nil }
+            return copied
         }
-        var activation: BrowserTabRuntimeAssignment?
-        if case .moveToSpace(let destination) = action, linkPreferences.followsTabsMovedToAnotherSpace {
-            let id = source.selectedTabID.flatMap { request.ids.contains($0) ? $0 : nil } ?? request.ids[0]
-            prepared.session.selectSpace(destination.spaceID)
-            prepared.session.selectTab(id)
-            activation = BrowserTabRuntimeAssignment(
-                tabID: id, spaceID: destination.spaceID, profileID: destination.profileID)
+        if let sources { prepareAcceptedCopies(copies, from: sources) }
+        pendingMovedTabActivation = batch.following.flatMap { destination in
+            selectedTabID(in: destination.spaceID).map {
+                BrowserTabRuntimeAssignment(tabID: $0, spaceID: destination.spaceID, profileID: destination.profileID)
+            }
         }
-        session = prepared.session
-        pendingMovedTabActivation = activation
-        switch action {
-        case .close, .delete, .moveToSpace: tabMultiSelection.clear()
-        case .duplicate:
-            tabMultiSelection.selectAll(units: prepared.result.copies.map { [$0.copy] })
-        default:
-            let copies = Dictionary(uniqueKeysWithValues: prepared.result.copies.map { ($0.source, $0.copy) })
+        switch batch.reselection {
+        case .cleared: tabMultiSelection.clear()
+        case .copies: tabMultiSelection.selectAll(units: copies.map { [.tab($0.copyTabID)] })
+        case .items:
+            let copied = Dictionary(uniqueKeysWithValues: copies.map { ($0.sourceTabID, $0.copyTabID) })
             tabMultiSelection.selectAll(
                 units: request.rootItems.map { item in
-                    if case .tab(let id) = item { return [.tab(copies[id] ?? id)] }
-                    return [item]
+                    guard case .tab(let id) = item, let copy = copied[id] else { return [item] }
+                    return [.tab(copy)]
                 })
         }
-        persist(
-            syncUrgency: .coalesced,
-            scope: BrowserSessionSaveScope(
-                writesCore: true, history: .nothing,
-                favicons: .only(Set(prepared.result.copies.map(\.copy)))))
     }
 }

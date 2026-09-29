@@ -10,7 +10,6 @@ struct BrowserSettingsView: View {
     let spaceAccess: BrowserSpaceAccessController
     let dataDeleter: any BrowserSpaceDataDeleting
     let shortcuts: BrowserShortcutStore
-    let onboardingCoordinator: BrowserOnboardingCoordinator
     let spaceSettingsPresentation: BrowserSpaceSettingsPresentationState
     let usesLiveSidebar: Bool
 
@@ -24,7 +23,6 @@ struct BrowserSettingsView: View {
         spaceAccess: BrowserSpaceAccessController = BrowserSpaceAccessController(),
         dataDeleter: (any BrowserSpaceDataDeleting)? = nil,
         shortcuts: BrowserShortcutStore,
-        onboardingCoordinator: BrowserOnboardingCoordinator,
         spaceSettingsPresentation: BrowserSpaceSettingsPresentationState =
             BrowserSpaceSettingsPresentationState(),
         usesLiveSidebar: Bool = true,
@@ -39,14 +37,13 @@ struct BrowserSettingsView: View {
         self.spaceAccess = spaceAccess
         self.dataDeleter = dataDeleter ?? pages
         self.shortcuts = shortcuts
-        self.onboardingCoordinator = onboardingCoordinator
         self.spaceSettingsPresentation = spaceSettingsPresentation
         self.usesLiveSidebar = usesLiveSidebar
     }
 
     var body: some View {
         HStack(spacing: 0) {
-            BrowserSettingsSidebar(navigation: $tabState.navigation)
+            BrowserSettingsSidebar(navigation: $tabState.navigation, state: browser.core.state)
                 .frame(width: 224)
             Divider()
 
@@ -63,7 +60,6 @@ struct BrowserSettingsView: View {
                         spaceAccess: spaceAccess,
                         dataDeleter: dataDeleter,
                         shortcuts: shortcuts,
-                        onboardingCoordinator: onboardingCoordinator,
                         spaceSettingsPresentation: spaceSettingsPresentation,
                         searchText: $tabState.navigation.searchText
                     )
@@ -93,7 +89,7 @@ struct BrowserSettingsView: View {
                 else { return }
                 spaceSettingsPresentation.present(
                     assignment: BrowserSpaceRuntimeAssignment(spaceID: selected.spaceID, profileID: selected.profileID))
-                pages.select(session: browser.session)
+                pages.select()
             }
         )
         .onChange(of: scenePhase) { previousPhase, phase in
@@ -138,11 +134,9 @@ struct BrowserSettingsView: View {
     let browser = BrowserStore.preview()
     BrowserSettingsView(
         browser: browser,
-        pages: BrowserPagePool(),
-        cloudSync: BrowserCloudSyncController(browser: browser, configuration: nil),
-        shortcuts: .inMemory(),
-        onboardingCoordinator: BrowserOnboardingCoordinator()
+        pages: BrowserPagePool(browser: browser),
+        cloudSync: BrowserCloudSyncController(core: browser.core, configuration: nil),
+        shortcuts: BrowserShortcutStore()
     )
     .environment(BrowserWindowTransparencyPreviewFixture.makeStore())
-    .environment(BrowserSplitFocusPreferenceStore.isolated())
 }

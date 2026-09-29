@@ -3,15 +3,18 @@ import SwiftUI
 
 struct BrowserUtilityListContent: View {
     let surface: BrowserUtilitySurface
-    let space: BrowserSpace
-    let downloads: [BrowserDownloadItem]
+    let space: SpaceModel
+    let downloads: [DownloadState]
     let searchText: String
     let filter: BrowserUtilityListFilter
     let actions: BrowserUtilityListActions
     var dismissOnBlankSpace: (() -> Void)? = nil
+    /// The images the listed tabs wear, as the read model holds them.
+    var favicons: FaviconAssets? = nil
     var preparationClock: BrowserUtilityListClock = .live
     var preparationCalendar: Calendar = .autoupdatingCurrent
 
+    @Environment(\.browserSpaceContentIsLocked) private var isLocked
     @State private var preparedRequest: BrowserUtilityListRequest?
     @State private var sections: [BrowserUtilityListSection] = []
 
@@ -22,10 +25,11 @@ struct BrowserUtilityListContent: View {
             filter: filter,
             presentationRequest: preparedPresentationRequest,
             sections: sections,
-            downloads: downloads,
+            downloads: isLocked ? [] : downloads,
             actions: actions,
             dismissOnBlankSpace: dismissOnBlankSpace
         )
+        .environment(\.browserFavicons, favicons)
         .accessibilityIdentifier(BrowserUtilityAccessibilityID.list(surface))
         .task(id: request) {
             await refreshSections(for: request)
@@ -38,7 +42,8 @@ struct BrowserUtilityListContent: View {
             space: space,
             downloads: downloads,
             searchText: searchText,
-            filter: filter
+            filter: filter,
+            isUnlocked: !isLocked
         )
     }
 
@@ -111,16 +116,18 @@ struct BrowserUtilityListContent: View {
 }
 
 #Preview("History Results", traits: .fixedLayout(width: 360, height: 420)) {
-    BrowserUtilityListContent(
-        surface: .history,
-        space: BrowserUtilityListPreviewFixture.historySpace,
-        downloads: [],
-        searchText: "",
-        filter: .all,
-        actions: BrowserUtilityListActions(),
-        preparationClock: .fixed(
-            BrowserUtilityListPreviewFixture.referenceDate
-        ),
-        preparationCalendar: BrowserUtilityListPreviewFixture.fixedCalendar
-    )
+    if let space = BrowserUtilityListPreviewFixture.historySpaceModel {
+        BrowserUtilityListContent(
+            surface: .history,
+            space: space,
+            downloads: [],
+            searchText: "",
+            filter: .all,
+            actions: BrowserUtilityListActions(),
+            preparationClock: .fixed(
+                BrowserUtilityListPreviewFixture.referenceDate
+            ),
+            preparationCalendar: BrowserUtilityListPreviewFixture.fixedCalendar
+        )
+    }
 }

@@ -23,7 +23,7 @@ struct BrowserRootView: View {
         windowState: BrowserWindowStateStore? = nil,
         spaceSettingsPresentation: BrowserSpaceSettingsPresentationState =
             BrowserSpaceSettingsPresentationState(),
-        startupBehavior: BrowserStartupBehavior = .showStartPage,
+        startupBehavior: StartupBehavior = .showStartPage,
         shortcuts: BrowserShortcutStore? = nil,
         initialSidebarWidth: Double? = nil,
         persistSidebarWidth: @escaping (Double) -> Void =
@@ -73,6 +73,14 @@ struct BrowserRootView: View {
             )
         )
         .environment(model.sidebarInteraction)
+        // Extension controls anywhere in the window open the panel into this
+        // window's own row, so they read the host rather than being handed it.
+        .environment(model.extensionSidePanel)
+        // `chrome.sidePanel.open()` and an action click that opens a panel
+        // reach the engine host, which has a page but no view context, so this
+        // window publishes the host that owns its row.
+        .modifier(BrowserExtensionSidePanelRegistration(host: model.extensionSidePanel, pages: model.pages))
+        .modifier(BrowserPopupWindowPresentation(pages: model.pages))
         .navigationTitle(Text(verbatim: model.windowTitle))
     }
 }
@@ -81,11 +89,11 @@ struct BrowserRootView: View {
     let browser = BrowserRootPreviewFixture.makeBrowser()
     BrowserRootView(
         browser: browser,
-        pages: BrowserPagePool(),
+        pages: BrowserPagePool(browser: browser),
         chrome: BrowserRootPreviewFixture.makeChrome(state: .docked),
         transientBrowsing: BrowserTransientBrowsingCoordinator(),
         windowState: BrowserRootPreviewFixture.makeWindowState(
-            session: browser.session
+            browser: browser
         ),
         initialSidebarWidth: Double(BrowserChromeLayout.sidebarIdealWidth),
         persistSidebarWidth: { _ in }
@@ -98,11 +106,11 @@ struct BrowserRootView: View {
     let browser = BrowserRootPreviewFixture.makeBrowser()
     BrowserRootView(
         browser: browser,
-        pages: BrowserPagePool(),
+        pages: BrowserPagePool(browser: browser),
         chrome: BrowserRootPreviewFixture.makeChrome(state: .collapsed),
         transientBrowsing: BrowserTransientBrowsingCoordinator(),
         windowState: BrowserRootPreviewFixture.makeWindowState(
-            session: browser.session
+            browser: browser
         ),
         initialSidebarWidth: Double(BrowserChromeLayout.sidebarIdealWidth),
         persistSidebarWidth: { _ in }
@@ -115,11 +123,11 @@ struct BrowserRootView: View {
     let browser = BrowserRootPreviewFixture.makeBrowser()
     BrowserRootView(
         browser: browser,
-        pages: BrowserPagePool(),
+        pages: BrowserPagePool(browser: browser),
         chrome: BrowserRootPreviewFixture.makeChrome(state: .commandPalette),
         transientBrowsing: BrowserTransientBrowsingCoordinator(),
         windowState: BrowserRootPreviewFixture.makeWindowState(
-            session: browser.session
+            browser: browser
         ),
         initialSidebarWidth: Double(BrowserChromeLayout.sidebarIdealWidth),
         persistSidebarWidth: { _ in }

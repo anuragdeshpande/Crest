@@ -163,19 +163,16 @@ final class BrowserCredentialMessageRoutingTests: XCTestCase {
         """
 
     private func makePage() throws -> BrowserPage {
-        let tab = BrowserTab.startPage()
-        let space = BrowserSpace(
-            id: SpaceID(),
-            profile: BrowsingProfile(),
+        let tab = TabState.Seed.startPage()
+        let space = SpaceState.Seed(
             name: "Routing",
             symbol: "circle",
             accent: .indigo,
             folders: [],
-            tabs: [tab],
-            selectedTabID: tab.id
+            tabs: [tab]
         )
-        let pool = BrowserPagePool()
-        pool.select(tab: tab, space: space)
+        let pool = BrowserPagePool(browser: .hostingPages(SessionState.Seed(spaces: [space])))
+        pool.present(tab: tab.id, in: space.id)
         return try XCTUnwrap(pool.activePage)
     }
 

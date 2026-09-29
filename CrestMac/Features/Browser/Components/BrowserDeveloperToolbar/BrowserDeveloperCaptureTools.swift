@@ -12,6 +12,7 @@ struct BrowserDeveloperCaptureControls: View {
                 isActive: showsCaptureOptions,
                 action: { showsCaptureOptions.toggle() }
             )
+            .disabled(!page.pageEngine.registration.supports(.fullPageCapture))
             .popover(isPresented: $showsCaptureOptions, arrowEdge: .top) {
                 BrowserDeveloperCaptureOptions(page: page)
             }
@@ -22,6 +23,7 @@ struct BrowserDeveloperCaptureControls: View {
                 isActive: page.isRegionCapturePresented,
                 action: page.beginRegionCapture
             )
+            .disabled(!page.pageEngine.registration.supports(.viewportCapture))
         }
     }
 }

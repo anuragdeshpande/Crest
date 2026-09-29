@@ -1,7 +1,7 @@
 import CoreGraphics
 
 enum BrowserUtilitySwitcherLayout {
-    static let destinations: [BrowserUtilitySurface] = [.archive, .history, .downloads]
+    static let destinations = BrowserUtilitySurface.all
     static let step: CGFloat = 64
     static let buttonSize = CrestLayout.glassIconButtonDiameter
     static let collapsedScale: CGFloat = 0.08
@@ -23,18 +23,10 @@ enum BrowserUtilitySwitcherLayout {
         (CGFloat(index) - CGFloat(count - 1) / 2) * step
     }
 
-    static func expandedHeight(for count: Int) -> CGFloat {
-        guard count > 1 else { return buttonSize }
-        return buttonSize + CGFloat(count - 1) * step
-    }
-
     static func expansionDelay(for index: Int) -> Double {
         Double(max(index, 0)) * staggerInterval
     }
 
-    static func collapseDelay(for index: Int, count: Int) -> Double {
-        Double(max(count - index - 1, 0)) * staggerInterval * 0.55
-    }
 }
 
 enum BrowserUtilityFanExpansionStep: Equatable, Sendable {
@@ -43,10 +35,10 @@ enum BrowserUtilityFanExpansionStep: Equatable, Sendable {
 }
 
 enum BrowserDownloadNotificationPolicy {
-    static func progress(in downloads: [BrowserDownloadItem]) -> Double? {
+    static func progress(in downloads: [DownloadState]) -> Double? {
         downloads
-            .filter { $0.state.isInProgress }
+            .filter { $0.phase.isLive }
             .max { $0.createdAt < $1.createdAt }
-            .map { BrowserDownloadProgressPolicy.normalized($0.progress) }
+            .map(\.progress)
     }
 }

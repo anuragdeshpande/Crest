@@ -3,30 +3,28 @@ import Foundation
 extension BrowserStore {
     /// Closing a saved native view dismisses its presentation, retaining the
     /// document in Saved. Current copies continue through the normal close path.
-    func dismissNativeTab(_ id: TabID, matching assignment: BrowserSpaceRuntimeAssignment) {
-        guard let space = selectedSpace, BrowserSpaceRuntimeAssignment(space: space) == assignment,
-            space.selectedTabID == id,
-            space.tabs.first(where: { $0.id == id })?.nativeContent != nil
+    func dismissNativeTab(_ id: UUID, matching assignment: BrowserSpaceRuntimeAssignment) {
+        guard let space = shownSpace, BrowserSpaceRuntimeAssignment(space: space) == assignment,
+            selectedTabID(in: space.id) == id,
+            space.tabs.model(id)?.nativeContent != nil
         else { return }
         selectDismissalFallback(afterDismissing: id)
     }
 
     @discardableResult
-    func openGettingStarted() -> TabID? {
-        if let existing = selectedSpace?.tabs.first(where: {
-            $0.nativeContent == .gettingStarted
-        }) {
+    func openGettingStarted() -> UUID? {
+        if let existing = shownSpace?.tabs.models.first(where: { $0.nativeTabContent == .gettingStarted }) {
             selectTab(existing.id)
             return existing.id
         }
-        return openNativeTab(.gettingStarted, title: String(localized: "Getting Started"), symbol: "book.closed.fill")
+        return openNativeTab(.gettingStarted)
     }
 
     @discardableResult
     func openGettingStartedAfterSetup(matching assignment: BrowserSpaceRuntimeAssignment)
         -> BrowserTabRuntimeAssignment?
     {
-        guard !isPrivateBrowsing, let firstSpace = session.spaces.first,
+        guard !isPrivateBrowsing, let firstSpace = spaceModels.first,
             BrowserSpaceRuntimeAssignment(space: firstSpace) == assignment
         else { return nil }
         selectSpace(firstSpace.id)
@@ -37,26 +35,19 @@ extension BrowserStore {
     /// Settings is one ordinary, closable native tab per Space. Repeated menu
     /// commands focus that tab without creating duplicates or opening WebKit.
     @discardableResult
-    func openSettings() -> TabID? {
-        if let existing = selectedSpace?.tabs.first(where: { $0.nativeContent == .settings }) {
+    func openSettings() -> UUID? {
+        if let existing = shownSpace?.tabs.models.first(where: { $0.nativeTabContent == .settings }) {
             selectTab(existing.id)
             return existing.id
         }
-        return openNativeTab(
-            .settings, title: String(localized: "Settings"), symbol: "gearshape.fill", placement: .current)
+        return openNativeTab(.settings, placement: .current)
     }
 
     /// Native documents enter the same session mutation and persistence path as
     /// websites. No page pool or second selection model is owned by the document.
     @discardableResult
-    func openNativeTab(
-        _ content: BrowserNativeTabContent, title: String, symbol: String, placement: TabPlacement = .saved
-    ) -> TabID? {
-        guard let space = selectedSpace else { return nil }
-        let id = session.openTab(
-            title: title, url: nil, nativeContent: content, symbol: symbol,
-            in: space.id, placement: placement)
-        persist(scope: .core)
-        return id
+    func openNativeTab(_ view: NativeView, placement: TabPlacement = .saved) -> UUID? {
+        guard let space = shownSpace else { return nil }
+        return openSessionTab(.view(view), in: space.id, placement: placement)
     }
 }

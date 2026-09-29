@@ -6,33 +6,35 @@ import XCTest
 @MainActor
 final class BrowserCommandPaletteModelActivationTests: XCTestCase {
     func testActivationCarriesExactAssignmentsAndRejectsAStaleSource() throws {
-        let sourceTab = BrowserTab.startPage(
-            id: TabID(rawValue: uuid(0x11)),
+        let sourceTab = TabState.Seed.startPage(
+            id: uuid(0x11),
             lastActivatedAt: fixedDate
         )
-        let targetTab = BrowserTab(
-            id: TabID(rawValue: uuid(0x12)),
+        let targetTab = TabState.Seed(
+            id: uuid(0x12),
             title: "Target",
             url: URL(fileURLWithPath: "/palette-target"),
             placement: .current,
             lastActivatedAt: fixedDate
         )
-        let space = BrowserSpace(
-            id: SpaceID(rawValue: uuid(0x21)),
-            profile: BrowsingProfile(id: uuid(0x31)),
+        let space = SpaceState.Seed(
+            id: uuid(0x21),
+            profileID: uuid(0x31),
             name: "Palette",
             symbol: "command",
             accent: .indigo,
             folders: [],
-            tabs: [sourceTab, targetTab],
-            selectedTabID: sourceTab.id
+            tabs: [sourceTab, targetTab]
         )
         var sourceIsAvailable = false
         var capturedSource: BrowserTabRuntimeAssignment?
         var capturedTarget: BrowserTabRuntimeAssignment?
         var dismissalCount = 0
+        let browser = BrowserStore(
+            seed: SessionState.Seed(spaces: [space]), showing: space.id, tabs: [space.id: sourceTab.id])
         let model = BrowserCommandPaletteModel(
-            space: space,
+            browser: browser,
+            space: browser.spaceModel(space.id),
             selectedTabID: sourceTab.id,
             initialQuery: "",
             commands: nil,
@@ -45,9 +47,7 @@ final class BrowserCommandPaletteModelActivationTests: XCTestCase {
             openURL: { _, _ in false },
             dismiss: { dismissalCount += 1 }
         )
-        let targetResult = try XCTUnwrap(
-            model.results.first { $0.faviconTabID == targetTab.id }
-        )
+        let targetResult = try XCTUnwrap(model.items.first { $0.row.tabID == targetTab.id }?.row)
 
         model.activate(targetResult)
         XCTAssertNil(capturedSource)
@@ -62,7 +62,7 @@ final class BrowserCommandPaletteModelActivationTests: XCTestCase {
             BrowserTabRuntimeAssignment(
                 tabID: sourceTab.id,
                 spaceID: space.id,
-                profileID: space.profile.id
+                profileID: space.profileID
             )
         )
         XCTAssertEqual(
@@ -70,7 +70,7 @@ final class BrowserCommandPaletteModelActivationTests: XCTestCase {
             BrowserTabRuntimeAssignment(
                 tabID: targetTab.id,
                 spaceID: space.id,
-                profileID: space.profile.id
+                profileID: space.profileID
             )
         )
         XCTAssertEqual(dismissalCount, 1)
@@ -86,7 +86,7 @@ final class BrowserCommandPaletteModelActivationTests: XCTestCase {
 
         let queries = await recorder.queries
         XCTAssertTrue(queries.isEmpty)
-        XCTAssertFalse(model.results.contains { $0.section == .searchSuggestions })
+        XCTAssertFalse(model.groups.contains { $0.section == .searchSuggestions })
     }
 
     func testPrivateBrowsingNeverSendsAnOptedInQuery() async {
@@ -103,7 +103,7 @@ final class BrowserCommandPaletteModelActivationTests: XCTestCase {
 
         let queries = await recorder.queries
         XCTAssertTrue(queries.isEmpty)
-        XCTAssertFalse(model.results.contains { $0.section == .searchSuggestions })
+        XCTAssertFalse(model.groups.contains { $0.section == .searchSuggestions })
     }
 
     func testOptedInSuggestionsCancelAndIgnoreStaleResponsesWithoutReorderingSelection() async {
@@ -123,10 +123,10 @@ final class BrowserCommandPaletteModelActivationTests: XCTestCase {
         await model.waitForPendingResults()
 
         XCTAssertEqual(
-            model.results.filter { $0.section == .searchSuggestions }.map(\.title),
+            model.groups.first { $0.section == .searchSuggestions }?.items.map(\.row.title),
             ["latest suggestion"]
         )
-        XCTAssertFalse(model.results.contains { $0.title == "stale suggestion" })
+        XCTAssertFalse(model.items.contains { $0.row.title == "stale suggestion" })
         XCTAssertEqual(model.selectedResultIndex, 0)
     }
 
@@ -142,48 +142,51 @@ final class BrowserCommandPaletteModelActivationTests: XCTestCase {
 
     private func makePaletteFixture(
         searchSuggestionsEnabled: Bool
-    ) -> (space: BrowserSpace, sourceTab: BrowserTab) {
-        let sourceTab = BrowserTab.startPage(
-            id: TabID(rawValue: uuid(0x41)),
+    ) -> (space: SpaceState.Seed, sourceTab: TabState.Seed) {
+        let sourceTab = TabState.Seed.startPage(
+            id: uuid(0x41),
             lastActivatedAt: fixedDate
         )
-        let localTab = BrowserTab(
-            id: TabID(rawValue: uuid(0x42)),
+        let localTab = TabState.Seed(
+            id: uuid(0x42),
             title: "Local Crest tab",
             url: URL(string: "https://example.com/crest"),
             placement: .current,
             lastActivatedAt: fixedDate
         )
-        var preferences = BrowserSpaceBrowsingPreferences.default
+        var preferences = BrowsingPreferences.seeded
         preferences.searchSuggestionsEnabled = searchSuggestionsEnabled
-        let space = BrowserSpace(
-            id: SpaceID(rawValue: uuid(0x51)),
-            profile: BrowsingProfile(id: uuid(0x61)),
+        let space = SpaceState.Seed(
+            id: uuid(0x51),
+            profileID: uuid(0x61),
             name: "Suggestions",
             symbol: "magnifyingglass",
             accent: .indigo,
             folders: [],
             tabs: [sourceTab, localTab],
-            browsingPreferences: preferences,
-            selectedTabID: sourceTab.id
+            browsingPreferences: preferences
         )
         return (space, sourceTab)
     }
 
     private func makeModel(
-        fixture: (space: BrowserSpace, sourceTab: BrowserTab),
+        fixture: (space: SpaceState.Seed, sourceTab: TabState.Seed),
         isPrivateBrowsing: Bool = false,
         recorder: SuggestionRecorder
     ) -> BrowserCommandPaletteModel {
-        BrowserCommandPaletteModel(
-            space: fixture.space,
+        let browser = BrowserStore(
+            seed: SessionState.Seed(spaces: [fixture.space]), showing: fixture.space.id,
+            tabs: [fixture.space.id: fixture.sourceTab.id],
+            browsingMode: isPrivateBrowsing ? .privateBrowsing : .standard)
+        return BrowserCommandPaletteModel(
+            browser: browser,
+            space: browser.spaceModel(fixture.space.id),
             selectedTabID: fixture.sourceTab.id,
             initialQuery: "",
             commands: nil,
-            isPrivateBrowsing: isPrivateBrowsing,
             suggestionDebounce: .zero,
-            fetchSuggestions: { query, provider in
-                await recorder.suggestions(query: query, provider: provider)
+            fetchSuggestions: { address in
+                await recorder.suggestions(from: address)
             },
             isSourceAvailable: { _ in true },
             selectTab: { _, _ in false },
@@ -222,10 +225,11 @@ private actor SuggestionRecorder {
         self.delayByQuery = delayByQuery
     }
 
-    func suggestions(
-        query: String,
-        provider: BrowserSearchProvider
-    ) async -> [String] {
+    /// The suggestions for the query the engine's address carries.
+    func suggestions(from address: URL) async -> [String] {
+        let query =
+            URLComponents(url: address, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value
+            ?? ""
         queries.append(query)
         if let delay = delayByQuery[query] {
             try? await Task.sleep(for: delay)

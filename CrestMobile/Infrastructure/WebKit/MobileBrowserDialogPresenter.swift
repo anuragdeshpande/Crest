@@ -6,9 +6,12 @@ import WebKit
 
 @MainActor
 enum MobileBrowserDialogPresenter {
+    // A `dismissal` closes the alert once its question no longer waits.
+
     static func presentAlert(
         message: String,
         request: URLRequest,
+        dismissal: BrowserPromptDismissal? = nil,
         completion: @escaping @MainActor @Sendable () -> Void
     ) {
         let alert = UIAlertController(
@@ -17,12 +20,13 @@ enum MobileBrowserDialogPresenter {
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in completion() })
-        present(alert, fallback: completion)
+        present(alert, dismissal: dismissal, fallback: completion)
     }
 
     static func presentConfirmation(
         message: String,
         request: URLRequest,
+        dismissal: BrowserPromptDismissal? = nil,
         completion: @escaping @MainActor @Sendable (Bool) -> Void
     ) {
         let alert = UIAlertController(
@@ -32,13 +36,14 @@ enum MobileBrowserDialogPresenter {
         )
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in completion(false) })
         alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in completion(true) })
-        present(alert) { completion(false) }
+        present(alert, dismissal: dismissal) { completion(false) }
     }
 
     static func presentPrompt(
         message: String,
         defaultText: String?,
         request: URLRequest,
+        dismissal: BrowserPromptDismissal? = nil,
         completion: @escaping @MainActor @Sendable (String?) -> Void
     ) {
         let alert = UIAlertController(
@@ -52,7 +57,7 @@ enum MobileBrowserDialogPresenter {
             UIAlertAction(title: "OK", style: .default) { [weak alert] _ in
                 completion(alert?.textFields?.first?.text)
             })
-        present(alert) { completion(nil) }
+        present(alert, dismissal: dismissal) { completion(nil) }
     }
 
     /// Keeps the originating web request alive while the person repairs the
@@ -103,7 +108,7 @@ enum MobileBrowserDialogPresenter {
     /// is not offered as a saved block, so declining refuses this one hand-off
     /// rather than silently muting the site for good.
     static func presentExternalApplicationPermission(
-        origin: BrowserSiteOrigin,
+        origin: SiteOrigin,
         destinationURL: URL,
         spaceName: String
     ) async -> BrowserExternalSchemePromptResponse {
@@ -147,7 +152,8 @@ enum MobileBrowserDialogPresenter {
 
     static func presentHTTPAuthentication(
         prompt: BrowserHTTPAuthenticationPrompt,
-        spaceName: String
+        spaceName: String,
+        dismissal: BrowserPromptDismissal? = nil
     ) async -> BrowserHTTPAuthenticationPromptResponse? {
         let descriptor = prompt.descriptor
         var paragraphs: [String] = []
@@ -187,14 +193,16 @@ enum MobileBrowserDialogPresenter {
             field.textContentType = .password
         }
         return await withCheckedContinuation { continuation in
+            // An action or the question's dismissal answers, whichever comes first.
+            let answer = AlertAnswer(continuation)
             alert.addAction(
                 UIAlertAction(title: "Cancel", style: .cancel) { _ in
-                    continuation.resume(returning: nil)
+                    answer.resume(nil)
                 })
             alert.addAction(
                 UIAlertAction(title: "Sign In Once", style: .default) { [weak alert] _ in
-                    continuation.resume(
-                        returning: authenticationResponse(
+                    answer.resume(
+                        authenticationResponse(
                             from: alert,
                             shouldSave: false
                         ))
@@ -202,14 +210,15 @@ enum MobileBrowserDialogPresenter {
             if prompt.allowsSaving {
                 alert.addAction(
                     UIAlertAction(title: "Sign In & Save", style: .default) { [weak alert] _ in
-                        continuation.resume(
-                            returning: authenticationResponse(
+                        answer.resume(
+                            authenticationResponse(
                                 from: alert,
                                 shouldSave: true
                             ))
                     })
             }
-            present(alert) { continuation.resume(returning: nil) }
+            dismissal?.attach { answer.resume(nil) }
+            present(alert, dismissal: dismissal) { answer.resume(nil) }
         }
     }
 
@@ -272,11 +281,15 @@ enum MobileBrowserDialogPresenter {
 
     private static func present(
         _ alert: UIAlertController,
+        dismissal: BrowserPromptDismissal? = nil,
         fallback: @escaping @MainActor @Sendable () -> Void
     ) {
         guard let presenter = topViewController() else {
             fallback()
             return
+        }
+        dismissal?.attach { [weak alert] in
+            alert?.presentingViewController?.dismiss(animated: true)
         }
         presenter.present(alert, animated: true)
     }
@@ -360,5 +373,21 @@ enum MobileBrowserDialogPresenter {
             current = presented
         }
         return current
+    }
+}
+
+/// Resumes an alert's continuation once, with whichever answer comes first:
+/// one of its actions, or its question's dismissal.
+@MainActor
+private final class AlertAnswer<Value: Sendable> {
+    private var continuation: CheckedContinuation<Value, Never>?
+
+    init(_ continuation: CheckedContinuation<Value, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ value: Value) {
+        continuation?.resume(returning: value)
+        continuation = nil
     }
 }

@@ -38,12 +38,12 @@ struct BrowserCredentialSavePrompt: View {
         }
     }
 
-    private var space: BrowserSpace? {
-        browser.session.space(id: port.spaceID)
+    private var space: BrowserSpaceIdentity? {
+        browser.spaceModel(port.spaceID)?.identity
     }
 
-    private var preferences: BrowserCredentialPreferences {
-        space?.credentialPreferences ?? .default
+    private var preferences: CredentialPreferences {
+        browser.spaceModel(port.spaceID)?.settings.credentialPreferences ?? .seeded
     }
 
     /// Whether this prompt will go on to offer the password to the system's
@@ -52,13 +52,7 @@ struct BrowserCredentialSavePrompt: View {
     /// A shell that cannot make the offer never asks the policy: leaving the
     /// closure out of the port is the whole of that shell's answer.
     private var shouldOfferSystemPasswords: Bool {
-        port.offerToSystemPasswords != nil
-            && BrowserSystemPasswordWriteThroughPolicy.shouldOffer(
-                preferences: preferences,
-                availability:
-                    BrowserSystemPasswordWriteThroughSystem.launchAvailability,
-                isPrivateBrowsing: browser.isPrivateBrowsing
-            )
+        port.offerToSystemPasswords != nil && browser.offersSystemPasswordWriteThrough(for: preferences)
     }
 
     private var route: BrowserCredentialPromptRoute {
@@ -85,7 +79,7 @@ struct BrowserCredentialSavePrompt: View {
     }
 
     private func perform(_ action: BrowserCredentialPromptPrimaryAction) {
-        switch action {
+        switch action.kind {
         case .commit:
             save()
         case .retryCredentialPreparation:

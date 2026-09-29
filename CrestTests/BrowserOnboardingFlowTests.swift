@@ -5,383 +5,117 @@ import XCTest
 
 @MainActor
 final class BrowserOnboardingFlowTests: XCTestCase {
-    func testSuccessfulReadBuildsAReviewAndSelectsItsFirstSpace() async throws {
-        let importedSpace = makeSpace(name: "Imported")
-        let output = readOutput(
-            application: .safari,
-            import: portableImport(spaces: [importedSpace])
+    func testAFailedReadRetriesAndTheReviewedImportLandsInTheSession() async throws {
+        let reader = SequencedImportReader(
+            results: [
+                .failure(TestFailure.read),
+                .success(readOutput(application: .safari, spaces: [makeSpace(name: "Imported")])),
+            ]
         )
-        let flow = makeFlow(
-            sourceDiscovery: StubSourceDiscovery(sources: [source(.safari)]),
-            reader: ImmediateImportReader(result: .success(output))
-        )
+        let flow = makeFlow(sourceDiscovery: StubSourceDiscovery(sources: [source(.safari)]), reader: reader)
+        flow.start()
         flow.discoverInstalledSources()
         flow.toggleImportSelection(.safari)
 
         flow.continueImportQueue()
-        await waitUntil { flow.state == .reviewing(.safari) }
-
-        XCTAssertEqual(flow.plan?.spaces.map(\.id), [importedSpace.id])
-        XCTAssertNil(flow.failure)
-    }
-
-    func testFailedReadCanRetryWithoutRebuildingTheImportSelection() async {
-        let reader = SequencedImportReader(
-            results: [
-                .failure(TestFailure.read),
-                .success(
-                    readOutput(
-                        application: .chrome,
-                        import: portableImport(spaces: [makeSpace(name: "Retry")])
-                    )
-                ),
-            ]
-        )
-        let flow = makeFlow(
-            sourceDiscovery: StubSourceDiscovery(sources: [source(.chrome)]),
-            reader: reader
-        )
-        flow.discoverInstalledSources()
-        flow.toggleImportSelection(.chrome)
+        await waitUntil { flow.failure != nil }
+        XCTAssertEqual(flow.step, .importBrowser)
+        XCTAssertEqual(flow.failure?.message, .verbatim(TestFailure.read.localizedDescription))
+        XCTAssertEqual(flow.selectedImportApplications, [.safari])
 
         flow.continueImportQueue()
-        await waitUntil { flow.failure != nil }
-
-        XCTAssertEqual(flow.state, .importSelection)
-        XCTAssertEqual(
-            flow.failure?.message,
-            .verbatim(TestFailure.read.localizedDescription)
-        )
-        XCTAssertEqual(flow.selectedImportApplications, [.chrome])
-
-        flow.retryImport()
-        await waitUntil { flow.state == .reviewing(.chrome) }
-
+        await waitUntil { flow.step == .review }
         XCTAssertNil(flow.failure)
         let readCount = await reader.readCount
         XCTAssertEqual(readCount, 2)
+
+        flow.commitReviewedImport()
+        await waitUntil { flow.step == .complete }
+        XCTAssertEqual(flow.browser.spaceModels.filter { $0.settings.name == "Imported" }.count, 1)
     }
 
     func testCancellationPreventsALateReadFromPublishingAReview() async {
         let reader = SuspendedFlowImportReader()
-        let flow = makeFlow(
-            sourceDiscovery: StubSourceDiscovery(sources: [source(.arc)]),
-            reader: reader
-        )
+        let flow = makeFlow(sourceDiscovery: StubSourceDiscovery(sources: [source(.arc)]), reader: reader)
+        flow.start()
         flow.discoverInstalledSources()
         flow.toggleImportSelection(.arc)
         flow.continueImportQueue()
         await reader.waitUntilStarted()
 
         flow.cancelImportRead()
-        await reader.complete(
-            readOutput(
-                application: .arc,
-                import: portableImport(spaces: [makeSpace(name: "Too Late")])
-            )
-        )
+        await reader.complete(readOutput(application: .arc, spaces: [makeSpace(name: "Too Late")]))
         await Task.yield()
 
-        XCTAssertEqual(flow.state, .importSelection)
-        XCTAssertNil(flow.plan)
+        XCTAssertEqual(flow.step, .importBrowser)
+        XCTAssertEqual(flow.state?.phase, .idle)
+        XCTAssertNil(flow.review)
         XCTAssertNil(flow.failure)
     }
 
-    func testResetInvalidatesAStaleDataAccessCallback() {
-        let dataAccessProvider = SuspendedDataAccessProvider()
-        let flow = makeFlow(
-            sourceDiscovery: StubSourceDiscovery(
-                sources: [source(.chrome, hasDetectedData: false)]
-            ),
-            dataAccessProvider: dataAccessProvider
-        )
-        flow.discoverInstalledSources()
-        flow.toggleImportSelection(.chrome)
-        flow.continueImportQueue()
-        XCTAssertTrue(dataAccessProvider.hasPendingRequest)
-
-        flow.reset(
-            for: BrowserOnboardingRequest(entryPoint: .manualSetup)
-        )
-        dataAccessProvider.complete(
-            with: URL(fileURLWithPath: "/tmp/obsolete-browser-data")
-        )
-
-        XCTAssertEqual(flow.state, .manualSetup)
-        XCTAssertNil(flow.failure)
-        XCTAssertNil(flow.plan)
-        XCTAssertFalse(flow.isReading)
-    }
-
-    func testFinalCommitCompletesAnExplicitImportRequest() async {
-        let imported = makeSpace(name: "Imported")
-        let flow = makeFlow(
-            sourceDiscovery: StubSourceDiscovery(sources: [source(.safari)]),
-            reader: ImmediateImportReader(
-                result: .success(
-                    readOutput(
-                        application: .safari,
-                        import: portableImport(spaces: [imported])
-                    )
-                )
-            )
-        )
-        flow.discoverInstalledSources()
-        flow.toggleImportSelection(.safari)
-        flow.continueImportQueue()
-        await waitUntil { flow.state == .reviewing(.safari) }
-
-        flow.commitReviewedImport()
-        await waitUntil { flow.state == .complete }
-
-        XCTAssertEqual(flow.state, .complete)
-        XCTAssertEqual(
-            flow.completionSummary.map { localized($0) },
-            "Imported 1 reviewed tab across 1 Space."
-        )
-        XCTAssertTrue(flow.browser.session.spaces.contains { $0.id == imported.id })
-    }
-
-    func testCommitRequiresAtLeastOneIncludedSpace() async throws {
-        let imported = makeSpace(name: "Excluded")
-        let flow = makeFlow(
-            sourceDiscovery: StubSourceDiscovery(sources: [source(.arc)]),
-            reader: ImmediateImportReader(
-                result: .success(
-                    readOutput(
-                        application: .arc,
-                        import: portableImport(spaces: [imported])
-                    )
-                )
-            )
-        )
-        flow.discoverInstalledSources()
-        flow.toggleImportSelection(.arc)
-        flow.continueImportQueue()
-        await waitUntil { flow.state == .reviewing(.arc) }
-        let originalSession = flow.browser.session
-        let spaceID = try XCTUnwrap(flow.plan?.spaces.first?.id)
-        flow.setSpaceIncluded(false, in: spaceID)
-
-        flow.commitReviewedImport()
-
-        XCTAssertEqual(flow.state, .reviewing(.arc))
-        XCTAssertEqual(
-            flow.failure?.message,
-            .verbatim("Choose at least one Space to import.")
-        )
-        XCTAssertFalse(flow.isCommittingImport)
-        XCTAssertEqual(flow.browser.session, originalSession)
-    }
-
-    func testNavigationCannotStartAnOverlappingCommit() async {
-        let committer = SuspendedImportCommitter()
-        let flow = makeFlow(
-            sourceDiscovery: StubSourceDiscovery(sources: [source(.safari)]),
-            reader: ImmediateImportReader(
-                result: .success(
-                    readOutput(
-                        application: .safari,
-                        import: portableImport(
-                            spaces: [makeSpace(name: "One Commit")]
-                        )
-                    )
-                )
-            ),
-            importCommitter: committer
-        )
-        flow.discoverInstalledSources()
-        flow.toggleImportSelection(.safari)
-        flow.continueImportQueue()
-        await waitUntil { flow.state == .reviewing(.safari) }
-
-        flow.commitReviewedImport()
-        await committer.waitUntilStarted()
-        flow.show(.importBrowser)
-        flow.commitReviewedImport()
-        flow.toggleImportSelection(.safari)
-        guard let review = flow.plan?.spaces.first else {
-            return XCTFail("Expected an import review")
-        }
-        flow.setSpaceIncluded(false, in: review.id)
-
-        XCTAssertTrue(flow.isCommittingImport)
-        XCTAssertEqual(flow.state, .committing(.safari))
-        XCTAssertEqual(flow.selectedImportApplications, [.safari])
-        XCTAssertEqual(
-            flow.plan?.spaces.first(where: { $0.id == review.id })?.isIncluded,
-            true
-        )
-        XCTAssertEqual(committer.callCount, 1)
-
-        committer.complete()
-        await waitUntil { flow.state == .complete }
-        XCTAssertFalse(flow.isCommittingImport)
-    }
-
-    func testResetCancelsACommitWithoutPublishingItsLateCompletion() async {
-        let committer = SuspendedImportCommitter()
-        let staleSpace = makeSpace(name: "Stale Commit")
-        let flow = makeFlow(
-            sourceDiscovery: StubSourceDiscovery(sources: [source(.safari)]),
-            reader: ImmediateImportReader(
-                result: .success(
-                    readOutput(
-                        application: .safari,
-                        import: portableImport(spaces: [staleSpace])
-                    )
-                )
-            ),
-            importCommitter: committer
-        )
-        flow.discoverInstalledSources()
-        flow.toggleImportSelection(.safari)
-        flow.continueImportQueue()
-        await waitUntil { flow.state == .reviewing(.safari) }
-        flow.commitReviewedImport()
-        await committer.waitUntilStarted()
-
-        flow.reset(
-            for: BrowserOnboardingRequest(entryPoint: .manualSetup)
-        )
-        committer.complete()
-        await Task.yield()
-
-        XCTAssertEqual(flow.state, .manualSetup)
-        XCTAssertFalse(flow.isCommittingImport)
-        XCTAssertNil(flow.failure)
-        XCTAssertFalse(flow.browser.session.spaces.contains { $0.id == staleSpace.id })
-    }
-
-    func testResetDuringFinalizationLetsTheCommittedMutationFinish() async {
+    /// An import that has begun applying finishes, whatever the window does
+    /// meanwhile; the reset it held back runs after it.
+    func testResetDuringFinalizationLetsTheCommittedImportFinish() async {
         let committer = PostMutationSuspendedImportCommitter()
-        let committedSpace = makeSpace(name: "Committed Before Reset")
         let flow = makeFlow(
             sourceDiscovery: StubSourceDiscovery(sources: [source(.safari)]),
-            reader: ImmediateImportReader(
-                result: .success(
-                    readOutput(
-                        application: .safari,
-                        import: portableImport(spaces: [committedSpace])
-                    )
-                )
-            ),
+            reader: SequencedImportReader(
+                results: [
+                    .success(readOutput(application: .safari, spaces: [makeSpace(name: "Committed Before Reset")]))
+                ]),
             importCommitter: committer
         )
+        flow.start()
         flow.discoverInstalledSources()
         flow.toggleImportSelection(.safari)
         flow.continueImportQueue()
-        await waitUntil { flow.state == .reviewing(.safari) }
+        await waitUntil { flow.step == .review }
         flow.commitReviewedImport()
         await committer.waitUntilFinalizationStarted()
+        XCTAssertTrue(flow.browser.spaceModels.contains { $0.settings.name == "Committed Before Reset" })
 
-        XCTAssertTrue(
-            flow.browser.session.spaces.contains { $0.id == committedSpace.id }
-        )
-        flow.reset(
-            for: BrowserOnboardingRequest(entryPoint: .manualSetup)
-        )
+        flow.reset(for: BrowserOnboardingRequest(entryPoint: .manualSetup))
         XCTAssertTrue(flow.isCommittingImport)
-        XCTAssertEqual(flow.state, .committing(.safari))
 
         committer.completeFinalization()
-        await waitUntil {
-            !flow.isCommittingImport && flow.state == .manualSetup
-        }
-
-        XCTAssertEqual(flow.state, .manualSetup)
+        await waitUntil { !flow.isCommittingImport && flow.step == .manualSetup }
         XCTAssertNil(flow.failure)
-        XCTAssertTrue(
-            flow.browser.session.spaces.contains { $0.id == committedSpace.id }
-        )
-    }
-
-    func testDeniedGuideAuthorizationKeepsManualDraftPendingUntilSuccessfulRetry() async throws {
-        var first = makeSpace(name: "First")
-        first.accessPolicy = .deviceOwnerAuthentication
-        let session = BrowserSession(spaces: [first], selectedSpaceID: first.id)
-        let browser = BrowserStore(session: session, persistence: InMemoryBrowserSessionPersistence())
-        let flow = makeFlow(entryPoint: .rerun, browser: browser)
-        flow.beginManualSetup()
-        var plan = try XCTUnwrap(flow.manualPlan)
-        let newSpaceID = try plan.addSpace()
-        plan.setSpaceIdentity(name: "Renamed", symbol: first.symbol, for: first.id)
-        flow.updateManualPlan(plan)
-        let progress = BrowserOnboardingProgressStore(
-            persistence: InMemoryBrowserOnboardingProgressPersistence(hasCompletedSetup: true))
-        let authenticator = SuspendedGuideAuthenticator()
-        let access = BrowserSpaceAccessController(authenticator: authenticator)
-        var completionCount = 0
-
-        flow.completeSetup(progress: progress, spaceAccess: access) { completionCount += 1 }
-        await waitUntil { authenticator.hasPendingRequest }
-        authenticator.complete(with: false)
-        await waitUntil { !flow.isCompletingSetup }
-
-        XCTAssertEqual(browser.session, session)
-        XCTAssertEqual(flow.manualPlan, plan)
-        XCTAssertEqual(flow.state, .manualSetup)
-        XCTAssertEqual(completionCount, 0)
-
-        flow.completeSetup(progress: progress, spaceAccess: access) { completionCount += 1 }
-        await waitUntil { authenticator.hasPendingRequest }
-        authenticator.complete()
-        await waitUntil { completionCount == 1 }
-
-        XCTAssertNil(flow.manualPlan)
-        XCTAssertEqual(flow.state, .complete)
-        XCTAssertEqual(browser.session.spaces.filter { $0.id == newSpaceID }.count, 1)
-        XCTAssertEqual(browser.session.spaces.first?.name, "Renamed")
-        XCTAssertEqual(browser.session.selectedSpaceID, first.id)
-        XCTAssertEqual(browser.selectedTab?.nativeContent, .gettingStarted)
+        XCTAssertTrue(flow.browser.spaceModels.contains { $0.settings.name == "Committed Before Reset" })
     }
 
     private func makeFlow(
-        entryPoint: BrowserOnboardingEntryPoint = .importBrowser,
-        browser: BrowserStore? = nil,
-        sourceDiscovery: any BrowserInstalledImportSourceDiscovering =
-            StubSourceDiscovery(sources: []),
-        dataAccessProvider: any BrowserOnboardingDataAccessProviding =
-            StubDataAccessProvider(),
-        reader: any BrowserOnboardingImportReading = ImmediateImportReader(
-            result: .failure(TestFailure.read)
-        ),
-        importCommitter: any BrowserOnboardingImportCommitting =
-            LiveBrowserOnboardingImportCommitter()
+        sourceDiscovery: any BrowserInstalledImportSourceDiscovering,
+        reader: any BrowserOnboardingImportReading,
+        importCommitter: any BrowserOnboardingImportCommitting = LiveBrowserOnboardingImportCommitter()
     ) -> BrowserOnboardingFlow {
         BrowserOnboardingFlow(
-            request: BrowserOnboardingRequest(entryPoint: entryPoint),
-            browser: browser
-                ?? BrowserStore(
-                    session: BrowserSession.preview,
-                    persistence: InMemoryBrowserSessionPersistence()
-                ),
+            request: BrowserOnboardingRequest(entryPoint: .importBrowser),
+            browser: BrowserStore(seed: .preview),
             sourceDiscovery: sourceDiscovery,
-            dataAccessProvider: dataAccessProvider,
+            dataAccessProvider: StubDataAccessProvider(),
             importReader: reader,
             importCommitter: importCommitter
         )
     }
 
     private func source(
-        _ application: BrowserImportApplication,
+        _ application: ImportSource,
         hasDetectedData: Bool = true,
         detectedDataURL: URL? = nil
     ) -> BrowserInstalledImportSource {
         BrowserInstalledImportSource(
             application: application,
-            applicationURL: URL(fileURLWithPath: "/Applications/\(application.name).app"),
+            applicationURL: URL(fileURLWithPath: "/Applications/\(application.title).app"),
             detectedPayload: BrowserDetectedImportPayload(
                 application: application,
                 profiles: [
-                    BrowserDetectedImportProfile(
+                    ImportProfile(
                         id: "Default",
                         name: "Default",
-                        bookmarksURL: hasDetectedData
-                            ? detectedDataURL
-                                ?? URL(fileURLWithPath: #filePath)
+                        bookmarksPath: hasDetectedData
+                            ? (detectedDataURL ?? URL(fileURLWithPath: #filePath)).path
                             : nil,
-                        sessionURL: nil
+                        sessionPath: nil
                     )
                 ]
             ),
@@ -389,49 +123,23 @@ final class BrowserOnboardingFlowTests: XCTestCase {
         )
     }
 
-    private func makeSpace(name: String) -> BrowserSpace {
-        let tab = BrowserTab(
+    private func makeSpace(name: String) -> SpaceState.Seed {
+        let tab = TabState.Seed(
             title: "Example",
             url: URL(string: "https://example.com"),
             placement: .current
         )
-        return BrowserSpace(
-            id: SpaceID(),
-            profile: BrowsingProfile(),
-            name: name,
-            symbol: "square.and.arrow.down",
-            accent: .indigo,
-            folders: [],
-            tabs: [tab],
-            selectedTabID: tab.id
-        )
+        return SpaceState.Seed(name: name, symbol: "square.and.arrow.down", accent: .indigo, tabs: [tab])
     }
 
-    private func portableImport(
-        spaces: [BrowserSpace]
-    ) -> BrowserPortableImport {
-        BrowserPortableImport(
-            spaces: spaces,
-            summary: BrowserPortableImportSummary(
-                spaceCount: spaces.count,
-                folderCount: 0,
-                liveTabCount: spaces.reduce(0) { $0 + $1.tabs.count },
-                archivedTabCount: 0,
-                historyEntryCount: 0
-            )
-        )
-    }
-
+    /// What reading `application` brings: `spaces`, as the core holds them.
     private func readOutput(
-        application: BrowserImportApplication,
-        import portableImport: BrowserPortableImport
+        application: ImportSource,
+        spaces: [SpaceState.Seed]
     ) -> BrowserOnboardingImportReadOutput {
         BrowserOnboardingImportReadOutput(
-            payload: BrowserDetectedImportPayload(
-                application: application,
-                profiles: []
-            ),
-            imported: portableImport,
+            payload: BrowserDetectedImportPayload(application: application, profiles: []),
+            imported: BrowserStore(seed: SessionState.Seed(spaces: spaces)).snapshot.spaces,
             passwordCandidates: []
         )
     }
@@ -449,14 +157,6 @@ final class BrowserOnboardingFlowTests: XCTestCase {
         XCTFail("Timed out waiting for onboarding flow state")
     }
 
-    private func localized(
-        _ resource: LocalizedStringResource,
-        locale: Locale = Locale(identifier: "en")
-    ) -> String {
-        var resource = resource
-        resource.locale = locale
-        return String(localized: resource)
-    }
 }
 
 @MainActor
@@ -471,114 +171,27 @@ private struct StubSourceDiscovery: BrowserInstalledImportSourceDiscovering {
 @MainActor
 private struct StubDataAccessProvider: BrowserOnboardingDataAccessProviding {
     func resolve(
-        for application: BrowserImportApplication
+        for application: ImportSource
     ) -> BrowserImportDataDirectoryAccess? {
         nil
     }
 
-    func clear(for application: BrowserImportApplication) {}
+    func clear(for application: ImportSource) {}
 
     func remember(
         _ directoryURL: URL,
-        for application: BrowserImportApplication
+        for application: ImportSource
     ) throws {}
 
     func chooseDataFolder(
-        for application: BrowserImportApplication,
+        for application: ImportSource,
         completion: @escaping @MainActor (URL?) -> Void
     ) {
         completion(nil)
     }
 
-    func hasSavedAccess(for application: BrowserImportApplication) -> Bool {
+    func hasSavedAccess(for application: ImportSource) -> Bool {
         false
-    }
-}
-
-@MainActor
-private final class SuspendedDataAccessProvider:
-    BrowserOnboardingDataAccessProviding
-{
-    private var completion: (@MainActor (URL?) -> Void)?
-
-    var hasPendingRequest: Bool { completion != nil }
-
-    func resolve(
-        for application: BrowserImportApplication
-    ) -> BrowserImportDataDirectoryAccess? {
-        nil
-    }
-
-    func clear(for application: BrowserImportApplication) {}
-
-    func remember(
-        _ directoryURL: URL,
-        for application: BrowserImportApplication
-    ) throws {}
-
-    func chooseDataFolder(
-        for application: BrowserImportApplication,
-        completion: @escaping @MainActor (URL?) -> Void
-    ) {
-        self.completion = completion
-    }
-
-    func hasSavedAccess(for application: BrowserImportApplication) -> Bool {
-        false
-    }
-
-    func complete(with url: URL?) {
-        let completion = completion
-        self.completion = nil
-        completion?(url)
-    }
-}
-
-@MainActor
-private final class SuspendedImportCommitter:
-    BrowserOnboardingImportCommitting
-{
-    private var continuation: CheckedContinuation<Void, Never>?
-    private var startWaiters: [CheckedContinuation<Void, Never>] = []
-    private(set) var callCount = 0
-
-    func prepare(
-        plan: BrowserImportReviewPlan,
-        application: BrowserImportApplication,
-        payload: BrowserDetectedImportPayload?,
-        passwordCountsBySourceSpace: [SpaceID: Int]
-    ) async throws -> BrowserOnboardingPreparedImport {
-        callCount += 1
-        await withCheckedContinuation { continuation in
-            self.continuation = continuation
-            for waiter in startWaiters {
-                waiter.resume()
-            }
-            startWaiters.removeAll()
-        }
-        try Task.checkCancellation()
-        return BrowserOnboardingPreparedImport(passwords: [])
-    }
-
-    func finalize(
-        plan: BrowserImportReviewPlan,
-        preparedImport: BrowserOnboardingPreparedImport,
-        browser: BrowserStore
-    ) async throws -> BrowserPasswordImportResult {
-        try browser.commitReviewedImport(plan)
-        return .empty
-    }
-
-    func waitUntilStarted() async {
-        guard continuation == nil else { return }
-        await withCheckedContinuation { continuation in
-            startWaiters.append(continuation)
-        }
-    }
-
-    func complete() {
-        continuation?.resume()
-        continuation = nil
     }
 }
 
@@ -590,20 +203,18 @@ private final class PostMutationSuspendedImportCommitter:
     private var finalizationStartWaiters: [CheckedContinuation<Void, Never>] = []
 
     func prepare(
-        plan: BrowserImportReviewPlan,
-        application: BrowserImportApplication,
-        payload: BrowserDetectedImportPayload?,
-        passwordCountsBySourceSpace: [SpaceID: Int]
+        review: SetupImportReview,
+        payload: BrowserDetectedImportPayload?
     ) async throws -> BrowserOnboardingPreparedImport {
         BrowserOnboardingPreparedImport(passwords: [])
     }
 
     func finalize(
-        plan: BrowserImportReviewPlan,
+        review: SetupImportReview,
         preparedImport: BrowserOnboardingPreparedImport,
         browser: BrowserStore
     ) async throws -> BrowserPasswordImportResult {
-        try browser.commitReviewedImport(plan)
+        try browser.importReviewedSpaces()
         await withCheckedContinuation { continuation in
             finalizationContinuation = continuation
             for waiter in finalizationStartWaiters {
@@ -624,16 +235,6 @@ private final class PostMutationSuspendedImportCommitter:
     func completeFinalization() {
         finalizationContinuation?.resume()
         finalizationContinuation = nil
-    }
-}
-
-private struct ImmediateImportReader: BrowserOnboardingImportReading {
-    let result: Result<BrowserOnboardingImportReadOutput, TestFailure>
-
-    func read(
-        _ payload: BrowserDetectedImportPayload
-    ) async throws -> BrowserOnboardingImportReadOutput {
-        try result.get()
     }
 }
 
@@ -690,19 +291,4 @@ private enum TestFailure: LocalizedError {
     case read
 
     var errorDescription: String? { "The browser import could not be read." }
-}
-
-@MainActor
-private final class SuspendedGuideAuthenticator: BrowserDeviceAuthenticating {
-    private var continuation: CheckedContinuation<Bool, Never>?
-    var hasPendingRequest: Bool { continuation != nil }
-
-    func authenticate(reason: String) async throws -> Bool {
-        await withCheckedContinuation { continuation = $0 }
-    }
-
-    func complete(with result: Bool = true) {
-        continuation?.resume(returning: result)
-        continuation = nil
-    }
 }

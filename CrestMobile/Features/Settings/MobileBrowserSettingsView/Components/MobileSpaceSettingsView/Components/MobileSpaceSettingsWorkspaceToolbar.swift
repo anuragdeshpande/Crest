@@ -4,7 +4,7 @@ import SwiftUI
 /// while the shared crest editor scrolls below it.
 struct MobileSpaceSettingsWorkspaceToolbar: View {
     let browser: BrowserStore
-    @Binding var selectedSpaceID: SpaceID?
+    @Binding var selectedSpaceID: UUID?
     @Binding var section: BrowserSpaceEditorSection
 
     var body: some View {
@@ -52,7 +52,7 @@ struct MobileSpaceSettingsWorkspaceToolbar: View {
 
     private var spacePicker: some View {
         Picker("Space", selection: $selectedSpaceID) {
-            ForEach(browser.session.spaces) { space in
+            ForEach(browser.spaceModels) { space in
                 BrowserSpaceIdentityLabel(space: space).tag(Optional(space.id))
             }
         }
@@ -75,7 +75,7 @@ struct MobileSpaceSettingsWorkspaceToolbar: View {
     private var addSpaceButton: some View {
         BrowserSpaceAddButton {
             browser.addSpace()
-            selectedSpaceID = browser.session.selectedSpaceID
+            selectedSpaceID = browser.selectedSpaceID
         }
     }
 

@@ -4,13 +4,10 @@ import Foundation
 enum BrowserShortcutSettingsPresentation {
     static let emptyShortcutGlyph = "—"
     static let searchPrompt: LocalizedStringResource = "Search shortcuts"
-    static let extensionSpace: LocalizedStringResource = "Extension Space"
     static let resetCrest: LocalizedStringResource = "Reset Crest"
     static let custom: LocalizedStringResource = "Custom"
     static let clearShortcut: LocalizedStringResource = "Clear Shortcut"
     static let resetToDefault: LocalizedStringResource = "Reset to Default"
-    static let resetToExtensionDefault: LocalizedStringResource =
-        "Reset to Extension Default"
     static let shortcutActions: LocalizedStringResource = "Shortcut Actions"
     static let shortcutAlreadyInUse: LocalizedStringResource =
         "Shortcut Already in Use"
@@ -26,20 +23,13 @@ enum BrowserShortcutSettingsPresentation {
     static let resetAllDetail: LocalizedStringResource =
         "Every Crest command will return to its default shortcut."
     static let guidance: LocalizedStringResource =
-        "Click a shortcut, then press a key with Command, Option, Control, or Shift. Crest commands take priority; extension commands apply only to the selected Space."
+        "Click a shortcut, then press a key with Command, Option, Control, or Shift."
     static let invalidShortcut: LocalizedStringResource =
         "Use a supported key with Command, Option, Control, or Shift."
     static let typeShortcut: LocalizedStringResource = "Type Shortcut"
     static let unassigned: LocalizedStringResource = "Unassigned"
     static let recorderHelp: LocalizedStringResource =
         "Click, then press the new shortcut"
-
-    static func section(
-        extensionName: String,
-        spaceName: String
-    ) -> LocalizedStringResource {
-        "\(extensionName) · \(spaceName)"
-    }
 
     static func actionsAccessibilityLabel(
         title: String
@@ -53,12 +43,6 @@ enum BrowserShortcutSettingsPresentation {
         "Shortcut for \(title)"
     }
 
-    static func extensionRecorderTitle(
-        extensionName: String,
-        commandTitle: String
-    ) -> LocalizedStringResource {
-        "\(extensionName): \(commandTitle)"
-    }
 }
 
 extension BrowserShortcutPendingConflict {
@@ -109,7 +93,7 @@ extension BrowserShortcutValidationIssue {
     }
 
     private func localizedCommandList(
-        _ commands: [BrowserShortcutCommand],
+        _ commands: [ShortcutCommand],
         locale: Locale
     ) -> String {
         BrowserShortcutLocalization.list(
@@ -132,11 +116,9 @@ enum BrowserShortcutSettingsMetrics {
     static let controlSpacing: CGFloat = 10
     static let rowSpacing: CGFloat = 12
     static let rowVerticalPadding: CGFloat = 3
-    static let searchFieldHeight: CGFloat = 30
     static let spacePickerWidth: CGFloat = 150
     static let recorderWidth: CGFloat = 116
     static let recorderHeight: CGFloat = 28
     static let actionSize: CGFloat = 28
-    static let requestedRowOpacity = 0.14
     static let recorderFontSize: CGFloat = 13
 }

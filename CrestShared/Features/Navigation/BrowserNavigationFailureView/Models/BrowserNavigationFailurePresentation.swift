@@ -1,10 +1,12 @@
 import SwiftUI
 
+/// How the failure page presents each `NavigationError`. A member the switches
+/// do not name reads as the unknown one.
 struct BrowserNavigationFailurePresentation {
-    let failure: BrowserNavigationFailure
+    let failure: PageFailure
 
     var title: LocalizedStringResource {
-        switch failure.kind {
+        switch failure.error {
         case .offline:
             "You’re offline"
         case .timedOut:
@@ -27,13 +29,13 @@ struct BrowserNavigationFailurePresentation {
             "This page isn’t available"
         case .webContentProcessStopped:
             "This page stopped responding"
-        case .unknown:
+        default:
             "This page couldn’t be opened"
         }
     }
 
     var message: Text {
-        switch failure.kind {
+        switch failure.error {
         case .offline:
             Text("Crest can’t reach \(failure.displayHost) without a network connection.")
         case .timedOut:
@@ -56,13 +58,13 @@ struct BrowserNavigationFailurePresentation {
             Text("\(failure.displayHost) returned a response Crest couldn’t load.")
         case .webContentProcessStopped:
             Text("The web content process stopped repeatedly. Your tab and address are safe.")
-        case .unknown:
+        default:
             Text("Crest encountered an unexpected problem while opening \(failure.displayHost).")
         }
     }
 
     var primarySuggestion: LocalizedStringResource {
-        switch failure.kind {
+        switch failure.error {
         case .offline:
             "Reconnect to Wi-Fi or Ethernet, then try again."
         case .timedOut, .connectionLost:
@@ -79,13 +81,13 @@ struct BrowserNavigationFailurePresentation {
             "Review this Space’s content and network settings."
         case .webContentProcessStopped:
             "Try reloading the page in a fresh web content process."
-        case .unknown:
+        default:
             "Try the address again or open a different page."
         }
     }
 
     var secondarySuggestion: LocalizedStringResource {
-        switch failure.kind {
+        switch failure.error {
         case .offline, .timedOut, .connectionLost:
             "If you use a VPN or proxy, confirm that it is connected."
         case .cannotFindServer:
@@ -102,13 +104,13 @@ struct BrowserNavigationFailurePresentation {
             "A firewall, filter, or device policy may also be responsible."
         case .webContentProcessStopped:
             "If it happens again, try closing and reopening the tab."
-        case .unknown:
+        default:
             "The technical details below can help identify the cause."
         }
     }
 
     var symbolName: String {
-        switch failure.kind {
+        switch failure.error {
         case .offline:
             "wifi.slash"
         case .timedOut:
@@ -129,7 +131,7 @@ struct BrowserNavigationFailurePresentation {
             "hand.raised.slash"
         case .webContentProcessStopped:
             "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90"
-        case .unknown:
+        default:
             "doc.badge.ellipsis"
         }
     }

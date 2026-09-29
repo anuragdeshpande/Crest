@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 
 @Observable
@@ -5,10 +6,9 @@ import Observation
 final class BrowserSpaceSettingsPresentationState {
     private(set) var requestedDestination = BrowserSettingsDestination.spaces
     private(set) var requestedAssignment: BrowserSpaceRuntimeAssignment?
-    private(set) var requestedExtensionCommand: BrowserExtensionCommandSettingsRoute?
     private(set) var revision = 0
 
-    var requestedSpaceID: SpaceID? { requestedAssignment?.spaceID }
+    var requestedSpaceID: UUID? { requestedAssignment?.spaceID }
 
     func present(assignment: BrowserSpaceRuntimeAssignment) {
         present(.spaces, assignment: assignment)
@@ -20,22 +20,11 @@ final class BrowserSpaceSettingsPresentationState {
     ) {
         requestedDestination = destination
         requestedAssignment = assignment
-        requestedExtensionCommand = nil
         revision &+= 1
     }
 
-    func presentExtensionCommandSettings(
-        _ route: BrowserExtensionCommandSettingsRoute,
-        assignment: BrowserSpaceRuntimeAssignment
-    ) {
-        requestedDestination = .shortcuts
-        requestedAssignment = assignment
-        requestedExtensionCommand = route
-        revision &+= 1
-    }
-
-    func requestedSpaceID(in browser: BrowserStore) -> SpaceID? {
+    func requestedSpaceID(in browser: BrowserStore) -> UUID? {
         guard let requestedAssignment else { return nil }
-        return browser.space(matching: requestedAssignment)?.id
+        return browser.spaceModel(matching: requestedAssignment)?.id
     }
 }

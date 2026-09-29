@@ -241,54 +241,37 @@ final class BrowserLinkContextCapturePolicyTests: XCTestCase {
         )
     }
 
+    /// Picking a row Crest put in an engine's context menu runs it on the
+    /// page once the menu is done. AppKit must reach the row's own method: a
+    /// row whose method shares a name with one of NSObject's raised and quit
+    /// the app instead.
     @MainActor
-    func testExtensionRowsAppendWithoutReplacingNativeDownloadOrSplitRows() {
+    func testPickingACrestRowRunsItOnThePage() async throws {
+        let host = RecordingContextMenuHost()
+        let link = URL(string: "https://example.com/next")
+        let space = BrowserPageContextMenuAction(
+            kind: .space(UUID()), title: "Work", symbolName: "briefcase", linkURL: link, selectionText: nil)
+        let peek = BrowserPageContextMenuAction(
+            kind: .peek, title: "Open Link in Peek", symbolName: "rectangle.on.rectangle", linkURL: link,
+            selectionText: nil)
+        // The page's view outlives the menu, as the window keeps it; the rows
+        // hold it weakly.
+        let pageView = NSView()
         let menu = NSMenu()
-        let native = NSMenuItem(
-            title: "Copy Image",
-            action: nil,
-            keyEquivalent: ""
-        )
-        let download = NSMenuItem(
-            title: "Download Image",
-            action: nil,
-            keyEquivalent: ""
-        )
-        download.identifier =
-            BrowserDesktopWebViewMenuPolicy.downloadImageIdentifier
-        menu.items = [native, download]
-        let extensionItem = NSMenuItem(
-            title: "Convert Image",
-            action: nil,
-            keyEquivalent: ""
-        )
-        let splitItem = NSMenuItem(
-            title: "Open Link in Split View",
-            action: nil,
-            keyEquivalent: ""
-        )
+        menu.addItem(withTitle: "Engine row", action: nil, keyEquivalent: "")
+        BrowserPageContextMenu(actions: [space, peek], host: host, view: pageView).insert(into: menu)
+        let ran = expectation(description: "Both rows ran")
+        ran.expectedFulfillmentCount = 2
+        host.performed = { _ in ran.fulfill() }
 
-        BrowserDesktopWebViewMenuPolicy.append(
-            [extensionItem],
-            to: menu
-        )
-        BrowserDesktopWebViewMenuPolicy.append([splitItem], to: menu)
+        // The other Spaces sit under one row, ahead of the page's own rows.
+        let spaces = try XCTUnwrap(menu.items.first?.submenu)
+        spaces.performActionForItem(at: 0)
+        menu.performActionForItem(at: 1)
+        await fulfillment(of: [ran], timeout: 2)
 
-        XCTAssertEqual(
-            menu.items.map { $0.isSeparatorItem ? "-" : $0.title },
-            [
-                "Copy Image",
-                "Download Image",
-                "-",
-                "Convert Image",
-                "-",
-                "Open Link in Split View",
-            ]
-        )
-        XCTAssertTrue(menu.items[0] === native)
-        XCTAssertTrue(menu.items[1] === download)
-        XCTAssertTrue(menu.items[3] === extensionItem)
-        XCTAssertTrue(menu.items[5] === splitItem)
+        XCTAssertEqual(host.ran.map(\.kind), [space.kind, peek.kind])
+        withExtendedLifetime(pageView) {}
     }
 
     private func makeBody(
@@ -306,5 +289,20 @@ final class BrowserLinkContextCapturePolicyTests: XCTestCase {
         body["imageURL"] = imageURL ?? NSNull()
         body["selectionText"] = selectionText ?? NSNull()
         return body
+    }
+}
+
+/// A page that records the context-menu rows it is asked to run.
+@MainActor
+private final class RecordingContextMenuHost: BrowserPageContextMenuHost {
+    private(set) var ran: [BrowserPageContextMenuAction] = []
+    var performed: (BrowserPageContextMenuAction) -> Void = { _ in }
+
+    func contextMenuActions(linkURL: URL?, selectionText: String?) -> [BrowserPageContextMenuAction] { [] }
+
+    func performContextMenuAction(_ action: BrowserPageContextMenuAction) -> Bool {
+        ran.append(action)
+        performed(action)
+        return true
     }
 }

@@ -3,8 +3,8 @@ import SwiftUI
 /// A route reads as a condition followed by its destination. The pattern always
 /// gets a usable editing width; narrow containers stack the destination below it.
 struct BrowserLinkRouteCard: View {
-    let route: BrowserLinkRoute
-    let spaces: [BrowserSpace]
+    let route: LinkRoute
+    let spaces: [SpaceModel]
     let canMoveUp: Bool
     let canMoveDown: Bool
     let update: (BrowserLinkRouteFieldUpdate) -> Void
@@ -47,7 +47,7 @@ struct BrowserLinkRouteCard: View {
         HStack(spacing: 8) {
             Text("When URL").fontWeight(.medium)
             Picker("Match", selection: binding(route.match, field: BrowserLinkRouteFieldUpdate.match)) {
-                ForEach(BrowserLinkRouteMatch.allCases) { Text($0.title).tag($0) }
+                ForEach(LinkRouteMatch.all, id: \.self) { Text($0.title).tag($0) }
             }
             .labelsHidden().fixedSize()
         }

@@ -7,14 +7,14 @@ struct LaunchScopedBrowserSafeStorage: BrowserSafeStorageSecretProviding {
             SecurityBrowserSafeStorage()
         }
     ) {
-        if BrowserLaunchIsolationPolicy.requiresIsolation(launchEnvironment) {
+        if launchEnvironment.requiresIsolation {
             safeStorage = nil
         } else {
             safeStorage = systemStorage()
         }
     }
 
-    func secret(for application: BrowserImportApplication) throws -> String {
+    func secret(for application: ImportSource) throws -> String {
         guard let safeStorage else {
             throw BrowserPasswordImportError.safeStorageUnavailable
         }

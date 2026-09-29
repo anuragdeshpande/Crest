@@ -2,14 +2,15 @@ import Foundation
 import SwiftUI
 
 struct BrowserImportSidebarResultTabRow: View {
-    let tab: BrowserTab
+    let tab: TabStateModel
+    let favicons: FaviconAssets
     let profileID: UUID
     let isSelected: Bool
     var isMatched = false
 
     var body: some View {
         HStack(spacing: 8) {
-            TabFaviconView(tab: tab, profileID: profileID, size: 18)
+            TabStateFaviconView(tab: tab, favicons: favicons, profileID: profileID, size: 18)
             Text(tab.title)
                 .lineLimit(1)
             Spacer(minLength: 8)
@@ -18,7 +19,7 @@ struct BrowserImportSidebarResultTabRow: View {
                     .font(.caption)
                     .foregroundStyle(BrowserOnboardingPalette.match)
             }
-            if tab.placement == .current, isSelected {
+            if !tab.placement.isDurable, isSelected {
                 Image(systemName: "xmark")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -49,12 +50,14 @@ struct BrowserImportSidebarResultTabRow: View {
 
 #if DEBUG
     #Preview("Selected and matched import") {
-        let configuration = BrowserSidebarTabRowPreviewFixture.configuration()
+        let tab = BrowserSidebarTabRowPreviewFixture.tab()
+        let profileID = BrowserSidebarTabRowPreviewFixture.profileID
+        let favicons = FaviconAssets()
         VStack {
             BrowserImportSidebarResultTabRow(
-                tab: configuration.tab, profileID: configuration.profileID, isSelected: true)
+                tab: tab, favicons: favicons, profileID: profileID, isSelected: true)
             BrowserImportSidebarResultTabRow(
-                tab: configuration.tab, profileID: configuration.profileID, isSelected: false, isMatched: true)
+                tab: tab, favicons: favicons, profileID: profileID, isSelected: false, isMatched: true)
         }.padding().frame(width: 320)
     }
 #endif

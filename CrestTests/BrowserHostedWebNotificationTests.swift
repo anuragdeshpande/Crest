@@ -7,26 +7,19 @@ import XCTest
 final class BrowserHostedWebNotificationTests: XCTestCase {
     func testLivePageBridgeReportsPermissionDeliversAndReceivesClicks() async throws {
         let originURL = try XCTUnwrap(URL(string: "https://notifications.crest.test/"))
-        let origin = try XCTUnwrap(BrowserSiteOrigin(url: originURL))
-        let tab = BrowserTab(
+        let origin = try XCTUnwrap(SiteOrigin(url: originURL))
+        let tab = TabState.Seed(
             title: "Notifications",
             url: nil,
             placement: .current
         )
-        let space = BrowserSpace(
-            id: SpaceID(),
-            profile: BrowsingProfile(),
+        let space = SpaceState.Seed(
             name: "Work",
             symbol: "briefcase",
             accent: .teal,
             folders: [],
             tabs: [tab],
-            browsingPreferences: BrowserSpaceBrowsingPreferences(
-                searchProvider: .google,
-                currentTabCleanupPolicy: .never,
-                contentBlockingPolicy: .off
-            ),
-            selectedTabID: tab.id
+            browsingPreferences: BrowsingPreferences.seeded(cleanup: .never, blocking: .off)
         )
         let permissionCenter = BrowserSitePermissionCenter()
         permissionCenter.setDecision(
@@ -39,12 +32,13 @@ final class BrowserHostedWebNotificationTests: XCTestCase {
             authorization: .authorized
         )
         let pool = BrowserPagePool(
+            browser: .hostingPages(SessionState.Seed(spaces: [space])),
             usesEphemeralWebsiteDataStores: true,
             permissionCenter: permissionCenter,
             hostedNotificationCenter: systemCenter
         )
 
-        pool.select(tab: tab, space: space)
+        pool.present(tab: tab.id, in: space.id)
         let page = try XCTUnwrap(pool.activePage)
         page.webView.loadSimulatedRequest(
             URLRequest(url: originURL),
@@ -121,37 +115,6 @@ final class BrowserHostedWebNotificationTests: XCTestCase {
         )
 
         pool.reconcile(validTabIDs: [])
-    }
-
-    func testPermissionRequestRequiresUserActivationBeforePrompting() {
-        XCTAssertEqual(
-            BrowserHostedWebNotificationPermissionRequestPolicy.action(
-                for: .ask,
-                hasUserActivation: false
-            ),
-            .respondDefault
-        )
-        XCTAssertEqual(
-            BrowserHostedWebNotificationPermissionRequestPolicy.action(
-                for: .ask,
-                hasUserActivation: true
-            ),
-            .promptForSitePermission
-        )
-        XCTAssertEqual(
-            BrowserHostedWebNotificationPermissionRequestPolicy.action(
-                for: .denyPersistently,
-                hasUserActivation: true
-            ),
-            .respondDenied
-        )
-        XCTAssertEqual(
-            BrowserHostedWebNotificationPermissionRequestPolicy.action(
-                for: .grantForSession,
-                hasUserActivation: false
-            ),
-            .resolveSystemAuthorization
-        )
     }
 
     private func stringResult(

@@ -4,7 +4,7 @@ import SwiftUI
 /// commit is right now.
 struct BrowserCredentialSaveActions: View {
     let route: BrowserCredentialPromptRoute
-    let space: BrowserSpace?
+    let space: BrowserSpaceIdentity?
     let metrics: BrowserCredentialPromptMetrics
     let isStacked: Bool
     let dismiss: () -> Void
@@ -51,7 +51,7 @@ struct BrowserCredentialSaveActions: View {
                 Text(title)
             }
             .buttonStyle(.borderedProminent)
-            .tint(space?.accent.color ?? .accentColor)
+            .tint(space?.accent.tint.color ?? .accentColor)
         }
     }
 }

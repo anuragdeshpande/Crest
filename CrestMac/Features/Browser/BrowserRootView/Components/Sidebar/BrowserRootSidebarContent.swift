@@ -3,9 +3,6 @@ import SwiftUI
 /// The windowed shell's sidebar adapter: it resolves what this shell can do,
 /// binds the sidebar's ports to the window's card pool, and answers the chrome's
 /// presentation with the settings scene.
-///
-/// The `openWindow` action only exists where the Environment is read, so the
-/// scene-pointing implementations live here rather than travelling down as data.
 struct BrowserRootSidebarContent: View {
     let model: BrowserRootModel
     var sidebarOnRight = false
@@ -14,7 +11,6 @@ struct BrowserRootSidebarContent: View {
     let tabPromotionNamespace: Namespace.ID
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         BrowserSidebar(
@@ -42,6 +38,7 @@ struct BrowserRootSidebarContent: View {
                     model.toggleSidebar(reduceMotion: reduceMotion)
                 },
                 commandSurfaceNamespace: commandSurfaceNamespace,
+                commandPaletteHandoff: model.commandPaletteHandoff(reduceMotion: reduceMotion),
                 tabPromotionNamespace: tabPromotionNamespace
             )
         }
@@ -70,32 +67,20 @@ struct BrowserRootSidebarContent: View {
         return BrowserSidebarChromeActions(
             presentSpaceSettings: presentSpaceSettings(for:),
             presentHistory: { model.chrome.utilityPresentation.present(.history) },
-            presentExtensions: presentExtensions(for:),
             createSpace: create
         )
     }
 
-    private func presentSpaceSettings(for space: BrowserSpace) {
-        spaceSettingsPresentation.present(
-            assignment: BrowserSpaceRuntimeAssignment(space: space)
-        )
+    private func presentSpaceSettings(for assignment: BrowserSpaceRuntimeAssignment) {
+        spaceSettingsPresentation.present(assignment: assignment)
         model.browser.openSettings()
-        model.pages.select(session: model.browser.session)
-    }
-
-    private func presentExtensions(for space: BrowserSpace) {
-        spaceSettingsPresentation.present(
-            .extensions,
-            assignment: BrowserSpaceRuntimeAssignment(space: space)
-        )
-        model.browser.openSettings()
-        model.pages.select(session: model.browser.session)
+        model.pages.select()
     }
 
     private func createSpace() {
         model.browser.addSpace()
-        guard let space = model.browser.selectedSpace else { return }
-        model.pages.select(session: model.browser.session)
-        presentSpaceSettings(for: space)
+        guard let space = model.browser.shownSpace else { return }
+        model.pages.select()
+        presentSpaceSettings(for: BrowserSpaceRuntimeAssignment(space: space))
     }
 }

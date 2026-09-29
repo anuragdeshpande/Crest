@@ -5,17 +5,15 @@ struct BrowserOnboardingReviewPage: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let flow: BrowserOnboardingFlow
-    let browserSession: BrowserSession
-    let application: BrowserImportApplication?
     let sources: [BrowserInstalledImportSource]
-    @Binding var selectedSourceSpaceID: SpaceID?
-    @Binding var customizationSpaceID: SpaceID?
-    let back: () -> Void
+    @Binding var customizationSpaceID: UUID?
+    let back: BrowserOnboardingBackAction
 
     var body: some View {
-        if let plan = flow.plan,
-            let review = flow.selectedReview(id: selectedSourceSpaceID)
+        if let setupReview = flow.review,
+            let review = flow.selectedReview(id: setupReview.shownSpaceID)
         {
+            let spaces = flow.reviewSpaces
             VStack(spacing: 0) {
                 BrowserOnboardingReviewToolbar(
                     icon: sourceIcon,
@@ -27,15 +25,12 @@ struct BrowserOnboardingReviewPage: View {
                 ZStack(alignment: .trailing) {
                     ScrollView(.vertical) {
                         LazyVStack(spacing: 0) {
-                            ForEach(plan.spaces) { item in
+                            ForEach(spaces) { item in
                                 BrowserOnboardingReviewSpacePage(
                                     flow: flow,
-                                    browserSession: browserSession,
-                                    application: application,
-                                    plan: plan,
-                                    review: item,
-                                    selectedSourceSpaceID:
-                                        $selectedSourceSpaceID
+                                    application: setupReview.source,
+                                    spaces: spaces,
+                                    review: item
                                 )
                                 .containerRelativeFrame(.vertical)
                                 .id(item.id)
@@ -44,7 +39,7 @@ struct BrowserOnboardingReviewPage: View {
                         .scrollTargetLayout()
                     }
                     .scrollPosition(
-                        id: $selectedSourceSpaceID,
+                        id: shownSpaceID,
                         anchor: .top
                     )
                     .scrollTargetBehavior(.viewAligned)
@@ -52,8 +47,8 @@ struct BrowserOnboardingReviewPage: View {
                     .background(BrowserOnboardingPalette.parchment)
 
                     BrowserOnboardingReviewSpaceStepper(
-                        spaces: plan.spaces,
-                        selectedSpaceID: selectedSourceSpaceID
+                        spaces: spaces,
+                        selectedSpaceID: setupReview.shownSpaceID
                     )
                 }
                 .disabled(flow.isCommittingImport)
@@ -62,11 +57,11 @@ struct BrowserOnboardingReviewPage: View {
                     failure: flow.failure?.message,
                     summary: flow.reviewSummary(),
                     isCommitting: flow.isCommittingImport,
-                    isFinalSpace: isFinalSpace(in: plan),
-                    isImportDisabled: !plan.hasIncludedSpaces,
-                    actionTitle: reviewActionTitle(in: plan),
-                    back: back,
-                    advance: { advanceReviewOrImport(plan) }
+                    isFinalSpace: setupReview.showsLastSpace,
+                    isImportDisabled: !setupReview.hasIncludedSpaces,
+                    actionTitle: reviewActionTitle(in: setupReview),
+                    back: back.action,
+                    advance: { advanceReviewOrImport(setupReview) }
                 )
             }
         } else {
@@ -81,32 +76,30 @@ struct BrowserOnboardingReviewPage: View {
     }
 
     private var sourceIcon: NSImage? {
-        sources.first { $0.application == application }?.icon
+        sources.first { $0.application == flow.review?.source }?.icon
     }
 
-    private func isFinalSpace(in plan: BrowserImportReviewPlan) -> Bool {
-        BrowserImportReviewNavigation.isFinalSpace(
-            selectedSourceSpaceID,
-            in: plan.spaces.map(\.id)
+    /// The Space the person is looking at, which setup holds.
+    private var shownSpaceID: Binding<UUID?> {
+        Binding(
+            get: { flow.shownReviewSpaceID },
+            set: { flow.shownReviewSpaceID = $0 }
         )
     }
 
     private func reviewActionTitle(
-        in plan: BrowserImportReviewPlan
+        in review: SetupImportReview
     ) -> LocalizedStringResource {
         if flow.isCommittingImport { return "Importing…" }
-        return isFinalSpace(in: plan)
+        return review.showsLastSpace
             ? flow.importReviewActionTitle
             : "Next Space"
     }
 
-    private func advanceReviewOrImport(_ plan: BrowserImportReviewPlan) {
-        if let nextID = BrowserImportReviewNavigation.nextSpaceID(
-            after: selectedSourceSpaceID,
-            in: plan.spaces.map(\.id)
-        ) {
+    private func advanceReviewOrImport(_ review: SetupImportReview) {
+        if !review.showsLastSpace, let nextID = review.nextSpaceID {
             withAnimation(motion(CrestMotion.onboardingProgress)) {
-                selectedSourceSpaceID = nextID
+                flow.shownReviewSpaceID = nextID
             }
         } else {
             flow.commitReviewedImport()
@@ -169,7 +162,7 @@ private struct BrowserOnboardingReviewSpaceStepper: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let spaces: [BrowserImportSpaceReview]
-    let selectedSpaceID: SpaceID?
+    let selectedSpaceID: UUID?
 
     var body: some View {
         ZStack {
@@ -193,7 +186,7 @@ private struct BrowserOnboardingReviewSpaceStepper: View {
                             motion(CrestMotion.onboardingProgress),
                             value: selectedSpaceID
                         )
-                        .accessibilityLabel(item.sourceSpace.name)
+                        .accessibilityLabel(item.sourceSpace.settings.name)
                         .accessibilityValue(
                             isCurrent ? "Current Space" : "Space in review"
                         )

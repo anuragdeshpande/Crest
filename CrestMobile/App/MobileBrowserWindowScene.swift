@@ -11,51 +11,78 @@ struct MobileBrowserWindowScene: View {
     private let sidebarWidgets: BrowserSidebarWidgetRuntime
     @Bindable private var onboardingCoordinator: BrowserOnboardingCoordinator
 
-    @State private var model: MobileBrowserWindowSceneModel
+    @State private var runtime = Runtime()
+    private let makeModel: @MainActor () -> MobileBrowserWindowSceneModel
     @State private var browsingMode: BrowserBrowsingMode = .standard
     @State private var hasPresentedAutomaticOnboarding = false
 
     init(
-        id: BrowserWindowID,
+        id: UUID,
         rootBrowser: BrowserStore,
         permissionCenter: BrowserSitePermissionCenter,
         pageStoreRegistry: MobileBrowserPageStoreRegistry,
         spaceAccess: BrowserSpaceAccessController,
         tabStateArchive: (any BrowserTabStateArchiving)?,
-        windowStatePersistence: any BrowserWindowStatePersisting,
-        startupBehavior: BrowserStartupBehavior,
+        windowLayouts: BrowserWindowLayouts,
+        startupBehavior: StartupBehavior,
         monitorsMemoryPressure: Bool,
         usesEphemeralWebsiteDataStores: Bool,
         onboardingProgress: BrowserOnboardingProgressStore,
         onboardingCoordinator: BrowserOnboardingCoordinator,
         automaticallyPresentsOnboarding: Bool,
         mediaSessions: BrowserMediaSessionStore,
+        downloads: MobileBrowserDownloads,
+        privateDownloads: MobileBrowserDownloads,
         sidebarWidgets: BrowserSidebarWidgetRuntime
     ) {
         self.onboardingProgress = onboardingProgress
         self.onboardingCoordinator = onboardingCoordinator
         self.automaticallyPresentsOnboarding = automaticallyPresentsOnboarding
         self.sidebarWidgets = sidebarWidgets
-        _model = State(
-            initialValue: MobileBrowserWindowSceneModel(
+        makeModel = {
+            MobileBrowserWindowSceneModel(
                 id: id,
                 rootBrowser: rootBrowser,
                 permissionCenter: permissionCenter,
                 pageStoreRegistry: pageStoreRegistry,
                 spaceAccess: spaceAccess,
                 tabStateArchive: tabStateArchive,
-                windowStatePersistence: windowStatePersistence,
+                windowLayouts: windowLayouts,
                 startupBehavior: startupBehavior,
                 monitorsMemoryPressure: monitorsMemoryPressure,
                 usesEphemeralWebsiteDataStores: usesEphemeralWebsiteDataStores,
-                mediaSessionStore: mediaSessions
+                mediaSessionStore: mediaSessions,
+                downloads: downloads,
+                privateDownloads: privateDownloads
             )
-        )
+        }
+    }
+
+    private var model: MobileBrowserWindowSceneModel { runtime.model(makingWith: makeModel) }
+
+    /// Scene construction registers stores and reads shared observed state, so
+    /// the holder builds the model the first time the scene reads it: once per
+    /// mounted scene, in the scene's own update rather than its parent's body
+    /// evaluation. The holder is the state's own default rather than a value
+    /// `init` assigns, which would make SwiftUI update the scene each time its
+    /// parent does. The model keeps Observation for UI updates.
+    @MainActor
+    private final class Runtime {
+        private var built: MobileBrowserWindowSceneModel?
+
+        func model(makingWith make: @MainActor () -> MobileBrowserWindowSceneModel) -> MobileBrowserWindowSceneModel {
+            if let built { return built }
+            let model = make()
+            built = model
+            return model
+        }
     }
 
     var body: some View {
         sceneSurface
             .modifier(BrowserChromeAppearancePersistence())
+            .environment(model.browser.core)
+            .environment(model.browser.core.engines)
             .environment(\.browserInteractionCapabilities, BrowserInteractionCapabilities(supportsTouch: true))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(
@@ -87,14 +114,6 @@ struct MobileBrowserWindowScene: View {
                 )
             ) { _ in
                 model.handleMemoryPressure()
-            }
-            .onChange(
-                of: BrowserWindowState(
-                    id: model.windowState.id,
-                    restoring: model.browser.session
-                )
-            ) {
-                model.captureWindowSelection()
             }
             .onChange(of: scenePhase, initial: true) { _, phase in
                 switch phase {

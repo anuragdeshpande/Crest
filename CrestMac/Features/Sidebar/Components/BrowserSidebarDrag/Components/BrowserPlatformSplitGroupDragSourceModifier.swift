@@ -10,9 +10,10 @@ struct BrowserPlatformSplitGroupDragSourceModifier: ViewModifier {
     let item: BrowserSplitGroupDragItem
     /// Unused here. macOS draws the lift from the row's own view, so only the
     /// mobile source needs the run to build a drag preview from.
-    let members: [BrowserTab]
+    let members: [TabStateModel]
+    let favicons: FaviconAssets?
     let placement: TabPlacement
-    let folderID: FolderID?
+    let folderID: UUID?
     let reorder: BrowserSidebarReorderContext
     var isEnabled = true
 

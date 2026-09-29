@@ -3,10 +3,13 @@ import SwiftUI
 /// The shipping address field on this Space's atmosphere, holding a friendly
 /// sample rather than whatever is open behind the settings window.
 struct BrowserLookAndFeelAddressPreview: View {
-    var space: BrowserSpace?
+    var space: BrowserSpaceAppearance?
     var showsBackground = true
 
     @Namespace private var namespace
+    /// The Space a preview without one names. Nothing else lives in the
+    /// preview's own namespace, so any stable identity will do.
+    @State private var standInSpaceID = UUID()
 
     @Environment(\.browserInteractionCapabilities) private var capabilities
 
@@ -37,7 +40,7 @@ struct BrowserLookAndFeelAddressPreview: View {
                 activate: {},
                 submit: {},
                 morphNamespace: namespace,
-                morphID: "look-and-feel-address-preview",
+                spaceID: space?.id ?? standInSpaceID,
                 branding: branding)
         )
         .labelsHidden()
@@ -48,7 +51,7 @@ struct BrowserLookAndFeelAddressPreview: View {
         .accessibilityValue(BrowserLookAndFeelPreviewMetrics.sampleAddress)
     }
 
-    private var branding: BrowserSpaceBranding {
-        space?.branding ?? .house(.winter, symbol: "paintpalette")
+    private var branding: SpaceBranding {
+        space?.branding ?? BrowserSpaceHousePalette.winter.look
     }
 }

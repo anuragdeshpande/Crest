@@ -1,67 +1,57 @@
 import Foundation
 import Observation
 
+/// The launch gate setup holds shut until it finishes.
+///
+/// The core decides whether setup holds this launch's windows back: on a
+/// device that has not completed setup, which it keeps in its device store
+/// having adopted what an installed release kept, or in a launch that forces
+/// setup, as a review or test launch does, until setup finishes in this run.
 @Observable
 @MainActor
 final class BrowserOnboardingProgressStore {
-    private(set) var isLaunchGateActive: Bool
-    private(set) var isChecking: Bool
-    private(set) var hasCompletedSetup: Bool
+    // MARK: - Variables
+
+    @ObservationIgnored let core: CrestCore
+    /// The launch the gate answers for, as the core reads it.
+    @ObservationIgnored private let environment: LaunchEnvironment
+    /// Whether this launch forces setup whatever the device completed.
+    let forcesSetup: Bool
+    /// How many times setup finished in this run, so a view that asked
+    /// whether the gate holds asks again.
+    private var finishes = 0
+
+    /// Whether the device has completed setup, as far as this launch asks.
+    var hasCompletedSetup: Bool {
+        !forcesSetup && core.state.setupCompleted == true
+    }
+
+    /// Whether setup holds this launch's windows back, as the core answers.
+    var isLaunchGateActive: Bool {
+        // The answer follows what these say; reading them asks again when they change.
+        _ = finishes
+        let completed = core.state.setupCompleted == true
+        guard let gate = try? core.query(LaunchSetup(environment: environment)) else { return !completed }
+        return gate.setup != nil
+    }
 
     var shouldPresentWelcome: Bool { isLaunchGateActive }
 
-    @ObservationIgnored private let persistence: any BrowserOnboardingProgressPersisting
-    @ObservationIgnored private let forceSetup: Bool
+    // MARK: - Initializers
 
-    init(
-        persistence: any BrowserOnboardingProgressPersisting,
-        forceWelcome: Bool = false,
-        forceSetup: Bool = false
-    ) {
-        self.persistence = persistence
-        self.forceSetup = forceSetup
-        let completedOnThisInstall = persistence.hasCompletedSetup
-        let launchGateIsActive =
-            forceWelcome
-            || forceSetup
-            || !completedOnThisInstall
-        isLaunchGateActive = launchGateIsActive
-        isChecking = launchGateIsActive
-        hasCompletedSetup = completedOnThisInstall && !forceSetup
+    /// A gate over `core`, which has adopted whether the device completed
+    /// setup, for a launch in `environment`. `forcesSetup` says the launch
+    /// forces setup on this platform.
+    init(core: CrestCore, environment: LaunchEnvironment, forcesSetup: Bool = false) {
+        self.core = core
+        self.environment = environment
+        self.forcesSetup = forcesSetup
     }
 
-    func refresh() async {
-        if forceSetup {
-            hasCompletedSetup = false
-            isChecking = false
-            return
-        }
-        let local = persistence.hasCompletedSetup
-        // Completing setup is an install-local promise. iCloud may restore a
-        // person's Spaces, but that must not silently skip the tutorial and
-        // customization flow on a device that has never completed it.
-        hasCompletedSetup = local
-        isChecking = false
-    }
+    // MARK: - Actions - Finishing
 
-    /// Consume the install-local completion before presenting any follow-up UI.
-    /// Forced setup and tutorial replay must not reset this persisted decision.
-    func completeSetup(for entryPoint: BrowserOnboardingEntryPoint) -> Bool {
-        let opensGettingStarted = willOpenGettingStarted(for: entryPoint)
-        markCompleted()
-        return opensGettingStarted
-    }
-
-    var willOpenGettingStarted: Bool { !persistence.hasCompletedSetup }
-
-    func willOpenGettingStarted(for entryPoint: BrowserOnboardingEntryPoint) -> Bool {
-        entryPoint == .rerun || (entryPoint == .firstRun && willOpenGettingStarted)
-    }
-
-    func markCompleted() {
-        isLaunchGateActive = false
-        hasCompletedSetup = true
-        isChecking = false
-        persistence.markCompleted()
+    /// Setup finished in this run: the core opens the gate.
+    func setupFinished() {
+        finishes += 1
     }
 }

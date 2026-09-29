@@ -2,43 +2,39 @@ import Foundation
 
 @MainActor
 enum BrowserCommandPalettePreviewFixture {
-    static let selectedTabID = TabID(rawValue: uuid(finalByte: 0x11))
+    static let selectedTabID = uuid(finalByte: 0x11)
 
-    static let currentSpace = BrowserSpace(
-        id: SpaceID(rawValue: uuid(finalByte: 0x21)),
-        profile: BrowsingProfile(id: uuid(finalByte: 0x31)),
+    static let currentSpace = SpaceState.Seed(
+        id: uuid(finalByte: 0x21),
+        profileID: uuid(finalByte: 0x31),
         name: "Work",
         symbol: "briefcase.fill",
         accent: .indigo,
-        folders: [],
         tabs: [
-            BrowserTab(
+            TabState.Seed(
                 id: selectedTabID,
                 title: "Crest",
                 url: url("https://crestbrowser.com"),
-                faviconData: faviconData,
                 placement: .current,
                 lastActivatedAt: date(offset: 400)
             ),
-            BrowserTab(
-                id: TabID(rawValue: uuid(finalByte: 0x12)),
+            TabState.Seed(
+                id: uuid(finalByte: 0x12),
                 title: "Swift Evolution",
                 url: url("https://www.swift.org/swift-evolution"),
-                faviconData: faviconData,
                 placement: .current,
                 lastActivatedAt: date(offset: 300)
             ),
-            BrowserTab(
-                id: TabID(rawValue: uuid(finalByte: 0x13)),
+            TabState.Seed(
+                id: uuid(finalByte: 0x13),
                 title: "GitHub",
                 url: url("https://github.com"),
-                faviconData: faviconData,
                 placement: .pinned,
                 lastActivatedAt: date(offset: 200)
             ),
         ],
         history: [
-            BrowserHistoryEntry(
+            HistoryEntryState(
                 id: uuid(finalByte: 0x41),
                 url: url("https://forums.swift.org"),
                 title: "Swift Forums",
@@ -46,8 +42,7 @@ enum BrowserCommandPalettePreviewFixture {
                 lastVisitedAt: date(offset: 500),
                 visitCount: 7
             )
-        ],
-        selectedTabID: selectedTabID
+        ]
     )
 
     static let registry = BrowserCommandPaletteCommandRegistry(
@@ -62,67 +57,37 @@ enum BrowserCommandPalettePreviewFixture {
         perform: { _ in }
     )
 
-    static let intentResult = BrowserCommandPaletteResult(
-        section: nil,
-        id: "preview-intent",
-        title: "Search with Google",
-        subtitle: "swift",
-        symbol: "magnifyingglass",
-        searchProvider: .google,
-        trailing: "",
-        target: .url(url("https://www.google.com/search?q=swift"))
-    )
+    /// A window over the preview Space on a memory-only core.
+    static let browser = BrowserStore(
+        seed: SessionState.Seed(spaces: [currentSpace]),
+        images: Dictionary(uniqueKeysWithValues: currentSpace.tabs.map { ($0.id, faviconData) }),
+        showing: currentSpace.id)
 
-    static let tabResult = BrowserCommandPaletteResult(
-        section: .tabs,
-        id: "preview-tab",
-        title: "Swift Evolution",
-        subtitle: "www.swift.org",
-        symbol: "globe",
-        trailing: "Switch to Tab",
-        target: .tab(
-            BrowserTabRuntimeAssignment(
-                tabID: TabID(rawValue: uuid(finalByte: 0x12)),
-                spaceID: currentSpace.id,
-                profileID: currentSpace.profile.id
-            )
-        )
-    )
+    static var space: SpaceModel? { browser.spaceModel(currentSpace.id) }
 
-    static let commandResult = BrowserCommandPaletteResults.actionResult(.showHistory)
+    static let intentRow = PaletteRow(
+        kind: .search, title: "Search with Google", subtitle: "swift", symbol: PaletteRowKind.search.symbol,
+        subjectID: nil, tabID: nil, address: "https://www.google.com/search?q=swift", command: nil, engine: .google,
+        customEngineID: nil)
 
-    static let historyResult = BrowserCommandPaletteResult(
-        section: .history,
-        id: "preview-history",
-        title: "Swift Forums",
-        subtitle: "forums.swift.org",
-        symbol: "clock",
-        trailing: "Open",
-        target: .url(url("https://forums.swift.org"))
-    )
+    static let tabRow = PaletteRow(
+        kind: .tab, title: "Swift Evolution", subtitle: "www.swift.org", symbol: PaletteRowKind.tab.symbol,
+        subjectID: nil,
+        tabID: uuid(finalByte: 0x12), address: nil, command: nil, engine: nil, customEngineID: nil)
 
-    static let intentItem = BrowserCommandPaletteIndexedResult(
-        index: 0,
-        result: intentResult
-    )
-    static let tabItem = BrowserCommandPaletteIndexedResult(
-        index: 1,
-        result: tabResult
-    )
-    static let commandItem = BrowserCommandPaletteIndexedResult(
-        index: 2,
-        result: commandResult
-    )
-    static let tabGroup = BrowserCommandPaletteResultGroup(
-        id: "preview-tabs",
-        header: BrowserCommandPaletteSection.openTabsTitle,
-        items: [tabItem]
-    )
-    static let mixedItems = [intentItem, tabItem, commandItem]
+    static let commandRow = PaletteRow(
+        kind: .command, title: "Show History", subtitle: "View", symbol: ShortcutCommand.showHistory.symbol,
+        subjectID: nil,
+        tabID: nil, address: nil, command: .showHistory, engine: nil, customEngineID: nil)
+
+    static let intentItem = BrowserCommandPaletteItem(index: 0, row: intentRow)
+    static let tabItem = BrowserCommandPaletteItem(index: 1, row: tabRow)
+    static let commandItem = BrowserCommandPaletteItem(index: 2, row: commandRow)
 
     static func model(query: String) -> BrowserCommandPaletteModel {
         BrowserCommandPaletteModel(
-            space: currentSpace,
+            browser: browser,
+            space: space,
             selectedTabID: selectedTabID,
             initialQuery: query,
             commands: registry,

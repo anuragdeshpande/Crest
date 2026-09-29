@@ -9,25 +9,23 @@ final class BrowserFaviconRenderSafetyTests: XCTestCase {
     func testStartPageAndEmojiRequestsNeverInvokeNetworkFallback() async {
         let fallback = RecordingFallback()
         let profileID = fixedUUID(tail: 0x90)
-        let tabs = [
-            BrowserTab.startPage(
-                id: tabID(tail: 0x10),
-                lastActivatedAt: .distantPast
-            ),
-            BrowserTab(
-                id: tabID(tail: 0x20),
-                title: "Emoji",
-                url: URL(string: "https://emoji.invalid/page"),
-                symbol: BrowserTab.symbol(forEmoji: "🧭"),
-                iconMode: .emoji,
-                placement: .current,
-                lastActivatedAt: .distantPast
-            ),
+        let subjects = [
+            subject(TabState.Seed.startPage(id: tabID(tail: 0x10), lastActivatedAt: epoch)),
+            subject(
+                TabState.Seed(
+                    id: tabID(tail: 0x20),
+                    title: "Emoji",
+                    url: URL(string: "https://emoji.invalid/page"),
+                    symbol: BrowserIconSymbol.symbol(forEmoji: "🧭"),
+                    iconMode: .emoji,
+                    placement: .current,
+                    lastActivatedAt: epoch
+                )),
         ]
 
-        for tab in tabs {
+        for subject in subjects {
             let request = BrowserFaviconTaskIdentityPolicy.renderRequest(
-                for: tab,
+                for: subject,
                 profileID: profileID,
                 maximumPixelSize: 64
             )
@@ -42,8 +40,34 @@ final class BrowserFaviconRenderSafetyTests: XCTestCase {
         XCTAssertEqual(requestCount, 0)
     }
 
+    func testLockedSpaceRequestCarriesNoNetworkFallback() async {
+        let fallback = RecordingFallback()
+        let tab = makeSubject(
+            id: tabID(tail: 0x41),
+            url: URL(string: "https://private.invalid/page"),
+            data: nil,
+            iconMode: .automatic
+        )
+        let request = BrowserFaviconTaskIdentityPolicy.renderRequest(
+            for: tab,
+            profileID: fixedUUID(tail: 0x91),
+            maximumPixelSize: 64,
+            isUnlocked: false
+        )
+        XCTAssertNil(request.fallbackPageURL)
+        XCTAssertNil(request.fallbackProfileID)
+
+        let result = await BrowserFaviconRenderLoader.decode(
+            request,
+            fallbackData: fallback.data
+        )
+        XCTAssertNil(result)
+        let requestCount = await fallback.requestCount
+        XCTAssertEqual(requestCount, 0)
+    }
+
     func testCancelledOlderRequestStartingLateCannotClearOrReplaceNewerImage() {
-        let tab = makeTab(
+        let tab = makeSubject(
             id: tabID(tail: 0x31),
             url: URL(string: "https://identity.invalid/race"),
             data: Data([0x01, 0x02, 0x03]),
@@ -79,25 +103,28 @@ final class BrowserFaviconRenderSafetyTests: XCTestCase {
         XCTAssertNil(state.renderedImage?.image(matching: older))
     }
 
-    private func makeTab(
-        id: TabID,
+    private let epoch = Date(timeIntervalSince1970: 0)
+
+    private func makeSubject(
+        id: UUID,
         url: URL?,
         data: Data?,
-        iconMode: BrowserTabIconMode
-    ) -> BrowserTab {
-        BrowserTab(
-            id: id,
-            title: "Identity",
-            url: url,
-            faviconData: data,
-            iconMode: iconMode,
-            placement: .current,
-            lastActivatedAt: .distantPast
-        )
+        iconMode: TabIconMode
+    ) -> BrowserTabFaviconSubject {
+        subject(
+            TabState.Seed(
+                id: id, title: "Identity", url: url, iconMode: iconMode, placement: .current, lastActivatedAt: epoch),
+            image: data)
     }
 
-    private func tabID(tail: UInt8) -> TabID {
-        TabID(rawValue: fixedUUID(tail: tail))
+    /// `tab` as the core resolves it, wearing `image`.
+    private func subject(_ tab: TabState.Seed, image: Data? = nil) -> BrowserTabFaviconSubject {
+        let model = SpaceModel.detached(SpaceState.Seed(name: "Icons", tabs: [tab])).tabs.models[0]
+        return BrowserTabFaviconSubject(tab: model, image: image.map(FaviconAssets.Image.init))
+    }
+
+    private func tabID(tail: UInt8) -> UUID {
+        fixedUUID(tail: tail)
     }
 
     private func fixedUUID(tail: UInt8) -> UUID {

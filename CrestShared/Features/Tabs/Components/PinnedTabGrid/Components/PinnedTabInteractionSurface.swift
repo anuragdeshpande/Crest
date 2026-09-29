@@ -1,12 +1,12 @@
 import SwiftUI
 
 struct PinnedTabInteractionSurface: ViewModifier {
-    let faviconData: Data?
+    let favicon: FaviconAssets.Image?
     let siteTheme: BrowserTabIconAccent?
     let isSelected: Bool
     let isHovering: Bool
     var isMultiSelected = false
-    var branding: BrowserSpaceBranding? = nil
+    var branding: SpaceBranding? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var palette: BrowserFaviconPalette?
@@ -28,12 +28,12 @@ struct PinnedTabInteractionSurface: ViewModifier {
                 ),
                 value: resolvedAccent
             )
-            .task(id: faviconData) {
-                guard let faviconData else {
+            .task(id: favicon?.identity) {
+                guard let favicon else {
                     palette = nil
                     return
                 }
-                let extracted = await BrowserFaviconPaletteLoader.shared.palette(for: faviconData)
+                let extracted = await BrowserFaviconPaletteLoader.shared.palette(for: favicon.data)
                 guard !Task.isCancelled else { return }
                 palette = extracted
             }

@@ -21,7 +21,7 @@ enum MobileSplitCardPagerPolicy {
     /// Whether a presented run is long enough to page at all. A run of one is a
     /// plain tab and renders through the ordinary single-page path.
     static func isPagerPresented(memberCount: Int) -> Bool {
-        memberCount >= BrowserSplitGroupPolicy.minimumRenderableMembers
+        memberCount >= SplitGroupState.minimumShownMembers
     }
 
     /// The card one step from `tabID`, clamped at both ends.
@@ -31,10 +31,10 @@ enum MobileSplitCardPagerPolicy {
     /// the carousel losing its place. The keyboard's focus-cycling commands do
     /// wrap, because a repeated chord is a cycle rather than a direction.
     static func adjacentMember(
-        of tabID: TabID,
-        in members: [TabID],
+        of tabID: UUID,
+        in members: [UUID],
         direction: BrowserSpaceSwipeDirection
-    ) -> TabID? {
+    ) -> UUID? {
         guard let index = members.firstIndex(of: tabID) else { return nil }
         let target = direction == .next ? index + 1 : index - 1
         guard members.indices.contains(target) else { return nil }

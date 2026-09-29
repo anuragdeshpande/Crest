@@ -26,10 +26,8 @@ struct BrowserSavedLocationRestoreAction {
                 in: browser,
                 accessController: spaceAccess
             ),
-            let tab = space.tabs.first(where: { $0.id == assignment.tabID }),
-            BrowserSavedLocationRestorePolicy.shouldRestore(
-                tab, pendingURL: pages.activePage(matching: assignment)?.pendingNavigationURL
-            ),
+            let tab = space.tabs.model(assignment.tabID),
+            browser.returnsToSavedAddress(tab.id, in: space.id),
             !pages.containsResidentPage(for: tab.id) || pages.containsResidentPage(matching: assignment)
         else { return false }
         let hadResidentPage = pages.containsResidentPage(matching: assignment)
@@ -37,10 +35,10 @@ struct BrowserSavedLocationRestoreAction {
         guard let url = browser.restoreTabSavedLocation(assignment.tabID, in: assignment.spaceID)
         else { return false }
         browser.selectTab(assignment.tabID)
-        pages.select(session: browser.session)
+        pages.select()
         guard let page = pages.activePage(matching: assignment)
         else { return false }
-        if hadResidentPage && page.pendingNavigationURL != url { page.load(url) }
+        if hadResidentPage && page.live.pendingNavigationURL != url { page.corePage.navigate(to: url.absoluteString) }
         return true
     }
 }

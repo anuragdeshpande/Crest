@@ -45,8 +45,8 @@ struct BrowserPeekOverlay: View {
     var body: some View {
         BrowserTransientOverlayContent(
             requestID: model.request.id,
-            space: model.space,
-            spaces: model.availableSpaces,
+            space: model.spaceModel,
+            spaces: model.availableSpaceModels,
             spaceAccess: spaceAccess,
             unavailableSpacePresentation: BrowserPeekVocabulary.unavailableSpace,
             selectSpace: model.selectLockedSpace,
@@ -67,11 +67,11 @@ struct BrowserPeekOverlay: View {
     }
 
     private var sourceIsLocked: Bool {
-        guard let space = model.space else { return false }
+        guard let space = model.spaceModel else { return false }
         return spaceAccess.isLocked(space)
     }
 
     private var sourceIsAvailable: Bool {
-        model.request.hasSource(in: model.browser.session) && model.space != nil
+        model.request.hasSource(in: model.browser) && model.spaceModel != nil
     }
 }

@@ -2,11 +2,11 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct BrowserPlatformFolderDragSourceModifier: ViewModifier {
-    let folder: BrowserFolder
+    let folder: FolderStateModel
     let profileID: UUID
-    let spaceID: SpaceID
+    let spaceID: UUID
     let dragState: BrowserFolderDragState
-    var memberTabIDs: [TabID]? = nil
+    var memberTabIDs: [UUID]? = nil
     var reorder: BrowserSidebarReorderContext?
     var isEnabled = true
 
@@ -36,7 +36,8 @@ struct BrowserPlatformFolderDragSourceModifier: ViewModifier {
                 .browserMobileDraggable {
                     reorder.state.stage(
                         item: .folder(item),
-                        section: folder.reorderSection
+                        section: folder.reorderSection,
+                        plan: reorder.plan(for: .folder(item))
                     )
                     let payload = (try? JSONEncoder().encode(item)) ?? Data()
                     let provider = NSItemProvider(
@@ -51,9 +52,10 @@ struct BrowserPlatformFolderDragSourceModifier: ViewModifier {
                 } preview: { _ in
                     BrowserFolderDragPreview(
                         folder: folder,
+                        favicons: reorder.browser.core.state.favicons,
                         sourceHeight: reorder.state.frame(ofRow: .folder(folder.id))?.height
                             ?? BrowserFolderDragPreviewLayout.height,
-                        rows: reorder.browser.session.space(id: spaceID).map {
+                        rows: reorder.browser.spaceModel(spaceID).map {
                             BrowserFolderDragPreviewRow.resolve(
                                 reorder.state.folderPreviewRows(for: .folder(item)),
                                 in: $0, rootFolderID: folder.id)

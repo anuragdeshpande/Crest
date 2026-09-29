@@ -8,18 +8,20 @@ struct BrowserUtilityDownloadPreparationIdentity: Equatable, Sendable {
     let profileID: UUID
     let createdAt: Date
     let filename: String
-    let destinationURL: URL?
-    let state: BrowserDownloadItemState
-    let riskAssessment: BrowserDownloadRiskAssessment?
+    let destination: String?
+    let phase: DownloadPhase
+    let message: String?
+    let risk: DownloadRiskAssessment?
 
-    init(_ item: BrowserDownloadItem) {
+    init(_ item: DownloadState) {
         id = item.id
         profileID = item.profileID
         createdAt = item.createdAt
         filename = item.filename
-        destinationURL = item.destinationURL
-        state = item.state
-        riskAssessment = item.riskAssessment
+        destination = item.destination
+        phase = item.phase
+        message = item.message
+        risk = item.risk
     }
 }
 
@@ -28,17 +30,17 @@ struct BrowserUtilityListRequest: Equatable, Sendable {
     let assignment: BrowserSpaceRuntimeAssignment
     let searchText: String
     let filter: BrowserUtilityListFilter
-    let archivedTabs: [ArchivedTab]
-    let history: [BrowserHistoryEntry]
-    let downloads: [BrowserDownloadItem]
+    let archivedTabs: [ArchivedTabState]
+    let history: [HistoryEntryState]
+    let downloads: [DownloadState]
     private let downloadPreparationIdentities: [BrowserUtilityDownloadPreparationIdentity]
 
     init(
         surface: BrowserUtilitySurface,
         assignment: BrowserSpaceRuntimeAssignment,
-        archivedTabs: [ArchivedTab],
-        history: [BrowserHistoryEntry],
-        downloads: [BrowserDownloadItem],
+        archivedTabs: [ArchivedTabState],
+        history: [HistoryEntryState],
+        downloads: [DownloadState],
         searchText: String,
         filter: BrowserUtilityListFilter
     ) {
@@ -58,19 +60,25 @@ struct BrowserUtilityListRequest: Equatable, Sendable {
         )
     }
 
+    /// A locked Space yields no rows at all. Copying its history, archive or
+    /// downloads into a request and then blurring the result still materialises
+    /// the titles and URLs the lock exists to withhold, so the gate belongs here
+    /// rather than in the drawing layer.
+    @MainActor
     init(
         surface: BrowserUtilitySurface,
-        space: BrowserSpace,
-        downloads: [BrowserDownloadItem],
+        space: SpaceModel,
+        downloads: [DownloadState],
         searchText: String,
-        filter: BrowserUtilityListFilter
+        filter: BrowserUtilityListFilter,
+        isUnlocked: Bool = true
     ) {
         self.init(
             surface: surface,
             assignment: BrowserSpaceRuntimeAssignment(space: space),
-            archivedTabs: surface == .archive ? space.archivedTabs : [],
-            history: surface == .history ? space.history : [],
-            downloads: surface == .downloads ? downloads : [],
+            archivedTabs: isUnlocked && surface == .archive ? space.archive.entries : [],
+            history: isUnlocked && surface == .history ? space.history.entries : [],
+            downloads: isUnlocked && surface == .downloads ? downloads : [],
             searchText: searchText,
             filter: filter
         )
@@ -97,9 +105,9 @@ struct BrowserUtilityListRequest: Equatable, Sendable {
     }
 
     private static func normalizedDownloads(
-        _ downloads: [BrowserDownloadItem],
+        _ downloads: [DownloadState],
         profileID: UUID
-    ) -> [BrowserDownloadItem] {
+    ) -> [DownloadState] {
         var seenIDs: Set<UUID> = []
         return downloads.filter { item in
             item.profileID == profileID && seenIDs.insert(item.id).inserted

@@ -38,11 +38,15 @@ struct MobileBrowserSidebarSurface: View {
     let usesNativeNavigationTransition: Bool
 
     let compactChromeNamespace: Namespace.ID
+    /// Whether the address field holds its identity for the command palette
+    /// or has handed it to the open palette. Only a placement beside an
+    /// overlay palette takes part.
+    let commandPaletteHandoff: BrowserCommandPaletteHandoff
     let tabPromotionNamespace: Namespace.ID
     @Binding var address: String
     @Binding var isAddressEditing: Bool
     let activateAddress: (() -> Void)?
-    let selectTab: (TabID) -> Void
+    let selectTab: (UUID) -> Void
     let presentSettings: () -> Void
     let submitAddress: () -> Void
     let openURL: (URL) -> Void
@@ -149,6 +153,7 @@ struct MobileBrowserSidebarSurface: View {
             context: context,
             pages: pages,
             compactChromeNamespace: compactChromeNamespace,
+            commandPaletteHandoff: commandPaletteHandoff,
             tabPromotionNamespace: tabPromotionNamespace,
             address: $address,
             isAddressEditing: $isAddressEditing,
@@ -190,13 +195,13 @@ struct MobileBrowserSidebarSurface: View {
 
     private var selectedSidebarColorScheme: ColorScheme {
         guard MobileBrowserSidebarAppearancePolicy.usesSpaceForeground(),
-            let space = browser.selectedSpace
+            let space = browser.shownSpace
         else { return colorScheme }
-        return BrowserSpaceForegroundPolicy.colorScheme(for: space.branding)
+        return BrowserSpaceForegroundPolicy.colorScheme(for: space.settings.look)
     }
 
     private var selectedSpaceAssignment: BrowserSpaceRuntimeAssignment? {
-        browser.selectedSpace.map(BrowserSpaceRuntimeAssignment.init(space:))
+        browser.shownSpace.map(BrowserSpaceRuntimeAssignment.init(space:))
     }
 
     private func presentHistory() {
@@ -234,11 +239,11 @@ struct MobileBrowserSidebarSurface: View {
     /// locked or vanished Space empties it, a placement that shows the page next
     /// to the sidebar takes the new Space's URL, and editing always ends because
     /// whatever was being typed belonged to the Space that was left.
-    private func synchronizeAddress(for space: BrowserSpace?) {
+    private func synchronizeAddress(for space: SpaceModel?) {
         if space == nil {
             address = ""
         } else if presentsSelectedSpacePage {
-            address = browser.selectedTab?.url?.absoluteString ?? ""
+            address = browser.shownTab?.url ?? ""
         }
         isAddressEditing = false
     }
@@ -262,6 +267,7 @@ struct MobileBrowserSidebarSurface: View {
         sidebarToggleUndocks: false,
         usesNativeNavigationTransition: false,
         compactChromeNamespace: compactChromeNamespace,
+        commandPaletteHandoff: .neither,
         tabPromotionNamespace: tabPromotionNamespace,
         address: $address,
         isAddressEditing: $isAddressEditing,

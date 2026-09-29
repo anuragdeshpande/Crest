@@ -2,34 +2,43 @@ import Foundation
 
 enum BrowserFaviconTaskIdentityPolicy {
     static func identity(
-        for tab: BrowserTab,
+        for subject: BrowserTabFaviconSubject,
         profileID: UUID?,
-        maximumPixelSize: Int
+        maximumPixelSize: Int,
+        isUnlocked: Bool = true
     ) -> BrowserFaviconTaskIdentity {
         BrowserFaviconTaskIdentity(
-            tabID: tab.id,
+            tabID: subject.tabID,
             profileID: profileID,
-            pageURL: tab.url,
-            iconMode: tab.iconMode.rawValue,
-            // The tab already fingerprinted its own payload. SwiftUI evaluates
-            // this identity during every view update, so nothing here may read
-            // the image bytes.
-            payload: tab.displayFaviconPayloadIdentity,
-            maximumPixelSize: maximumPixelSize
+            pageURL: subject.pageURL,
+            iconMode: subject.iconMode.name,
+            // The image carries the fingerprint taken when it was set. SwiftUI
+            // evaluates this identity during every view update, so nothing
+            // here may read the image bytes.
+            payload: subject.image?.identity,
+            maximumPixelSize: maximumPixelSize,
+            isUnlocked: isUnlocked
         )
     }
 
+    /// A locked Space must never reach the network for an icon: the request that
+    /// fetches `https://<host>/favicon.ico` would disclose the hostnames the lock
+    /// exists to hide, and would cache them under the locked Space's profile.
+    /// Redaction is a drawing effect and cannot stop that, so the fallback is
+    /// dropped at the request itself.
     static func renderRequest(
-        for tab: BrowserTab,
+        for subject: BrowserTabFaviconSubject,
         profileID: UUID?,
-        maximumPixelSize: Int
+        maximumPixelSize: Int,
+        isUnlocked: Bool = true
     ) -> BrowserFaviconRenderRequest {
         let identity = identity(
-            for: tab,
+            for: subject,
             profileID: profileID,
-            maximumPixelSize: maximumPixelSize
+            maximumPixelSize: maximumPixelSize,
+            isUnlocked: isUnlocked
         )
-        guard !tab.isStartPage, tab.emojiIcon == nil else {
+        guard !subject.isStartPage, subject.emoji == nil, isUnlocked else {
             return BrowserFaviconRenderRequest(
                 identity: identity,
                 payload: nil,
@@ -38,11 +47,11 @@ enum BrowserFaviconTaskIdentityPolicy {
             )
         }
 
-        let payload = tab.displayFaviconData
+        let payload = subject.image?.data
         return BrowserFaviconRenderRequest(
             identity: identity,
             payload: payload,
-            fallbackPageURL: payload == nil ? tab.url : nil,
+            fallbackPageURL: payload == nil ? subject.pageURL : nil,
             fallbackProfileID: payload == nil ? profileID : nil
         )
     }

@@ -4,11 +4,11 @@ import XCTest
 
 @testable import CrestMobile
 
-private func padTab(id: TabID, title: String) -> BrowserTab {
-    BrowserTab(
+private func padTab(id: UUID, title: String) -> TabState.Seed {
+    TabState.Seed(
         id: id,
         title: title,
-        url: URL(string: "https://\(id.rawValue.uuidString).crest.test"),
+        url: URL(string: "https://\(id.uuidString).crest.test"),
         placement: .current,
         lastActivatedAt: Date(timeIntervalSince1970: 1_700_000_000)
     )
@@ -154,7 +154,7 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
     /// process, and the Space pager reads exactly that: horizontal paging died
     /// in every sidebar on screen at once, in the floating sidebar and the
     /// full-screen tab viewer alike, with no lifted row to explain it.
-    func testAStageNoDragClaimsStopsLockingTheSpaceStrip() async throws {
+    func testAStageNoDragClaimsStopsLockingTheSpaceStrip() async {
         let fixture = ReorderStagingFixture(
             stagedLiftExpiration: .milliseconds(10)
         )
@@ -162,7 +162,7 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
         fixture.state.stage(item: fixture.item, section: fixture.section)
         XCTAssertTrue(lockedPager(fixture.state))
 
-        try await Task.sleep(for: .milliseconds(60))
+        await fixture.elapse(.milliseconds(10))
 
         XCTAssertFalse(
             fixture.state.hasLiftInFlight,
@@ -179,7 +179,7 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
     }
 
     /// The backstop must never collect a stage that a drag did claim.
-    func testAPromotedLiftOutlivesTheStageExpiry() async throws {
+    func testAPromotedLiftOutlivesTheStageExpiry() async {
         let fixture = ReorderStagingFixture(
             stagedLiftExpiration: .milliseconds(10)
         )
@@ -187,7 +187,7 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
         fixture.state.stage(item: fixture.item, section: fixture.section)
         fixture.state.update(pointer: fixture.pointerOverNeighbour)
 
-        try await Task.sleep(for: .milliseconds(60))
+        await fixture.elapse(.milliseconds(10))
 
         XCTAssertTrue(
             fixture.state.isLifted(fixture.item.id),
@@ -207,15 +207,15 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
     }
 
     /// Re-staging restarts the clock rather than inheriting the old one.
-    func testEachStageGetsItsOwnExpiry() async throws {
+    func testEachStageGetsItsOwnExpiry() async {
         let fixture = ReorderStagingFixture(
             stagedLiftExpiration: .milliseconds(40)
         )
 
         fixture.state.stage(item: fixture.item, section: fixture.section)
-        try await Task.sleep(for: .milliseconds(25))
+        await fixture.elapse(.milliseconds(25))
         fixture.state.stage(item: fixture.item, section: fixture.section)
-        try await Task.sleep(for: .milliseconds(25))
+        await fixture.elapse(.milliseconds(25))
 
         XCTAssertTrue(
             fixture.state.hasLiftInFlight,
@@ -321,6 +321,8 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
     @MainActor
     private struct ReorderStagingFixture {
         let state: BrowserSidebarReorderState
+        /// The time a stage's expiry waits on, moved only by `elapse`.
+        let clock = ManualClock()
         let section = BrowserSidebarReorderSection.tabs(
             placement: .current,
             folderID: nil
@@ -334,18 +336,27 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
             CGPoint(x: neighbourFrame.midX, y: neighbourFrame.midY)
         }
 
+        /// Lets every expiry already armed start its wait, moves the clock on
+        /// by `duration`, then lets every expiry it woke run on the main actor
+        /// before the test reads the state.
+        func elapse(_ duration: Duration) async {
+            for _ in 0..<8 { await Task.yield() }
+            clock.advance(by: duration)
+            for _ in 0..<8 { await Task.yield() }
+        }
+
         init(
             stagedLiftExpiration: Duration = BrowserSidebarReorderPolicy
                 .stagedLiftExpiration
         ) {
             state = BrowserSidebarReorderState(
-                stagedLiftExpiration: stagedLiftExpiration
+                stagedLiftExpiration: stagedLiftExpiration, clock: clock
             )
-            let spaceID = SpaceID()
+            let spaceID = UUID()
             let profileID = UUID()
             item = .tab(
                 BrowserTabDragItem(
-                    tabID: TabID(),
+                    tabID: UUID(),
                     spaceID: spaceID,
                     profileID: profileID
                 )
@@ -359,7 +370,7 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
                 ),
                 owner: UUID()
             )
-            neighbourID = .tab(TabID())
+            neighbourID = .tab(UUID())
             state.register(
                 row: BrowserSidebarReorderRow(
                     id: neighbourID,
@@ -421,7 +432,7 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
     private struct PinnedOriginFixture {
         let state = BrowserSidebarReorderState()
         let space = BrowserSpaceRuntimeAssignment(
-            spaceID: SpaceID(),
+            spaceID: UUID(),
             profileID: UUID()
         )
         let pinnedSection = BrowserSidebarReorderSection.tabs(
@@ -443,28 +454,18 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
         private static let gridOrigin = CGPoint(x: 0, y: 60)
         private static let gridWidth: CGFloat = 320
 
-        var pointerBetweenPinnedTiles: CGPoint {
-            // Past the first remaining tile's centre and short of the next
-            // one's, on the single line the grid lays out — which is the move
-            // only a grid can make and a list cannot.
-            let layout = state.pinnedLayout(ids: tileIDs, in: space)
-            let first = layout.frame(for: .tab(tileIDs[1]), in: pinnedZone)!
-            let second = layout.frame(for: .tab(tileIDs[2]), in: pinnedZone)!
-            return CGPoint(x: (first.midX + second.midX) / 2, y: first.midY)
-        }
-        var pointerOverSavedRun = CGPoint(x: 160, y: 236)
         var pointerOverCurrentRun = CGPoint(x: 160, y: 362)
 
         init(tileCount: Int = 4) {
             let liftItem = BrowserTabDragItem(
-                tabID: TabID(),
+                tabID: UUID(),
                 spaceID: space.spaceID,
                 profileID: space.profileID
             )
             lift = .tab(liftItem)
 
             tileIDs = (0..<tileCount).map { index in
-                index == 0 ? lift.id : .tab(TabID())
+                index == 0 ? lift.id : .tab(UUID())
             }
             let grid = BrowserPinnedTabReorderLayout(ids: tileIDs)
             for id in tileIDs {
@@ -482,7 +483,7 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
             for index in 0..<2 {
                 state.register(
                     row: BrowserSidebarReorderRow(
-                        id: .tab(TabID()),
+                        id: .tab(UUID()),
                         space: space,
                         section: savedSection,
                         frame: CGRect(
@@ -497,7 +498,7 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
             }
 
             for index in 0..<2 {
-                let id = BrowserSidebarReorderItemID.tab(TabID())
+                let id = BrowserSidebarReorderItemID.tab(UUID())
                 currentRowIDs.append(id)
                 state.register(
                     row: BrowserSidebarReorderRow(
@@ -531,13 +532,13 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
         /// the very same section identities.
         func registerForeignSpaceRun() {
             let foreign = BrowserSpaceRuntimeAssignment(
-                spaceID: SpaceID(),
+                spaceID: UUID(),
                 profileID: space.profileID
             )
             for index in 0..<3 {
                 state.register(
                     row: BrowserSidebarReorderRow(
-                        id: .tab(TabID()),
+                        id: .tab(UUID()),
                         space: foreign,
                         section: currentSection,
                         frame: CGRect(
@@ -692,10 +693,10 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
         let drop = try XCTUnwrap(fixture.state.end())
         fixture.commit(drop)
 
-        let space = try XCTUnwrap(fixture.browser.selectedSpace)
-        let groupID = try XCTUnwrap(space.splitGroup(containing: fixture.cards[0].id))
+        let space = try XCTUnwrap(fixture.browser.shownSpace)
+        let groupID = try XCTUnwrap(space.shownSplit(containing: fixture.cards[0].id))
         XCTAssertEqual(
-            space.splitGroupMembers(of: groupID).map(\.id),
+            space.splitMembers(of: groupID).map(\.id),
             [fixture.cards[0].id, fixture.joiner.id],
             "Dropped on the trailing half, the carried tab lands behind the "
                 + "card that was already there."
@@ -715,15 +716,15 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
         let sidebarInteraction: BrowserSidebarInteractionState
         let browser: BrowserStore
         let spaceAccess = BrowserSpaceAccessController()
-        let cards: [BrowserTab]
-        let joiner: BrowserTab
+        let cards: [TabState.Seed]
+        let joiner: TabState.Seed
         let section = BrowserSidebarReorderSection.tabs(
             placement: .current,
             folderID: nil
         )
 
         private let sidebarIsFloating: Bool
-        private let spaceID = SpaceID(rawValue: padUUID(0x01))
+        private let spaceID = padUUID(0x01)
         private let profileID = padUUID(0x02)
 
         /// A 13-inch iPad in landscape, with the sidebar width the shell defaults
@@ -736,30 +737,26 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
             self.sidebarIsFloating = sidebarIsFloating
             cards = (0..<cardCount).map { index in
                 padTab(
-                    id: TabID(rawValue: padUUID(UInt8(0x10 + index))),
+                    id: padUUID(UInt8(0x10 + index)),
                     title: "Card \(index)"
                 )
             }
             joiner = padTab(
-                id: TabID(rawValue: padUUID(0x30)),
+                id: padUUID(0x30),
                 title: "Joiner"
             )
-            let space = BrowserSpace(
+            let space = SpaceState.Seed(
                 id: spaceID,
-                profile: BrowsingProfile(id: profileID),
+                profileID: profileID,
                 name: "Reading",
                 symbol: "rectangle.stack",
                 accent: .indigo,
                 folders: [],
-                tabs: cards + [joiner],
-                selectedTabID: cards.first?.id ?? joiner.id
+                tabs: cards + [joiner]
             )
             browser = BrowserStore(
-                session: BrowserSession(
-                    spaces: [space],
-                    selectedSpaceID: space.id
-                ),
-                persistence: InMemoryBrowserSessionPersistence(),
+                seed: SessionState.Seed(spaces: [space]),
+                showing: space.id, tabs: [space.id: cards.first?.id ?? joiner.id],
                 browsingMode: .privateBrowsing
             )
             sidebarInteraction = BrowserSidebarInteractionState.connected(to: browser)
@@ -846,34 +843,22 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
             registerCards()
         }
 
-        /// The shell as it stood before: cards measured, no zone naming the area
-        /// they sit in.
-        func registerCardsOnly() {
-            registerSidebar()
-            registerCards()
-        }
-
-        func registerZoneOnly() {
-            registerSidebar()
-            registerZone()
-        }
-
+        /// Stages the lift as the sidebar does, asking the core where it may
+        /// land.
         func stageTheLift() {
-            state.stage(item: liftItem, section: section)
+            state.stage(item: liftItem, section: section, plan: reorder.plan(for: liftItem))
         }
 
-        func commit(
-            _ drop: (
-                item: BrowserSidebarReorderItem,
-                target: BrowserSidebarReorderTarget
-            )
-        ) {
+        func commit(_ drop: BrowserSidebarReorderDrop) {
+            reorder.commit(drop)
+        }
+
+        private var reorder: BrowserSidebarReorderContext {
             BrowserSidebarReorderContext(
                 browser: browser,
                 spaceAccess: spaceAccess,
                 state: state
             )
-            .commit(drop.target, for: drop.item)
         }
 
         private var liftItem: BrowserSidebarReorderItem {
@@ -927,4 +912,51 @@ final class MobileBrowserSidebarReorderPolicyTests: XCTestCase {
         }
     }
 
+}
+
+/// A clock whose time moves only when a test moves it, so a wait ends at a
+/// known point rather than after however long a loaded machine takes.
+private final class ManualClock: Clock, @unchecked Sendable {
+    // MARK: - Types
+
+    struct Instant: InstantProtocol {
+        var offset: Duration
+
+        func advanced(by duration: Duration) -> Instant { Instant(offset: offset + duration) }
+        func duration(to other: Instant) -> Duration { other.offset - offset }
+        static func < (lhs: Instant, rhs: Instant) -> Bool { lhs.offset < rhs.offset }
+    }
+
+    // MARK: - Variables
+
+    private let lock = NSLock()
+    private var current = Instant(offset: .zero)
+    private var sleepers: [(deadline: Instant, continuation: CheckedContinuation<Void, Never>)] = []
+
+    var now: Instant { lock.withLock { current } }
+    var minimumResolution: Duration { .zero }
+
+    // MARK: - Actions - Time
+
+    func sleep(until deadline: Instant, tolerance: Duration?) async throws {
+        await withCheckedContinuation { continuation in
+            let isDue = lock.withLock {
+                guard deadline > current else { return true }
+                sleepers.append((deadline, continuation))
+                return false
+            }
+            if isDue { continuation.resume() }
+        }
+    }
+
+    /// Moves time on by `duration` and wakes every wait that ends by then.
+    func advance(by duration: Duration) {
+        let woken = lock.withLock {
+            current = current.advanced(by: duration)
+            let due = sleepers.filter { $0.deadline <= current }
+            sleepers.removeAll { $0.deadline <= current }
+            return due.map(\.continuation)
+        }
+        for continuation in woken { continuation.resume() }
+    }
 }

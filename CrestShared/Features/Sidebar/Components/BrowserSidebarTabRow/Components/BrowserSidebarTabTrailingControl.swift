@@ -9,12 +9,10 @@ struct BrowserSidebarTabTrailingControl: View {
     @ViewBuilder
     var body: some View {
         if configuration.tab.placement == .saved {
-            if configuration.unload != nil {
-                BrowserSidebarTabUnloadButton(
-                    configuration: configuration,
-                    isVisible: configuration.isLoaded && isRevealed
-                )
-            }
+            BrowserSidebarTabUnloadButton(
+                configuration: configuration,
+                isVisible: configuration.isLoaded && isRevealed
+            )
         } else {
             BrowserSidebarTabCloseButton(
                 configuration: configuration,
@@ -58,7 +56,7 @@ private struct BrowserSidebarTabCloseButton: View {
         )
         .disabled(!configuration.canClose || !configuration.isAvailableForDisplay)
         .allowsHitTesting(isVisible)
-        .accessibilityLabel("Close \(configuration.tab.displayTitle)")
+        .accessibilityLabel("Close \(configuration.tab.shownTitle)")
     }
 
     private var metrics: BrowserTabTrailingControlMetrics {
@@ -73,7 +71,7 @@ private struct BrowserSidebarTabUnloadButton: View {
     var body: some View {
         Button {
             guard configuration.isCurrentAndUnlocked else { return }
-            configuration.unload?(configuration.tab.id)
+            configuration.context.unload(configuration.tab.id)
         } label: {
             BrowserSidebarTabTrailingControlLabel(
                 systemName: "minus",
@@ -85,7 +83,7 @@ private struct BrowserSidebarTabUnloadButton: View {
         .opacity(isVisible ? 1 : 0)
         .disabled(!configuration.isLoaded || !configuration.isAvailableForDisplay)
         .allowsHitTesting(isVisible)
-        .accessibilityLabel("Unload \(configuration.tab.displayTitle)")
+        .accessibilityLabel("Unload \(configuration.tab.shownTitle)")
         .help("Unload Tab")
     }
 
@@ -125,15 +123,3 @@ private struct BrowserSidebarTabTrailingControlStyle: ViewModifier {
         }
     }
 }
-
-#if DEBUG
-    #Preview("Close and unload") {
-        HStack(spacing: 20) {
-            BrowserSidebarTabTrailingControl(
-                configuration: BrowserSidebarTabRowPreviewFixture.configuration(), isHovering: .constant(true))
-            BrowserSidebarTabTrailingControl(
-                configuration: BrowserSidebarTabRowPreviewFixture.configuration(placement: .saved),
-                isHovering: .constant(true))
-        }.padding()
-    }
-#endif

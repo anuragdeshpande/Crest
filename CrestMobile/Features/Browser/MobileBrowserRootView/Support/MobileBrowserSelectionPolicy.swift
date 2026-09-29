@@ -1,3 +1,5 @@
+import Foundation
+
 enum MobileBrowserRootSelectionChange: Equatable, Sendable {
     case unchanged
     case tab
@@ -35,40 +37,21 @@ enum MobileBrowserSpaceSwitchPolicy {
 enum MobileTabPromotionPolicy {
     static let usesNativeNavigationTransition = true
 
-    static func supports(_ placement: TabPlacement) -> Bool {
-        switch placement {
-        case .pinned, .saved, .current:
-            true
-        }
-    }
-
-    static func destinationID(for tabID: TabID) -> String {
+    static func destinationID(for tabID: UUID) -> String {
         BrowserTabPromotionID.value(for: tabID)
     }
 
-    static func isTransitionSource(
-        _ tab: BrowserTab,
-        selectedTabID: TabID?
-    ) -> Bool {
-        BrowserTabPromotionSourcePolicy.isPromotionSource(
-            tab,
-            isSelected: tab.id == selectedTabID
-        ) && supports(tab.placement)
+    @MainActor
+    static func isTransitionSource(_ tab: TabStateModel, selectedTabID: UUID?) -> Bool {
+        BrowserTabPromotionSourcePolicy.isPromotionSource(tab, isSelected: tab.id == selectedTabID)
     }
 
-    static func target(
-        for tab: BrowserTab?,
-        selectedTabID: TabID?
-    ) -> MobileTabPromotionTarget? {
-        guard let tab,
-            isTransitionSource(tab, selectedTabID: selectedTabID)
-        else {
-            return nil
-        }
-        return MobileTabPromotionTarget(
-            tabID: tab.id,
-            placement: tab.placement
-        )
+    /// The target the shown tab of the read model promotes from: the tab the
+    /// window shows, unless it is a Start Page, which has no row.
+    @MainActor
+    static func target(for shownTab: TabStateModel) -> MobileTabPromotionTarget? {
+        guard !shownTab.isStartPage else { return nil }
+        return MobileTabPromotionTarget(tabID: shownTab.id, placement: shownTab.placement)
     }
 
     static func shouldPreposition(

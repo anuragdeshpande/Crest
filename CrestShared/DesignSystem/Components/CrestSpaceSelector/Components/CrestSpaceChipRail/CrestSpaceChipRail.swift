@@ -3,14 +3,14 @@ import SwiftUI
 /// A horizontal rail of crest-badged Space chips, ending in a dashed add chip.
 struct CrestSpaceChipRail: View {
     let spaces: [CrestSpaceIdentity]
-    @Binding var selection: SpaceID?
+    @Binding var selection: UUID?
     var add: CrestSpaceChipAddAction?
     var commands: ((CrestSpaceIdentity) -> [CrestSpaceChipCommand])?
     var accessibilityIdentifier: String?
 
     init(
         spaces: [CrestSpaceIdentity],
-        selection: Binding<SpaceID?>,
+        selection: Binding<UUID?>,
         add: CrestSpaceChipAddAction? = nil,
         commands: ((CrestSpaceIdentity) -> [CrestSpaceChipCommand])? = nil,
         accessibilityIdentifier: String? = nil
@@ -48,7 +48,7 @@ struct CrestSpaceChipRail: View {
         } label: {
             HStack(spacing: CrestSpaceChipMetrics.contentSpacing) {
                 BrowserSpaceSymbolArtwork(
-                    space: identity.space,
+                    identity: identity.space,
                     size: CrestSpaceChipMetrics.iconSize,
                     lockSize: CrestSpaceChipMetrics.lockSize
                 )
@@ -86,8 +86,8 @@ struct CrestSpaceChipRail: View {
 
 #if DEBUG
     #Preview("Select a Space") {
-        @Previewable @State var selection: SpaceID? = BrowserSession.preview.selectedSpaceID
-        CrestSpaceChipRail(spaces: CrestSpaceIdentity.list(BrowserSession.preview.spaces), selection: $selection)
+        @Previewable @State var selection: UUID? = SessionState.Seed.preview.spaces[0].id
+        CrestSpaceChipRail(spaces: CrestSpaceIdentity.list(SpaceModel.previewSpaces), selection: $selection)
             .padding().frame(width: 360)
     }
 #endif

@@ -17,9 +17,9 @@ struct MobileDownloadsView: View {
         )
     }
 
-    private var downloads: [BrowserDownloadItem] {
+    private var downloads: [DownloadState] {
         guard let space else { return [] }
-        return pages.downloadCenter.items(for: space.profile.id)
+        return pages.downloadCenter.items(for: space.profileID)
     }
 
     private var actions: BrowserUtilityListActions {
@@ -47,18 +47,12 @@ struct MobileDownloadsView: View {
                 break
             }
         case .retry(let itemID):
-            Task {
-                guard downloadItem(for: action) != nil else { return }
-                await pages.downloadCenter.retryAutomaticDownload(
-                    itemID,
-                    matching: assignment
-                ) { expectedAssignment in
-                    BrowserSidebarAccessPolicy.unlockedSpace(
-                        matching: expectedAssignment,
-                        in: browser,
-                        accessController: spaceAccess
-                    ) != nil
-                }
+            pages.downloadCenter.retryAutomaticDownload(itemID, matching: assignment) { expectedAssignment in
+                BrowserSidebarAccessPolicy.unlockedSpace(
+                    matching: expectedAssignment,
+                    in: browser,
+                    accessController: spaceAccess
+                ) != nil
             }
         case .cancel(let itemID):
             pages.cancelDownload(itemID)
@@ -69,7 +63,7 @@ struct MobileDownloadsView: View {
 
     private func downloadItem(
         for action: BrowserUtilityDownloadAction
-    ) -> BrowserDownloadItem? {
+    ) -> DownloadState? {
         BrowserSidebarUtilityActionPolicy.downloadItem(
             for: action,
             matching: assignment,
@@ -79,7 +73,7 @@ struct MobileDownloadsView: View {
         )
     }
 
-    private var space: BrowserSpace? {
+    private var space: SpaceModel? {
         BrowserSidebarAccessPolicy.selectedUnlockedSpace(
             matching: assignment,
             in: browser,

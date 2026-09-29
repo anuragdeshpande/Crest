@@ -20,16 +20,12 @@ enum BrowserQuickWindowPreviewFixture {
     )
     static let request = BrowserQuickWindowRequest.empty(
         id: uuid(0x41),
-        spaceAssignment: BrowserSpaceRuntimeAssignment(space: sourceSpace)
+        spaceAssignment: BrowserSpaceRuntimeAssignment(spaceID: sourceSpace.id, profileID: sourceSpace.profileID)
     )
 
     static func makeBrowser() -> BrowserStore {
         BrowserStore(
-            session: BrowserSession(
-                spaces: [sourceSpace, destinationSpace],
-                selectedSpaceID: sourceSpace.id
-            ),
-            persistence: InMemoryBrowserSessionPersistence(),
+            seed: SessionState.Seed(spaces: [sourceSpace, destinationSpace]),
             credentialVault: InMemoryCredentialVault(),
             browsingMode: .privateBrowsing
         )
@@ -56,22 +52,20 @@ enum BrowserQuickWindowPreviewFixture {
         name: String,
         symbol: String,
         accent: SpaceAccent
-    ) -> BrowserSpace {
-        let tabID = TabID(rawValue: uuid(tabByte))
-        return BrowserSpace(
-            id: SpaceID(rawValue: uuid(idByte)),
-            profile: BrowsingProfile(id: uuid(profileByte)),
+    ) -> SpaceState.Seed {
+        let tabID = uuid(tabByte)
+        return SpaceState.Seed(
+            id: uuid(idByte),
+            profileID: uuid(profileByte),
             name: name,
             symbol: symbol,
             accent: accent,
-            folders: [],
             tabs: [
-                BrowserTab.startPage(
+                TabState.Seed.startPage(
                     id: tabID,
                     lastActivatedAt: Date(timeIntervalSince1970: 0)
                 )
-            ],
-            selectedTabID: tabID
+            ]
         )
     }
 

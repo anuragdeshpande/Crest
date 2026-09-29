@@ -1,23 +1,29 @@
 import Foundation
 
+/// Puts a saved or pinned tab's page away, as closing it does. The core asks
+/// the page whether it may go first, then records the close, which returns
+/// the tab to its saved address when the app's preferences say so; the page
+/// host of the window that asked follows it and lets the page go.
 @MainActor
 struct BrowserDurableTabCloseAction {
     let browser: BrowserStore
     let spaceAccess: BrowserSpaceAccessController
-    var preferences: BrowserDurableTabPreferenceStore = .shared
-    /// Retires only the matching page. False means another runtime owns it.
-    let closePage: (BrowserTabRuntimeAssignment, Bool) -> Bool
 
+    /// False when the tab is not a saved or pinned tab of an unlocked Space
+    /// this window shows, or its page may not go yet.
     func perform(_ assignment: BrowserTabRuntimeAssignment) -> Bool {
+        let space = BrowserSpaceRuntimeAssignment(spaceID: assignment.spaceID, profileID: assignment.profileID)
         guard
-            let space = BrowserSidebarAccessPolicy.selectedUnlockedSpace(
-                matching: BrowserSpaceRuntimeAssignment(spaceID: assignment.spaceID, profileID: assignment.profileID),
-                in: browser, accessController: spaceAccess
-            ), let tab = space.tabs.first(where: { $0.id == assignment.tabID }),
-            tab.placement != .current
+            let unlocked = BrowserSidebarAccessPolicy.selectedUnlockedSpace(
+                matching: space, in: browser, accessController: spaceAccess),
+            unlocked.tabs.model(assignment.tabID)?.placement.isDurable == true
         else { return false }
-        let returnsToRoot = preferences.closePolicy == .returnToSavedURL && tab.savedSiteURL != nil
-        guard closePage(assignment, returnsToRoot) else { return false }
-        return browser.closeDurableTab(assignment, returningToSavedURL: returnsToRoot)
+        return browser.performPageDismissal(of: [assignment]) {
+            guard
+                BrowserSidebarAccessPolicy.selectedUnlockedSpace(
+                    matching: space, in: browser, accessController: spaceAccess) != nil
+            else { return false }
+            return browser.closeDurableTab(assignment)
+        }
     }
 }

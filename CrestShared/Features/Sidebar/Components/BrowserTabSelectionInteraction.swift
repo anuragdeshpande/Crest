@@ -2,11 +2,11 @@ import SwiftUI
 
 /// Selection uses the live control bounds, not the resting frames frozen by a drag.
 struct BrowserTabSelectionTarget: ViewModifier {
-    let tabID: TabID?
+    let tabID: UUID?
     let browser: BrowserStore?
     let assignment: BrowserSpaceRuntimeAssignment
     var isEnabled = true
-    var folderID: FolderID? = nil
+    var folderID: UUID? = nil
     @Environment(\.browserInteractionCapabilities) private var capabilities
 
     func body(content: Content) -> some View {
@@ -23,13 +23,11 @@ struct BrowserTabSelectionTarget: ViewModifier {
 
 /// Selection belongs to the activation button, never its close control.
 struct BrowserTabSelectionAccessibility: ViewModifier {
-    let tabID: TabID
-    let spaceID: SpaceID
+    let tabID: UUID
+    let spaceID: UUID
     let browser: BrowserStore?
     let isActive: Bool
     let isLoaded: Bool
-
-    @Environment(\.browserTabSidePanel) private var sidePanel
 
     private var selected: Bool { browser?.tabMultiSelection.contains(tabID) == true }
 
@@ -40,18 +38,21 @@ struct BrowserTabSelectionAccessibility: ViewModifier {
             .modifier(BrowserSidebarSelectionAccessibilityActions(item: .tab(tabID), browser: browser))
     }
 
+    /// The tab's state, with the engine its page runs on when its icon wears
+    /// that engine's badge, which says nothing itself.
     private var value: String {
         var parts = [BrowserChromeAccessibility.tabValue(isLoaded: isLoaded)]
         if isActive { parts.append(String(localized: "Active page")) }
         if selected { parts.append(String(localized: "Selected for tab actions")) }
-        return BrowserTabSidePanelAccessibility.value(
-            parts.joined(separator: ", "),
-            panelTitle: sidePanel?.sidePanelPresentation(forTab: tabID, in: spaceID)?.title)
+        if let engine = browser?.core.state.engineBadge(forTab: tabID) {
+            parts.append(String(localized: engine.pageDescription))
+        }
+        return parts.joined(separator: ", ")
     }
 }
 
 struct BrowserFolderSelectionAccessibility: ViewModifier {
-    let folderID: FolderID
+    let folderID: UUID
     let browser: BrowserStore
     private var selected: Bool { browser.tabMultiSelection.contains(.folder(folderID)) }
     func body(content: Content) -> some View {
@@ -69,21 +70,19 @@ private struct BrowserSidebarSelectionAccessibilityActions: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if capabilities.allowsMultiSelection, let browser, let sidebarInteraction {
+        if capabilities.allowsMultiSelection, let browser, sidebarInteraction != nil {
             content
                 .accessibilityAction(
                     named: browser.tabMultiSelection.contains(item) ? "Remove from Selection" : "Add to Selection"
                 ) {
                     browser.tabMultiSelection.click(
                         item,
-                        units: BrowserSidebarSelection.itemUnits(
-                            in: browser, reorder: sidebarInteraction.sidebarReorderState), command: true)
+                        units: BrowserSidebarSelection.itemUnits(in: browser), command: true)
                 }
                 .accessibilityAction(named: "Select Range to Here") {
                     browser.tabMultiSelection.click(
                         item,
-                        units: BrowserSidebarSelection.itemUnits(
-                            in: browser, reorder: sidebarInteraction.sidebarReorderState), command: true, shift: true)
+                        units: BrowserSidebarSelection.itemUnits(in: browser), command: true, shift: true)
                 }
         } else {
             content

@@ -1,28 +1,16 @@
 import Foundation
 import Observation
 
-@MainActor
-protocol BrowserPagePermissionProviding: AnyObject {
-    var sitePermissionRequests: BrowserPagePermissionController { get }
-}
-
 /// Owns unanswered requests for one page. A detached page cannot ask through
 /// another page's controls, and dismissal never creates a saved denial.
 @Observable
 @MainActor
 final class BrowserPagePermissionController {
-    enum Response: Equatable {
-        case allowOnce
-        case grantPersistently
-        case denyOnce
-        case denyPersistently
-    }
-
     struct Request: Identifiable, Equatable {
         let id = UUID()
-        let permission: BrowserSitePermission
-        let origin: BrowserSiteOrigin
-        let topLevelOrigin: BrowserSiteOrigin
+        let permission: SitePermission
+        let origin: SiteOrigin
+        let topLevelOrigin: SiteOrigin
         let spaceName: String
     }
 
@@ -30,7 +18,10 @@ final class BrowserPagePermissionController {
     private(set) var generation = UUID()
     @ObservationIgnored private var isPresentationAvailable = false
     @ObservationIgnored private var requests: [Request] = []
-    @ObservationIgnored private var completions: [UUID: [(Response?) -> Void]] = [:]
+    /// Who waits on each request, each by its own token, so one that no
+    /// longer waits can leave without answering the others.
+    @ObservationIgnored private var completions:
+        [UUID: [(token: UUID, callback: (BrowserSitePermissionPromptResponse?) -> Void)]] = [:]
 
     func setPresentationAvailable(_ available: Bool) {
         isPresentationAvailable = available
@@ -38,87 +29,76 @@ final class BrowserPagePermissionController {
     }
 
     func request(
-        _ permission: BrowserSitePermission,
-        origin: BrowserSiteOrigin,
-        topLevelOrigin: BrowserSiteOrigin,
+        _ permission: SitePermission,
+        origin: SiteOrigin,
+        topLevelOrigin: SiteOrigin,
         spaceName: String,
-        completion: @escaping (Response?) -> Void
+        dismissal: BrowserPromptDismissal? = nil,
+        completion: @escaping (BrowserSitePermissionPromptResponse?) -> Void
     ) {
         guard isPresentationAvailable else {
             completion(nil)
             return
         }
+        let token = UUID()
+        let request: Request
         if let existing = requests.first(where: {
             $0.permission == permission && $0.origin == origin
                 && $0.topLevelOrigin == topLevelOrigin
         }) {
-            completions[existing.id, default: []].append(completion)
-            return
+            request = existing
+            completions[existing.id, default: []].append((token, completion))
+        } else {
+            request = Request(
+                permission: permission, origin: origin,
+                topLevelOrigin: topLevelOrigin, spaceName: spaceName
+            )
+            requests.append(request)
+            completions[request.id] = [(token, completion)]
+            current = requests.first
         }
-        let request = Request(
-            permission: permission, origin: origin,
-            topLevelOrigin: topLevelOrigin, spaceName: spaceName
-        )
-        requests.append(request)
-        completions[request.id] = [completion]
-        current = requests.first
+        dismissal?.attach { [weak self] in self?.withdraw(token, from: request.id) }
     }
 
-    func resolve(_ id: UUID, response: Response) {
+    /// One waiting on `requestID` no longer does: it hears no answer, as a
+    /// request nobody could show does, and a request nobody waits on any more
+    /// leaves the queue.
+    private func withdraw(_ token: UUID, from requestID: UUID) {
+        guard var waiting = completions[requestID], let index = waiting.firstIndex(where: { $0.token == token }) else {
+            return
+        }
+        let withdrawn = waiting.remove(at: index)
+        if waiting.isEmpty {
+            completions.removeValue(forKey: requestID)
+            requests.removeAll { $0.id == requestID }
+            if current?.id == requestID { current = requests.first }
+        } else {
+            completions[requestID] = waiting
+        }
+        withdrawn.callback(nil)
+    }
+
+    func resolve(_ id: UUID, response: BrowserSitePermissionPromptResponse) {
         guard current?.id == id else { return }
         requests.removeFirst()
         let callbacks = completions.removeValue(forKey: id) ?? []
         current = requests.first
-        for callback in callbacks { callback(response) }
+        for waiting in callbacks { waiting.callback(response) }
     }
 
     func response(
-        to permission: BrowserSitePermission,
-        origin: BrowserSiteOrigin,
-        topLevelOrigin: BrowserSiteOrigin,
-        spaceName: String
+        to permission: SitePermission,
+        origin: SiteOrigin,
+        topLevelOrigin: SiteOrigin,
+        spaceName: String,
+        dismissal: BrowserPromptDismissal? = nil
     ) async -> BrowserSitePermissionPromptResponse {
         await withCheckedContinuation { continuation in
-            request(permission, origin: origin, topLevelOrigin: topLevelOrigin, spaceName: spaceName) { response in
-                let result: BrowserSitePermissionPromptResponse
-                switch response {
-                case .allowOnce: result = .allowOnce
-                case .grantPersistently: result = .grantPersistently
-                case .denyPersistently: result = .denyPersistently
-                case .denyOnce, nil: result = .denyOnce
-                }
-                continuation.resume(returning: result)
+            request(
+                permission, origin: origin, topLevelOrigin: topLevelOrigin, spaceName: spaceName, dismissal: dismissal
+            ) { response in
+                continuation.resume(returning: response ?? .denyOnce)
             }
-        }
-    }
-
-    func authorize(
-        _ permission: BrowserSitePermission,
-        origin: BrowserSiteOrigin,
-        topLevelOrigin: BrowserSiteOrigin,
-        spaceID: SpaceID,
-        spaceName: String,
-        permissionCenter: BrowserSitePermissionCenter
-    ) async -> Bool {
-        switch permissionCenter.decision(for: permission, origin: origin, in: spaceID) {
-        case .grantForSession, .grantPersistently: return true
-        case .denyForSession, .denyPersistently: return false
-        case .ask: break
-        }
-        let generation = generation
-        let response = await response(
-            to: permission, origin: origin, topLevelOrigin: topLevelOrigin, spaceName: spaceName)
-        guard generation == self.generation else { return false }
-        let latest = permissionCenter.decision(for: permission, origin: origin, in: spaceID)
-        guard latest != .denyPersistently, latest != .denyForSession else { return false }
-        switch response {
-        case .allowOnce: return true
-        case .denyOnce: return false
-        case .grantPersistently, .denyPersistently:
-            permissionCenter.setDecision(
-                response == .grantPersistently ? .grantPersistently : .denyPersistently,
-                for: permission, origin: origin, in: spaceID)
-            return response == .grantPersistently
         }
     }
 
@@ -128,6 +108,6 @@ final class BrowserPagePermissionController {
         requests.removeAll()
         completions.removeAll()
         current = nil
-        for callback in callbacks { callback(nil) }
+        for waiting in callbacks { waiting.callback(nil) }
     }
 }

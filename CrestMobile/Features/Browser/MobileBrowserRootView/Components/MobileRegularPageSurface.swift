@@ -25,6 +25,8 @@ struct MobileRegularPageSurface: View {
     @Binding var isAddressEditing: Bool
     let addressFocusRequest: Int
     let isCommandPalettePresented: Bool
+    /// The window's commands, for the Start Page's palette.
+    let commands: BrowserCommandPaletteCommandRegistry
     let compactToolbarIsHidden: Bool
     let submitAddress: () -> Void
     let beginNewTab: () -> Void
@@ -32,17 +34,15 @@ struct MobileRegularPageSurface: View {
     let hideCompactToolbar: () -> Void
     let showCompactToolbar: () -> Void
     let handleToolbarSwipe: (BrowserSpaceSwipeDirection) -> Void
-    let selectSplitCard: (TabID) -> Void
+    let selectSplitCard: (UUID) -> Void
     let compactTransitionEnded: (CGSize) -> Void
 
     private var pageSurfacePresentation: BrowserPageSurfacePresentation {
-        let selectedSpace = model.browser.selectedSpace
+        let space = model.browser.shownSpace
         return BrowserPageSurfaceBranchPolicy.resolve(
-            selectedSpace: selectedSpace,
-            isSelectedSpaceLocked: selectedSpace.map {
-                model.spaceAccess.isLocked($0)
-            } ?? false,
-            selectedTabID: model.browser.selectedTab?.id,
+            space: space,
+            isLocked: space.map(model.spaceAccess.isLocked) ?? false,
+            cards: model.browser.shownCards,
             hasEnteredSplitContent:
                 model.sidebarInteraction.sidebarReorderState.hasEnteredSplitContent,
             resolvedTarget: model.sidebarInteraction.sidebarReorderState.resolvedTarget,
@@ -83,11 +83,11 @@ struct MobileRegularPageSurface: View {
             BrowserRootDetailSurface(
                 adjoinsLeadingSidebar: adjoinsSidebar,
                 usesBorderlessFrame: usesBorderlessPageFrame,
-                isStartPage: model.browser.selectedTab?.isStartPage != false,
+                isStartPage: model.browser.shownTab.map { $0.surface == .startPage } ?? true,
                 hasActivePage: model.selectedPage != nil,
                 completedNavigationCount:
                     model.selectedPage?.completedNavigationCount ?? 0,
-                hasSelectedSpace: model.browser.selectedSpace != nil,
+                hasSelectedSpace: model.browser.shownSpace != nil,
                 handleWebContentInteraction: {
                     model.navigation.utilityPresentation
                         .handleInteraction(.webContent)
@@ -102,6 +102,7 @@ struct MobileRegularPageSurface: View {
                     isAddressEditing: $isAddressEditing,
                     addressFocusRequest: addressFocusRequest,
                     isCommandPalettePresented: isCommandPalettePresented,
+                    commands: commands,
                     isCompact: false,
                     obscuresSystemSafeAreas: false,
                     showsCompactToolbar: false,

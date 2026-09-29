@@ -1,19 +1,28 @@
 import SwiftUI
 
 struct BrowserWindowAtmosphere: View {
-    let space: BrowserSpace?
+    // MARK: - Variables
+
+    /// The look of the Space the window shows, or nil for none.
+    let branding: SpaceBranding?
+
+    private var platformBackground: Color {
+        BrowserPlatformWindowAtmosphereStyle.backgroundColor
+    }
+
+    // MARK: - Initializers
+
+    init(space: SpaceModel?) {
+        branding = space.map(\.settings.look)
+    }
 
     var body: some View {
         ZStack {
             platformBackground
-            if let space {
-                BrowserSpaceBannerBackground(branding: space.branding)
+            if let branding {
+                BrowserSpaceBannerBackground(branding: branding)
             }
         }
         .accessibilityHidden(true)
-    }
-
-    private var platformBackground: Color {
-        BrowserPlatformWindowAtmosphereStyle.backgroundColor
     }
 }

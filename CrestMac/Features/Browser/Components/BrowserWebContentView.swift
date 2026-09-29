@@ -10,7 +10,6 @@ struct BrowserWebContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            BrowserWebPageDebuggerBanner(page: page, pages: pages)
 
             GeometryReader { geometry in
                 let layout = BrowserDeveloperViewportLayout(
@@ -47,22 +46,14 @@ struct BrowserWebContentView: View {
         )
         .modifier(
             BrowserTranslationHost(
-                translation: page.translation, webView: page.webView,
+                translation: page.translation, page: page,
                 isActive: pages.activePage === page && isSelectedSpace,
-                isLoading: page.isLoading,
+                isLoading: page.live.isLoading,
                 isReaderActive: page.readerModeState.isActive
             )
         )
         .onChange(of: page.developerCaptureFeedbackRevision) { _, revision in
             dismissDeveloperFeedback(after: revision)
-        }
-        .sheet(isPresented: chromeWebStoreInstallPresentation) {
-            BrowserChromeWebStoreInstallView(page: page)
-        }
-        .sheet(isPresented: mozillaAddonsInstallPresentation) {
-            BrowserMozillaAddonsInstallView(
-                session: page.mozillaAddonsInstall
-            )
         }
     }
 
@@ -75,49 +66,18 @@ struct BrowserWebContentView: View {
                 || page.credentialFillRequest != nil
                 || page.credentialSaveCandidate != nil
                 || page.isRegionCapturePresented
-                || page.isChromeWebStoreInstallPresented
-                || page.mozillaAddonsInstall.isPresented
-                || page.navigationFailure != nil
+                || page.live.failure != nil
                 || page.webContentFailureMessage != nil
         )
     }
 
-    private var pagePresentation: BrowserPagePresentation {
-        BrowserPagePresentationPolicy.resolve(
-            BrowserPagePresentationInput(
-                selection: .webPage,
-                hasActivePage: true,
-                hasNavigationFailure: page.navigationFailure != nil,
-                hasProcessFailure: page.webContentFailureMessage != nil,
-                unloadedBehavior: .remainUnloaded
-            )
-        )
-    }
-
-    private var chromeWebStoreInstallPresentation: Binding<Bool> {
-        Binding(
-            get: { isSelectedSpace && page.isChromeWebStoreInstallPresented },
-            set: { isPresented in
-                if !isPresented {
-                    page.dismissChromeWebStoreInstall()
-                }
-            }
-        )
-    }
-
-    private var mozillaAddonsInstallPresentation: Binding<Bool> {
-        Binding(
-            get: { isSelectedSpace && page.mozillaAddonsInstall.isPresented },
-            set: { isPresented in
-                if !isPresented {
-                    page.mozillaAddonsInstall.dismiss()
-                }
-            }
-        )
+    private var pagePresentation: PagePresentation {
+        .of(.webPage, page: page)
     }
 
     private var isSelectedSpace: Bool {
-        browser.selectedSpace?.id == page.spaceID && browser.selectedSpace?.profile.id == page.profileID
+        guard let space = browser.shownSpace else { return false }
+        return space.id == page.spaceID && space.profileID == page.profileID
     }
 
     private func dismissDeveloperFeedback(after revision: Int) {

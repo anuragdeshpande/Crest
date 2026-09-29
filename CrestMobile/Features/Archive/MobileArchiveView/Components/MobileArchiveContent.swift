@@ -1,8 +1,9 @@
 import SwiftUI
 
 struct MobileArchiveContent: View {
-    let space: BrowserSpace?
-    let restoreArchivedTab: (TabID) -> Void
+    let space: SpaceModel?
+    let favicons: FaviconAssets
+    let restoreArchivedTab: (UUID) -> Void
 
     @Environment(\.dismiss) private var dismiss
 
@@ -10,9 +11,10 @@ struct MobileArchiveContent: View {
         NavigationStack {
             MobileArchiveList(
                 space: space,
+                favicons: favicons,
                 restoreArchivedTab: restoreAndDismiss
             )
-            .navigationTitle("\(space?.name ?? "Space") Archive")
+            .navigationTitle("\(space?.settings.name ?? "Space") Archive")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done", action: dismiss.callAsFunction)
@@ -21,7 +23,7 @@ struct MobileArchiveContent: View {
         }
     }
 
-    private func restoreAndDismiss(_ tabID: TabID) {
+    private func restoreAndDismiss(_ tabID: UUID) {
         restoreArchivedTab(tabID)
         dismiss()
     }

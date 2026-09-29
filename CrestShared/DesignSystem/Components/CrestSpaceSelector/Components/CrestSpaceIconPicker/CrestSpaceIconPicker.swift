@@ -1,23 +1,24 @@
 import SwiftUI
 
-/// Shared icon buttons, selection, and reordering for desktop and touch Space pickers.
-struct CrestSpaceIconPicker<SegmentContent: View>: View {
-    let spaces: [BrowserSpace]
-    let selectedSpaceID: SpaceID?
-    let selectSpace: (SpaceID) -> Void
+/// Shared icon buttons, selection, and reordering for desktop and touch Space
+/// pickers, over Spaces of the read model's identities or draft values.
+struct CrestSpaceIconPicker<Space: BrowserSpaceIdentifying, SegmentContent: View>: View {
+    let spaces: [Space]
+    let selectedSpaceID: UUID?
+    let selectSpace: (UUID) -> Void
     var style: CrestSpaceIconPickerStyle = .compact
     var selectionTint: Color? = nil
     var accessibilityIdentifier: String?
-    var moveSpace: ((SpaceID, SpaceID) -> Void)? = nil
+    var moveSpace: ((UUID, UUID) -> Void)? = nil
     var reorderViewport = CGRect.zero
     var selectionPresentation: SpacePagerPresentation? = nil
     var segmentSize = CGSize(
         width: CrestSpaceIconPickerMetrics.segmentWidth,
         height: CrestSpaceIconPickerMetrics.segmentHeight)
-    @ViewBuilder let segmentContent: (BrowserSpace) -> SegmentContent
+    @ViewBuilder let segmentContent: (Space) -> SegmentContent
 
     @State private var reorder = CrestSpacePickerReordering()
-    @State private var frames: [SpaceID: CGRect] = [:]
+    @State private var frames: [UUID: CGRect] = [:]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -40,7 +41,8 @@ struct CrestSpaceIconPicker<SegmentContent: View>: View {
                 GeometryReader { geometry in
                     PlatformSpacePickerPresentation(
                         presentation: selectionPresentation,
-                        spaces: spaces,
+                        style: style,
+                        spaces: spaces.map(\.identity),
                         selectedSpaceID: selectedSpaceID,
                         frames: anchors.mapValues { geometry[$0] },
                         selectionTint: selectionTint
@@ -49,21 +51,15 @@ struct CrestSpaceIconPicker<SegmentContent: View>: View {
             }
         }
         .background {
-            RoundedRectangle(
-                cornerRadius: style.cornerRadius,
-                style: .continuous
-            )
-            .fill(.primary.opacity(style == .touch ? 0.08 : CrestSpaceIconPickerMetrics.trackFillOpacity))
+            CrestSpaceIconPickerShape(style: style)
+                .fill(.primary.opacity(style == .touch ? 0.08 : CrestSpaceIconPickerMetrics.trackFillOpacity))
         }
         .overlay {
-            RoundedRectangle(
-                cornerRadius: style.cornerRadius,
-                style: .continuous
-            )
-            .strokeBorder(
-                .primary.opacity(style == .touch ? 0 : CrestSpaceIconPickerMetrics.trackBorderOpacity),
-                lineWidth: CrestLayout.hairline / 2
-            )
+            CrestSpaceIconPickerShape(style: style)
+                .strokeBorder(
+                    .primary.opacity(style == .touch ? 0 : CrestSpaceIconPickerMetrics.trackBorderOpacity),
+                    lineWidth: CrestLayout.hairline / 2
+                )
         }
         .fixedSize(horizontal: true, vertical: false)
         .background {
@@ -86,7 +82,7 @@ struct CrestSpaceIconPicker<SegmentContent: View>: View {
         .crestAccessibilityIdentifier(accessibilityIdentifier)
     }
 
-    @ViewBuilder private func reorderableButton(_ space: BrowserSpace) -> some View {
+    @ViewBuilder private func reorderableButton(_ space: Space) -> some View {
         if let moveSpace {
             let lifted = reorder.sourceID == space.id
             spaceButton(space)
@@ -138,12 +134,13 @@ struct CrestSpaceIconPicker<SegmentContent: View>: View {
         }
     }
 
-    private func spaceButton(_ space: BrowserSpace) -> some View {
+    private func spaceButton(_ space: Space) -> some View {
+        let identity = space.identity
         let isSelected = space.id == selectedSpaceID
-        let tint = selectionTint ?? space.branding.primaryColor.color
+        let tint = selectionTint ?? identity.branding.primaryColor.color
         let accessibilityValue = accessibilityValue(
             isSelected: isSelected,
-            requiresAuthentication: space.accessPolicy.requiresAuthentication
+            requiresAuthentication: identity.requiresAuthentication
         )
 
         return Button {
@@ -157,30 +154,24 @@ struct CrestSpaceIconPicker<SegmentContent: View>: View {
                 .contentShape(.rect)
                 .background {
                     if isSelected && selectionPresentation == nil {
-                        RoundedRectangle(
-                            cornerRadius: style.cornerRadius,
-                            style: .continuous
-                        )
-                        .fill(
-                            style == .touch
-                                ? Color.primary.opacity(0.22)
-                                : tint.opacity(CrestSpaceIconPickerMetrics.selectionFillOpacity)
-                        )
-                        .overlay {
-                            RoundedRectangle(
-                                cornerRadius: style.cornerRadius,
-                                style: .continuous
+                        CrestSpaceIconPickerShape(style: style)
+                            .fill(
+                                style == .touch
+                                    ? Color.primary.opacity(0.22)
+                                    : tint.opacity(CrestSpaceIconPickerMetrics.selectionFillOpacity)
                             )
-                            .strokeBorder(style == .touch ? .clear : tint, lineWidth: CrestLayout.hairline)
-                        }
+                            .overlay {
+                                CrestSpaceIconPickerShape(style: style)
+                                    .strokeBorder(style == .touch ? .clear : tint, lineWidth: CrestLayout.hairline)
+                            }
                     }
                 }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text(verbatim: space.name))
+        .accessibilityLabel(Text(verbatim: identity.name))
         .accessibilityValue(Text(accessibilityValue))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .help(space.name)
+        .help(identity.name)
         .id(space.id)
         .anchorPreference(key: CrestSpaceIconFramePreference.self, value: .bounds) { anchor in
             selectionPresentation == nil ? [:] : [space.id: anchor]
@@ -206,11 +197,11 @@ struct CrestSpaceIconPicker<SegmentContent: View>: View {
 
 /// These anchors change with icon layout, not with native scroll or page motion.
 private struct CrestSpaceIconFramePreference: PreferenceKey {
-    static var defaultValue: [SpaceID: Anchor<CGRect>] { [:] }
+    static var defaultValue: [UUID: Anchor<CGRect>] { [:] }
 
     static func reduce(
-        value: inout [SpaceID: Anchor<CGRect>],
-        nextValue: () -> [SpaceID: Anchor<CGRect>]
+        value: inout [UUID: Anchor<CGRect>],
+        nextValue: () -> [UUID: Anchor<CGRect>]
     ) {
         value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }

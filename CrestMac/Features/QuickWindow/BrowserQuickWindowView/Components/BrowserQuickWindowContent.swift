@@ -8,16 +8,16 @@ struct BrowserQuickWindowContent: View {
 
     var body: some View {
         Group {
-            if let space = model.space,
+            if let space = model.spaceModel,
                 spaceAccess.isLocked(space)
             {
                 BrowserSpaceAccessView(
                     space: space,
-                    spaces: model.availableSpaces,
+                    spaces: model.availableSpaceModels,
                     accessController: spaceAccess,
                     selectSpace: selectLockedSpace
                 )
-            } else if model.space != nil {
+            } else if model.spaceModel != nil {
                 BrowserQuickWindowUnlockedContent(
                     model: model,
                     spaceAccess: spaceAccess,
@@ -39,9 +39,6 @@ struct BrowserQuickWindowContent: View {
     private func selectLockedSpace(
         _ assignment: BrowserSpaceRuntimeAssignment
     ) {
-        guard let candidate = model.browser.space(matching: assignment) else {
-            return
-        }
-        model.selectSpace(candidate)
+        model.selectSpace(assignment)
     }
 }

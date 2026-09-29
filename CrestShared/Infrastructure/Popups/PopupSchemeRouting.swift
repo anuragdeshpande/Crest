@@ -1,5 +1,4 @@
 import Foundation
-import WebKit
 
 /// What a new-window request's own URL scheme settles before any pop-up
 /// permission is consulted.
@@ -19,8 +18,8 @@ enum BrowserPopupSchemeRouting: Equatable, Sendable {
     /// A popup destination is never app-initiated, so `file:` is refused here for
     /// the same reason it is refused for an ordinary navigation.
     static func classify(destinationURL: URL?) -> Self {
-        switch BrowserExternalSchemePolicy.disposition(for: destinationURL) {
-        case .webKit:
+        switch BrowserCorePolicy.externalSchemeDisposition(for: destinationURL).kind {
+        case .engine:
             return .popupPolicy
         case .blocked:
             return .blocked

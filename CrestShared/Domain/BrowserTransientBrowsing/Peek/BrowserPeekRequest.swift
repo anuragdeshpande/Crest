@@ -1,38 +1,38 @@
 import Foundation
 
+// MARK: - Types
+
+enum BrowserPeekTrigger: String, Codable, Equatable, Sendable {
+    case protectedSavedSite
+    case modifierClick
+    case linkDrag
+    case longPress
+    case contextMenu
+}
+
 struct BrowserPeekRequest: Identifiable, Equatable, Sendable {
     let id: UUID
     let url: URL
-    let sourceTabID: TabID
+    let sourceTabID: UUID
     let sourceTitle: String
     let spaceAssignment: BrowserSpaceRuntimeAssignment
     let trigger: BrowserPeekTrigger
     let sourcePresentation: BrowserPeekSourcePresentation?
+    let engineNavigation: BrowserEngineNavigation?
 
-    var spaceID: SpaceID { spaceAssignment.spaceID }
+    var spaceID: UUID { spaceAssignment.spaceID }
 
     var assignment: BrowserSpaceRuntimeAssignment { spaceAssignment }
-
-    func hasSource(in session: BrowserSession) -> Bool {
-        guard let space = session.space(id: spaceID),
-            BrowserSpaceRuntimeAssignment(space: space) == assignment
-        else { return false }
-        return space.tabs.contains { $0.id == sourceTabID }
-    }
-
-    func isSelected(in session: BrowserSession) -> Bool {
-        hasSource(in: session) && session.selectedSpaceID == spaceID
-            && session.selectedSpace?.selectedTabID == sourceTabID
-    }
 
     init(
         id: UUID = UUID(),
         url: URL,
-        sourceTabID: TabID,
+        sourceTabID: UUID,
         sourceTitle: String,
         spaceAssignment: BrowserSpaceRuntimeAssignment,
         trigger: BrowserPeekTrigger,
-        sourcePresentation: BrowserPeekSourcePresentation? = nil
+        sourcePresentation: BrowserPeekSourcePresentation? = nil,
+        engineNavigation: BrowserEngineNavigation? = nil
     ) {
         self.id = id
         self.url = url
@@ -41,5 +41,6 @@ struct BrowserPeekRequest: Identifiable, Equatable, Sendable {
         self.spaceAssignment = spaceAssignment
         self.trigger = trigger
         self.sourcePresentation = sourcePresentation
+        self.engineNavigation = engineNavigation
     }
 }

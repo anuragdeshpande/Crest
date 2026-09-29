@@ -11,7 +11,8 @@ struct MobileOnboardingCurrentPage: View {
                 action: context.welcomeAction,
                 primaryTitle: context.welcomePrimaryTitle,
                 status: context.welcomeStatus,
-                primaryAction: context.welcomePrimaryAction
+                primaryAction: context.welcomePrimaryAction,
+                setupWithoutCloudAction: context.welcomeSetupWithoutCloudAction
             )
         case .featureSpaces:
             MobileOnboardingSpacesFeaturePage(
@@ -37,18 +38,20 @@ struct MobileOnboardingCurrentPage: View {
             )
         case .manualSetup:
             BrowserSpaceSetupWizard(
-                plan: context.plan,
+                setup: context.setup,
                 selectedSpaceID: context.selectedSpaceID,
                 errorMessage: context.errorMessage,
                 opensGettingStarted: context.opensGettingStarted,
                 back: context.setupSecondaryAction,
                 finish: context.finish
             )
-        case .macImport:
+        case .importBrowser:
             MobileOnboardingMacImportPage(
                 close: context.close,
                 reviewFeatures: context.reviewFeatures
             )
+        default:
+            EmptyView()
         }
     }
 }
