@@ -258,7 +258,10 @@ extension BrowserRootModel {
     func synchronizeAfterSelectionChange() {
         guard isPrepared else { return }
         isAddressEditing = false
-        AddressFocusAction.resign()
+        // A split card already on screen may hold the focus of the click
+        // that selected it.
+        AddressFocusAction.resign(
+            keepingFocusIn: browser.shownTabAssignment.flatMap(pages.presentedPage(matching:))?.nativeView)
         synchronizeSelection()
     }
 

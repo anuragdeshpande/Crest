@@ -1093,6 +1093,12 @@ final class BrowserPagePool:
             return
         }
 
+        // A click in an unfocused split card focuses the page under the
+        // pointer before its selection arrives here. The destination keeps
+        // that focus, and the source keeps the responder it remembers, as it
+        // does when focus leaves it for nothing.
+        guard !destination.focusRestoration.adoptCurrentFocus() else { return }
+
         // Each resident page owns its own responder. Switching Spaces does
         // not change that ownership; moving a tab or replacing its profile
         // recreates the page and invalidates the old responder separately.
