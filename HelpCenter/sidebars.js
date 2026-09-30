@@ -10,6 +10,7 @@ const sidebars = {
         'getting-started/install-and-update-mac',
         'getting-started/move-to-crest',
         'getting-started/settings-reference',
+        'browsing/engines',
       ],
     },
     {

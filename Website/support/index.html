@@ -113,7 +113,7 @@
         <section id="spaces-sync">
           <p class="privacy-index">01</p>
           <h2>Spaces own their data.</h2>
-          <p>If a tab, sign-in, password, permission, or history item seems missing, verify the active Space first. Each Space has separate WebKit data, Keychain items, history, permissions, tabs, extensions, and synchronization state.</p>
+          <p>If a tab, sign-in, password, permission, or history item seems missing, verify the active Space first. Each Space has separate website data, Keychain items, history, permissions, tabs, extensions, and synchronization state. On Mac, Chromium and WebKit keep separate website data, so a site you signed in to in one engine may ask you to sign in again in the other.</p>
           <p>For sync issues, open Settings → Sync on both devices and compare the selected iCloud account, Space list, last sync state, and per-Space password-sync switches. Cookies, website data, downloads, and active page state remain device-only.</p>
         </section>
 
@@ -121,7 +121,7 @@
           <p class="privacy-index">02</p>
           <h2>When one website behaves differently.</h2>
           <p>Reload the page, confirm content blocking and permissions for that site, and try the same page in a new tab inside the same Space. If the issue follows only one Space, compare its content-blocking and extension settings.</p>
-          <p>Crest uses Apple’s WebKit. Some browser-specific extensions, website notifications, media formats, authentication flows, and install prompts vary by platform or may depend on support exposed by WebKit.</p>
+          <p>On Mac, try the page in the other engine: choose <strong>Page → Open Page in WebKit</strong> or <strong>Open Page in Chromium</strong>. If it works there, change <strong>Opens in</strong> in Site Controls to keep the website on that engine, and mention both engines in your report. Extensions run only on Chromium pages, and protected video plays in WebKit. Crest on iPhone and iPad uses WebKit.</p>
         </section>
 
         <section id="imports-passwords">
@@ -134,7 +134,7 @@
         <section id="contact">
           <p class="privacy-index">04</p>
           <h2>Bring a trail someone else can follow.</h2>
-          <p>Include the Apple device model, operating-system version, Crest version, active Space, the page or feature involved, exact steps, what you expected, and what happened instead. A screenshot is useful only after removing private tabs, account details, URLs, and messages.</p>
+          <p>Include the Apple device model, operating-system version, Crest version, the page’s engine on Mac, active Space, the page or feature involved, exact steps, what you expected, and what happened instead. A screenshot is useful only after removing private tabs, account details, URLs, and messages.</p>
           <div class="privacy-contact">
             <span>Community, questions, and compatibility</span>
             <p>Use <a href="https://www.reddit.com/r/CrestBrowser" target="_blank" rel="noopener noreferrer">r/CrestBrowser</a> for questions, feedback, early ideas, and website or extension compatibility discussion. Reddit is public; do not include passwords, account details, private URLs, browsing history, or other sensitive information.</p>

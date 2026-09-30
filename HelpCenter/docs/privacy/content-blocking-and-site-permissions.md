@@ -11,9 +11,9 @@ Privacy decisions belong to the current Space. A permission granted to a work ac
 
 ## Content blocking
 
-Crest includes a small built-in ad and tracker ruleset that can be enabled or disabled per Space. It uses WebKit, so it is available on iPhone, iPad, and the WebKit build for Mac. Use the site controls or assign **Toggle Content Blocking** a shortcut when a site needs a quick exception.
+Crest includes a small built-in ad and tracker ruleset that can be enabled or disabled per Space. It uses WebKit, so it applies on iPhone, iPad, and WebKit pages on Mac. Use the site controls or assign **Toggle Content Blocking** a shortcut when a site needs a quick exception.
 
-The Chromium build for Mac has no built-in blocking. Install a content-blocking extension, such as uBlock Origin Lite, in each Space that needs it.
+Chromium pages on Mac have no built-in blocking. Install a content-blocking extension, such as uBlock Origin Lite, in each Space that needs it. Extensions do not run on WebKit pages.
 
 For broader filter-list coverage, install a content-blocking extension in the Space that needs it. Built-in protection and an extension can have different rule coverage, so check which layer is active before assuming the page itself is broken.
 

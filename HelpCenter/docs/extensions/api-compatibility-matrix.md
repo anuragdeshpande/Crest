@@ -13,10 +13,10 @@ Extensions in Crest for Mac run on the Chromium engine. Chromium runs each exten
 
 ## Where extensions run
 
-| Crest build | Extensions |
+| Where | Extensions |
 | --- | --- |
-| Crest for Mac, Chromium engine | Chrome extensions from the Chrome Web Store |
-| Crest for Mac, WebKit engine | None |
+| Chromium pages in Crest for Mac | Chrome extensions from the Chrome Web Store |
+| WebKit pages in Crest for Mac | None |
 | Crest on iPhone and iPad | None |
 
 Crest does not install Firefox add-ons or Safari Web Extensions. Many of them also publish a Chrome version. See [Firefox add-ons](./install-firefox-add-ons.md) and [Safari Web Extensions](./scan-safari-web-extensions.md).
@@ -50,4 +50,4 @@ Crest does not install Firefox add-ons or Safari Web Extensions. Many of them al
 - Apple's iCloud Passwords helper checks the browser's signature and entitlements before it pairs. See [iCloud Passwords in Crest](./icloud-passwords.md).
 - An extension that is still enabled but whose files are gone shows no toolbar tile or settings row, and its action reports that it is unavailable.
 
-For package-specific native limits, continue with [Direct build, App Store, and native companions](./native-companion-limits.md).
+For package-specific native limits, continue with [Native companions](./native-companion-limits.md).

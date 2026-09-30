@@ -2,7 +2,7 @@
 title: Settings reference
 description: Find every major Crest setting and understand whether it applies globally or to one Space.
 slug: /settings-reference
-keywords: [settings, preferences, General, Look and Feel, appearance, app icon, Links, Shortcuts, Spaces, Sync, Privacy, Passwords, Extensions, Advanced]
+keywords: [settings, preferences, General, Look and Feel, appearance, app icon, Engines, Chromium, WebKit, Links, Shortcuts, Spaces, Sync, Privacy, Passwords, Extensions, Advanced]
 ---
 
 # Settings reference
@@ -13,7 +13,7 @@ On Mac and wider iPad windows, Settings opens as a browser tab and keeps your pl
 
 ## General
 
-Choose startup, window, and update behavior. On direct Mac builds, this is also where you choose the Stable or Nightly update channel when offered.
+Choose startup, window, and update behavior. On Mac, this is also where you choose the Stable, Nightly, or Development update channel.
 
 Control whether newly opened links receive focus, whether you follow tabs moved to another Space, and how pinned and saved tabs reopen. General also includes automatic page translation and, on Mac, drag-to-Peek and automatic Picture in Picture.
 
@@ -22,6 +22,10 @@ Control whether newly opened links receive focus, whether you follow tabs moved 
 Customize the browser on this device with a live preview. Choose sidebar position, borderless pages, transparency and borders, tab shape and scale, pinned-tab layout, tab and address-field colors, and an app icon palette. Set default page zoom anywhere from **25% to 500%**. Use presets to get started or reset individual changed settings.
 
 Space crests, backgrounds, folder color intensity, and folder text colors live in **Spaces → Appearance**. See [Customize and arrange Spaces](../customize-spaces/).
+
+## Engines
+
+On Mac, choose whether new pages open in Chromium or WebKit, and manage website rules that send particular websites to one engine. Chromium is the recommended default. See [Chromium and WebKit on Mac](../browsing/engines.md).
 
 ## Quick Window and Peek
 
@@ -49,7 +53,7 @@ Review Crest Passwords by Space, authenticate to reveal or export sensitive cred
 
 ## Extensions
 
-Available in the Chromium build for Mac. Install, enable, remove, pin, copy, and manage site access for extensions in the current Space.
+Available on Mac. Install, enable, remove, pin, copy, and manage site access for extensions in the current Space. Extensions run on Chromium pages.
 
 ## Advanced
 
@@ -59,4 +63,4 @@ Choose **Rerun onboarding** to return to Welcome and go through setup again. Com
 
 ## Feature Flags and About
 
-On Mac, **Feature Flags** exposes the running engine's options: WebKit's runtime options in the WebKit build, and Chromium's feature flags in the Chromium build. **About** shows Crest’s build information and links to updates and the community.
+On Mac, **Feature Flags** shows Chromium's feature flags for the current Space. **About** shows Crest’s build information and links to updates and the community.

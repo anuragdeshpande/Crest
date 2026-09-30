@@ -2,7 +2,7 @@
   <img src="Website/assets/crest-logo.svg" width="128" alt="Crest app icon">
   <h1>Crest</h1>
   <p><strong>An open source browser for Mac, iPhone, and iPad.</strong></p>
-  <p>Built with SwiftUI and WebKit, with separate Spaces for different parts of your life.</p>
+  <p>Built with SwiftUI, running Chromium and WebKit on Mac, with separate Spaces for different parts of your life.</p>
   <p>
     <a href="https://github.com/pauljoda/Crest/actions/workflows/ci.yml"><img alt="Build Crest" src="https://github.com/pauljoda/Crest/actions/workflows/ci.yml/badge.svg"></a>
     <a href="https://github.com/pauljoda/Crest/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/pauljoda/Crest?display_name=tag&sort=semver"></a>
@@ -35,6 +35,18 @@ Most browsers put every login, tab, and distraction into one long-lived containe
 
 Switching Spaces changes more than the color of the window. It changes the browsing context.
 
+## Two engines on Mac
+
+Crest for Mac opens pages in **Chromium** by default. Its engine is built on
+[ungoogled-chromium](https://github.com/ungoogled-software/ungoogled-chromium),
+with Google integrations removed, and runs Chrome Web Store extensions. Any
+website or page can open in **WebKit** instead, which adds Reader, whole-page
+translation, built-in content blocking, and FairPlay video; pages that need
+protected video move to WebKit on their own. Choose the default engine and
+per-website rules in **Settings → Engines**. iPhone and iPad use WebKit. The
+[engine guide](https://crestbrowser.com/guides/engines/) lists what each engine
+supports.
+
 ## Crest Studio and Look and Feel
 
 **Crest Studio** starts with templates and opens up into heraldic artwork, shapes, patterns, independent colors, emoji, monograms, and a searchable SF Symbols picker. Design a banner for each Space, or choose a quieter gradient.
@@ -62,10 +74,10 @@ Switching Spaces changes more than the color of the window. It changes the brows
 
 | Capability | What it does |
 | --- | --- |
-| On-device translation | Detect a page’s language, translate into a supported language, or show the original. Optional automatic translation uses downloaded languages. Apple may ask to download additional languages. |
-| Reader and page tools | Read supported articles with fewer distractions, find text, adjust zoom, share links, copy Markdown links, print, and export PDF or web archives where supported. |
-| Extensions on Mac | In the Chromium build, install Chrome Web Store extensions. Use popups and tab-specific side panels within the owning Space. [Compatibility varies.](https://crestbrowser.com/guides/extension-compatibility/) |
-| Developer tools on Mac | Preview phone, desktop, and custom viewport sizes; capture pages; open Console, Network, and Web Inspector. The toolbar appears on localhost, or on any site with **Shift-Command-I**. |
+| On-device translation | On iPhone, iPad, and WebKit pages, detect a page’s language, translate it, or show the original. On Chromium pages, translate selected text. Optional automatic translation uses downloaded languages. Apple may ask to download additional languages. |
+| Reader and page tools | Read supported articles with fewer distractions on WebKit pages, find text, adjust zoom, share links, copy Markdown links, print, and export PDF or web archives where supported. |
+| Extensions on Mac | Install Chrome Web Store extensions in each Space. They run on Chromium pages, with popups and tab-specific side panels. [Compatibility varies.](https://crestbrowser.com/guides/extension-compatibility/) |
+| Developer tools on Mac | Preview phone, desktop, and custom viewport sizes; capture pages; open Chromium DevTools or Web Inspector for the page's engine. The toolbar appears on localhost, or on any site with **Shift-Command-I**. |
 | Media | Control eligible active media from the sidebar. On Mac, keep supported videos visible with Picture in Picture, including optional automatic PiP. |
 | Downloads and uploads | Follow download progress and revisit files in Downloads. On iPhone and iPad, upload through Photos, camera, or Files. |
 
@@ -73,7 +85,7 @@ Switching Spaces changes more than the color of the window. It changes the brows
 
 **Private Spaces** use temporary website storage and stay out of normal history, restoration, and sync. They can require device authentication and relock when Crest leaves the foreground. **Crest Passwords** keeps origin- and Space-matched credentials in the system Keychain, with authentication for sensitive access.
 
-Content blocking and site permissions are controlled per Space. Closed and cleaned-up tabs go to a recoverable Archive, subject to your retention settings. **Keep Loaded** protects a page from ordinary unloading when its live state matters.
+Site permissions and content blocking are controlled per Space. Built-in ad and tracker blocking covers iPhone, iPad, and WebKit pages; on Chromium pages, install a blocking extension. Closed and cleaned-up tabs go to a recoverable Archive, subject to your retention settings. **Keep Loaded** protects a page from ordinary unloading when its live state matters.
 
 Optional **iCloud sync** carries durable Spaces, tabs, folders, Split View groups, appearance, history, and Archive between devices. Password values stay out of CloudKit; eligible passwords can use iCloud Keychain separately. Start a browser import on Mac, review each destination Space, or export a portable Crest archive.
 
@@ -97,7 +109,7 @@ The same Spaces, shaped for each screen. iPad keeps the sidebar beside your page
 
 ## Built as an Apple-platform app
 
-Crest's browser state and rules live in a portable core written in C# and compiled with NativeAOT. The apps are written in Swift and SwiftUI: shared features live in `CrestShared`, and each platform owns its windows, engine hosting, commands, and adaptive presentation. On Mac, pages render in Chromium or WebKit; iPhone and iPad use WebKit.
+Crest's browser state and rules live in a portable core written in C# and compiled with NativeAOT. The apps are written in Swift and SwiftUI: shared features live in `CrestShared`, and each platform owns its windows, engine hosting, commands, and adaptive presentation. On Mac, pages render in Chromium by default or in WebKit; iPhone and iPad use WebKit.
 
 ```text
 CrestCore/       Portable core: session, sync, pages, and browser rules
@@ -126,7 +138,7 @@ Scripts/bootstrap.sh
 open Crest.xcodeproj
 ```
 
-Xcode builds and embeds the self-contained .NET core for Mac, iOS, and Simulator. Its intermediate files stay in Derived Data; the installed app does not require a .NET runtime. See the [control-plane build workflow](Documentation/Architecture/ControlPlane.md#build-workflow) for isolated review builds and Chromium packaging.
+Xcode builds and embeds the self-contained .NET core for Mac, iOS, and Simulator. Its intermediate files stay in Derived Data; the installed app does not require a .NET runtime. The `Crest` scheme builds the Mac app with WebKit only; releases add a prebuilt Chromium engine, described in the [Chromium engine README](CrestEngines/Chromium/README.md). See the [control-plane build workflow](Documentation/Architecture/ControlPlane.md#build-workflow) for isolated review builds and Chromium packaging.
 
 `project.yml` is the source of truth for targets and build settings. Run `xcodegen generate` after changing source roots, targets, or project configuration.
 
@@ -134,12 +146,14 @@ Xcode builds and embeds the self-contained .NET core for Mac, iOS, and Simulator
 
 Read the [Crest 0.6.33 release notes](CHANGELOG.md#0633---2026-09-18) for the
 latest stability, security, extension compatibility, performance, and browsing
-improvements.
+improvements. Versions before 0.6.460 use WebKit only. The Development channel
+has both engines now; Nightly and Stable get them with their next release.
 
 macOS releases are distributed directly through GitHub Releases as signed,
-notarized Apple-silicon disk images. Crest uses Sparkle 2 with a native SwiftUI
-update interface. Stable and nightly builds share a signed appcast; joining the
-nightly channel is an explicit choice in General Settings.
+notarized Apple-silicon disk images, one app with both engines. Crest uses
+Sparkle 2 with a native SwiftUI update interface. Stable and nightly builds
+share a signed appcast, and development builds have their own; choosing Nightly
+or Development is an explicit choice in General Settings.
 
 GitHub Actions builds every public release, verifies its Developer ID signature
 and notarization, publishes provenance and checksums, then updates the signed

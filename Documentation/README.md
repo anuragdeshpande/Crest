@@ -23,6 +23,7 @@ build and release requirements for contributors.
 - [Core architecture](Architecture/CoreArchitecture.md)
 - [Portable control plane](Architecture/ControlPlane.md)
 - [Engine abstraction](Architecture/EngineAbstractionCompletion.md)
+- [Chromium engine](../CrestEngines/Chromium/README.md)
 
 ## Project participation
 

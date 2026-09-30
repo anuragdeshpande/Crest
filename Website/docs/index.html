@@ -84,6 +84,7 @@
       <a href="#quick-and-peek">Quick Window &amp; Peek</a>
       <a href="#routing">Link Routing</a>
       <a href="#migration">Moving to Crest</a>
+      <a href="#engines">Chromium &amp; WebKit</a>
       <a href="#extensions">Extensions</a>
       <a href="#passwords">Passwords &amp; privacy</a>
       <a href="#data">Data &amp; sync</a>
@@ -160,28 +161,25 @@
       <p>Open <strong>Customize Space</strong> from the review to rename the destination and edit its colors, crest, and Banner or Traditional Gradient presentation before importing.</p>
       <div class="docs-callout"><strong>Mac first, then everywhere:</strong> direct browser migration happens in Crest for Mac. Once imported, your Spaces and tabs can sync to iPad and iPhone with iCloud.</div>
 
+      <h2 id="engines">Chromium and WebKit</h2>
+      <p><strong>Crest for Mac includes two web engines.</strong> Pages open in Chromium, built on ungoogled-chromium with Google&rsquo;s integrations removed. Any website or page can open in WebKit instead, which adds Reader, whole-page translation, built-in content blocking, and FairPlay video. Crest on iPhone and iPad uses WebKit.</p>
+      <p>Choose the default engine and website rules in <strong>Settings &rarr; Engines</strong>. Change <strong>Opens in</strong> in Site Controls to send a website to the other engine, or use <strong>Page &rarr; Open Page in WebKit</strong> for one page. When a page asks for protected video, Crest moves it to WebKit.</p>
+      <div class="docs-callout"><strong>Website data stays per engine:</strong> your Spaces, tabs, history, and Crest Passwords are shared, but each engine keeps its own cookies for a Space. Signing in to a site in Chromium does not sign you in to it in WebKit.</div>
+      <p><a href="../guides/engines/">Read the engine guide.</a></p>
+
       <h2 id="extensions">Extensions</h2>
-      <p><strong>Install most standards-based extensions from the Chrome Web Store and Firefox Add-ons, plus Safari Web Extensions on Mac.</strong> Compatibility varies where an extension depends on browser-specific APIs, a native companion, or an Apple-managed capability.</p>
-      <div class="docs-callout"><strong>Desktop today:</strong> extension installation, actions, options, shortcuts, and management are currently available in Crest for Mac.</div>
+      <p><strong>Install Chrome Web Store extensions on Mac.</strong> Extensions run on Chromium pages. Pages you open in WebKit, and Crest on iPhone and iPad, run no extensions. Compatibility varies when an extension relies on part of Chrome&rsquo;s window that Crest draws differently, or on a companion Mac app.</p>
       <p>Extensions belong to a Space and a device. Each installation keeps independent permissions, storage, enablement, pinning, and site access, so configuring a tool in Work does not silently change Personal or another device.</p>
       <h3>Ways to install on Mac</h3>
       <ul>
-        <li><strong>Chrome Web Store:</strong> Crest verifies signed CRX3 packages, opens a native review sheet for permissions, website access, source, and compatibility, then installs the package into the selected Space.</li>
-        <li><strong>Firefox Add-ons:</strong> open an extension&rsquo;s page on <code>addons.mozilla.org</code> and select <strong>Add to Crest</strong>. Crest checks the download against Mozilla&rsquo;s published checksum, size, identity, and signing files before opening the same Space-specific review.</li>
-        <li><strong>Signed Safari Web Extension apps:</strong> use <strong>Scan for Apps</strong> or <strong>Choose App</strong>. A signed Safari app&rsquo;s WebExtension resources can load without making its third-party native companion portable. Loading the bundle is not proof that its native features work in Crest.</li>
-        <li><strong>Unpacked WebExtensions:</strong> load an unpacked package as a developer and manual installation path.</li>
+        <li><strong>Chrome Web Store:</strong> open the extension&rsquo;s store page and select <strong>Add to Crest</strong>. Chromium checks the publisher&rsquo;s signature and the extension&rsquo;s ID, then Crest shows its permissions and website access for review before installing it in the current Space.</li>
+        <li><strong>Unpacked extensions:</strong> for development, load them from Chromium&rsquo;s extension manager in developer mode.</li>
       </ul>
-      <p>Installed extensions can expose pinned actions, WebExtension popups, options pages, and keyboard commands. These controls stay with the Space and device that owns the installation.</p>
-      <h3>Known limits stay visible</h3>
-      <p>Crest separates package verification, installation, worker startup, and complete workflows. Known package limits appear in the review sheet before installation. If you continue, Crest uses an orange <strong>added with limited compatibility</strong> result and preserves the explanation in Extensions settings. Unexpected runtime failures show <strong>Needs attention</strong>. Technical JavaScript details remain collapsed unless you open them for troubleshooting.</p>
-      <div class="docs-callout"><strong>Verified native companions:</strong> Crest for Mac implements Chrome native messaging only for verified Chrome Web Store installations whose exact <code>allowed_origins</code> identity matches a registered host. Firefox Add-ons, unpacked extensions, and Safari-app native handlers are not eligible.</div>
-      <h3>Direct 1Password for Safari result</h3>
-      <p>Crest can load the UI and ordinary WebExtension resources from 1Password for Safari 8.12.29.1, but its background call to <code>browser.runtime.sendNativeMessage</code> for <code>request-os-version</code> is rejected by WebKit. That Safari route is not functional in Crest; signing in, unlocking, and filling cannot be promised through it.</p>
-      <div class="docs-callout"><strong>1Password measured path:</strong> 1Password 8.12.30.21 completed setup, sign-in navigation, persistent native messaging, <code>1Password-BrowserSupport</code> launch, and the additional-browser authorization UI. Its helper rejected the measured Apple Development build as <code>BrowserSignatureInvalid</code>. The official Developer ID release must now be validated end to end; unlock and autofill are not yet certified.</div>
-      <div class="docs-callout"><strong>iCloud Passwords measured path:</strong> exact-package WebKit shims let version 3.3.0 reach clean worker startup, but Apple&rsquo;s protected password helper will not pair without the managed <code>com.apple.developer.web-browser.public-key-credential</code> capability. The request is submitted. Direct distribution alone does not bypass the Apple gate, and pairing and autofill remain unavailable.</div>
-      <div class="docs-callout"><strong>Direct Mac distribution:</strong> official arm64 builds are published through GitHub Releases after Developer ID signing, notarization, Gatekeeper validation, and Sparkle appcast signing.</div>
-      <p>Safari content blockers and legacy Safari App Extensions are not WebExtensions and are not supported. wBlock&rsquo;s toolbar/userscript component is a Safari Web Extension, but its primary blocking engine depends on five Safari-only content-blocker extensions; installing the component cannot reproduce full wBlock behavior.</p>
-      <p><a href="../#more">See the extension overview on the product page.</a> For setup and troubleshooting, open <a href="../guides/">Crest Help &amp; Guides</a>, including <a href="../guides/install-chrome-web-store/">Chrome Web Store setup</a>, <a href="../guides/install-firefox-add-ons/">Firefox Add-ons setup</a>, and the measured <a href="../guides/extension-compatibility/">compatibility matrix</a>.</p>
+      <p>Firefox add-ons, Safari Web Extensions, Safari content blockers, and Safari App Extensions are not supported. Many of them publish a Chrome version.</p>
+      <p>Installed extensions can expose pinned actions, popups, side panels, settings pages, and keyboard commands. These controls stay with the Space and device that owns the installation.</p>
+      <h3>Password managers and companion apps</h3>
+      <p>Extensions that talk to a Mac app, such as 1Password or iCloud Passwords, depend on that app trusting Crest&rsquo;s signature. Use the signed, notarized release installed in Applications. See <a href="../guides/onepassword/">1Password</a>, <a href="../guides/icloud-passwords/">iCloud Passwords</a>, and <a href="../guides/native-companion-limits/">native companions</a>.</p>
+      <p><a href="../#more">See the extension overview on the product page.</a> For setup and troubleshooting, open <a href="../guides/">Crest Help &amp; Guides</a>, including <a href="../guides/install-chrome-web-store/">Chrome Web Store setup</a>, <a href="../guides/extension-api-compatibility/">extension compatibility</a>, and <a href="../guides/troubleshoot-extension-compatibility/">troubleshooting</a>.</p>
 
       <h2 id="passwords">Passwords and privacy</h2>
       <p>Crest Passwords are saved in the system Keychain and suggested only for matching websites. Viewing, copying, or exporting sensitive information can require device authentication.</p>
@@ -200,7 +198,7 @@
       <h3>Move quickly</h3>
       <p>Use the command palette to search the web, find an open tab, and move through Crest from the keyboard. Keyboard shortcuts can be customized in Settings.</p>
       <h3>Work with the page</h3>
-      <p>Reader mode, find, content blocking, downloads, page sharing, export, popup handling, and failure recovery stay close to the address bar and page controls.</p>
+      <p>Reader mode, find, content blocking, downloads, page sharing, export, popup handling, and failure recovery stay close to the address bar and page controls. On Mac, Reader and built-in content blocking work on WebKit pages.</p>
       <h3>Permissions and site controls</h3>
       <p>Site permissions can be reviewed or cleared from Settings. Reader mode, content blocking, downloads, and page tools stay attached to the Space where you use them.</p>
 
@@ -214,7 +212,7 @@
       <table class="docs-table">
         <thead><tr><th>Platform</th><th>How Crest fits</th></tr></thead>
         <tbody>
-          <tr><td>Mac</td><td>A spacious sidebar, two-to-four-card Split View, keyboard-first commands, direct releases, Quick Window, Peek, extensions, and multi-window browsing.</td></tr>
+          <tr><td>Mac</td><td>Chromium and WebKit in one app, a spacious sidebar, two-to-four-card Split View, keyboard-first commands, Quick Window, Peek, extensions, and multi-window browsing. Signed, notarized releases come directly from GitHub.</td></tr>
           <tr><td>iPad</td><td>The full Space structure, resizable Split View columns, touch navigation, hardware-keyboard commands, and Peek.</td></tr>
           <tr><td>iPhone</td><td>The web page stays primary while the full sidebar becomes a dedicated view and Split View becomes a focused card pager.</td></tr>
         </tbody>

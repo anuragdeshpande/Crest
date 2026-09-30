@@ -9,7 +9,7 @@ keywords: [iCloud Passwords, Password AutoFill, managed entitlement, Web Browser
 
 # iCloud Passwords in Crest
 
-The iCloud Passwords extension installs from the Chrome Web Store into the Chromium build of Crest for Mac. It is only half of iCloud Passwords. The other half is Apple's system password helper, which the extension reaches through native messaging.
+The iCloud Passwords extension installs from the Chrome Web Store into Crest for Mac and runs on Chromium pages. It is only half of iCloud Passwords. The other half is Apple's system password helper, which the extension reaches through native messaging.
 
 ## How the extension finds Apple's helper
 
