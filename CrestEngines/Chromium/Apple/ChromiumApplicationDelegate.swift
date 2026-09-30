@@ -15,7 +15,13 @@
 
         // MARK: - Actions - Application
 
+        /// AppKit asks this for a quit Apple Event (the Dock's Quit, a logout,
+        /// the updater's relaunch) and then calls `terminate`. Once Chromium
+        /// runs it owns the process, and only `terminate` hands it the quit, so
+        /// the shell's quit is left to that: holding it here would finish it
+        /// with nobody to tell Chromium, and `terminate` would find it done.
         func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+            guard ChromiumComposition.engineHost == nil else { return .terminateNow }
             let held =
                 ChromiumComposition.shell?.requestQuit { allowed in
                     sender.reply(toApplicationShouldTerminate: allowed)

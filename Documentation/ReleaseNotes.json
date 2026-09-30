@@ -3465,6 +3465,10 @@
     "extension-popups-open-as-tabs": {
       "category": "improved",
       "message": "Extension popups, such as a password manager's settings popout, open as a tab in your current window instead of a new window."
+    },
+    "updates-install-after-restart": {
+      "category": "fixed",
+      "message": "Restarting to install an update, or choosing Quit from the Dock, quits Crest so the update installs instead of waiting forever."
     }
   }
 }
