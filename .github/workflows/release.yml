@@ -55,6 +55,9 @@ jobs:
         with:
           # Empty except for a merged PR, whose event commit is not main's.
           ref: ${{ github.event.pull_request.merge_commit_sha }}
+          # checkout refuses a fork PR's merge commit under pull_request_target.
+          # Only a merged PR gets here, and its merge commit is already on main.
+          allow-unsafe-pr-checkout: ${{ github.event.pull_request.merged == true }}
           fetch-depth: 0
 
       - name: Resolve release identity and previous publication
@@ -230,6 +233,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.merge_commit_sha }}
+          allow-unsafe-pr-checkout: ${{ github.event.pull_request.merged == true }}
           fetch-depth: 0
 
       - name: Ensure build tools are available
