@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The address field's color, fill, and border, on every Space on this device.
+/// The address field's color, fill, border, and how it opens the command
+/// palette, on every Space on this device.
 struct BrowserAddressAppearanceGroup: View {
     var space: BrowserSpaceAppearance?
     var showsPreview = false
@@ -27,6 +28,13 @@ struct BrowserAddressAppearanceGroup: View {
                 Toggle("Accent outline while editing", isOn: outline.binding)
                     .labelsHidden()
             }
+            CrestSettingRow(
+                "Animate into command palette",
+                setting: paletteMorph.resettable("Animate into command palette")
+            ) {
+                Toggle("Animate into command palette", isOn: paletteMorph.binding)
+                    .labelsHidden()
+            }
         }
     }
 
@@ -48,12 +56,19 @@ struct BrowserAddressAppearanceGroup: View {
             default: BrowserLookAndFeelDefaults.address.usesAccentWhenEditing)
     }
 
+    private var paletteMorph: CrestSettingValue<Bool> {
+        CrestSettingValue(
+            $appearance.address.animatesIntoCommandPalette,
+            default: BrowserLookAndFeelDefaults.address.animatesIntoCommandPalette)
+    }
+
     private var settings: [CrestResettableSetting] {
         [
             accent.resettable("Follow Space accent"),
             fill.resettable("Color fill"),
             border.resettable("Border"),
             outline.resettable("Accent outline while editing"),
+            paletteMorph.resettable("Animate into command palette"),
         ]
     }
 }

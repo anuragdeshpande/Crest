@@ -21,6 +21,9 @@ struct BrowserAddressAppearance: Codable, Equatable, Sendable {
     var fill: Double = 0
     var border: Double = 0
     var usesAccentWhenEditing = false
+    /// Whether the field grows into the command palette and the palette
+    /// shrinks back into it, rather than the palette opening in place.
+    var animatesIntoCommandPalette = true
     var color: BrandColor?
 }
 
@@ -45,7 +48,9 @@ extension BrowserTabAppearance {
 }
 
 extension BrowserAddressAppearance {
-    private enum CodingKeys: String, CodingKey { case fill, border, usesAccentWhenEditing, color }
+    private enum CodingKeys: String, CodingKey {
+        case fill, border, usesAccentWhenEditing, animatesIntoCommandPalette, color
+    }
 
     init(from decoder: Decoder) throws {
         self.init()
@@ -53,6 +58,8 @@ extension BrowserAddressAppearance {
         fill = BrowserTabAppearance.intensity((try? values.decode(Double.self, forKey: .fill)) ?? 0)
         border = BrowserTabAppearance.intensity((try? values.decode(Double.self, forKey: .border)) ?? 0)
         usesAccentWhenEditing = (try? values.decode(Bool.self, forKey: .usesAccentWhenEditing)) ?? false
+        animatesIntoCommandPalette =
+            (try? values.decode(Bool.self, forKey: .animatesIntoCommandPalette)) ?? true
         color = try? values.decode(BrandColor.self, forKey: .color)
     }
 }

@@ -8,7 +8,7 @@ import SwiftUI
 /// contents keep their resting layout and show through the growing frame from
 /// the top, so no text is squeezed on the way. The field hands over the shared
 /// identity as the card arrives (``BrowserCommandPaletteHandoff``); where no
-/// field holds it, the card simply fades in where it rests.
+/// field holds it, the card simply appears where it rests.
 struct BrowserCommandPaletteCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -39,7 +39,9 @@ struct BrowserCommandPaletteCard: View {
 
     @ViewBuilder
     private var surface: some View {
-        if let morphNamespace, let morph, let restingWidth, !reduceMotion {
+        if let morphNamespace, let morph, let restingWidth,
+            BrowserCommandSurfaceMorph.animatesCommandPalette(reduceMotion: reduceMotion)
+        {
             contents
                 .frame(width: restingWidth)
                 .animation(contentsAnimation) {

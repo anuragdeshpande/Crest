@@ -183,7 +183,7 @@ struct BrowserRootShell: View, BrowserChromeAnimating {
             value: model.isSidebarApproachingDock
         )
         .animation(
-            chromeAnimation(BrowserCommandSurfaceMorph.animation),
+            BrowserCommandSurfaceMorph.commandPaletteAnimation(reduceMotion: reduceMotion),
             value: model.isCommandPaletteShown
         )
         .onChange(

@@ -53,4 +53,22 @@ struct BrowserCommandSurfaceMorph: Hashable, Sendable {
     static func utilitySearch(spaceID: UUID) -> Self {
         Self(spaceID: spaceID, counterpart: .utilitySearch)
     }
+
+    // MARK: - Actions - Command palette
+
+    /// Whether the command palette grows out of its Space's address field and
+    /// shrinks back into it. Reduce Motion turns the morph off, and so does
+    /// the reader in Look and Feel; either way the palette opens and closes
+    /// in place at once.
+    @MainActor
+    static func animatesCommandPalette(reduceMotion: Bool) -> Bool {
+        !reduceMotion && BrowserDeviceAppearanceStore.shared.address.animatesIntoCommandPalette
+    }
+
+    /// The pace of the palette's arrival and departure, or nil when it
+    /// opens and closes at once.
+    @MainActor
+    static func commandPaletteAnimation(reduceMotion: Bool) -> Animation? {
+        animatesCommandPalette(reduceMotion: reduceMotion) ? animation : nil
+    }
 }

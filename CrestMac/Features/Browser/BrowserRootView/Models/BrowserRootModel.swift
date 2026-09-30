@@ -602,7 +602,7 @@ extension BrowserRootModel {
         .resolve(
             isPaletteShown: isCommandPaletteShown,
             isFieldOnScreen: sidebarPresentation.showsSidebar,
-            reduceMotion: reduceMotion
+            animates: BrowserCommandSurfaceMorph.animatesCommandPalette(reduceMotion: reduceMotion)
         )
     }
 

@@ -27,8 +27,9 @@ struct BrowserCommandPaletteHandoff: Equatable, Sendable {
         fieldAnimation: BrowserCommandSurfaceMorph.leadingFade
     )
 
-    /// Neither holds it. The field is off screen or motion is reduced, so the
-    /// palette appears and leaves where it rests and the field stays put.
+    /// Neither holds it. The field is off screen or the palette does not
+    /// animate, so the palette appears and leaves where it rests and the field
+    /// stays put.
     static let neither = Self(
         fieldHoldsMorph: false,
         fieldOpacity: 1,
@@ -66,14 +67,14 @@ struct BrowserCommandPaletteHandoff: Equatable, Sendable {
     ///   - isFieldOnScreen: Whether the sidebar carrying the field is on
     ///     screen. A collapsed sidebar still lays its field out off the
     ///     window's edge, and a palette must not fly in from there.
-    ///   - reduceMotion: The system's Reduce Motion setting, under which the
-    ///     palette never morphs.
+    ///   - animates: Whether the palette morphs at all
+    ///     (``BrowserCommandSurfaceMorph/animatesCommandPalette(reduceMotion:)``).
     static func resolve(
         isPaletteShown: Bool,
         isFieldOnScreen: Bool,
-        reduceMotion: Bool
+        animates: Bool
     ) -> Self {
-        if reduceMotion { return .neither }
+        if !animates { return .neither }
         if isPaletteShown { return .palette }
         return isFieldOnScreen ? .field : .neither
     }

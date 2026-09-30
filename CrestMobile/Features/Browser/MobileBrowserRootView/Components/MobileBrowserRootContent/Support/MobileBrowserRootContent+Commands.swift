@@ -16,7 +16,7 @@ extension MobileBrowserRootContent {
         .resolve(
             isPaletteShown: isCommandPaletteShown,
             isFieldOnScreen: navigation.regularSidebarIsPresented,
-            reduceMotion: reduceMotion
+            animates: BrowserCommandSurfaceMorph.animatesCommandPalette(reduceMotion: reduceMotion)
         )
     }
 

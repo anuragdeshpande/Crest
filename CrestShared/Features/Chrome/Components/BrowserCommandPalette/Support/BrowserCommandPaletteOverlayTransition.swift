@@ -17,7 +17,7 @@ struct BrowserCommandPaletteOverlayTransition: Transition {
 
     /// The phase moves nothing on its own. A card that grows out of the
     /// address field is moved by its matched geometry, which Reduce Motion
-    /// already turns off.
+    /// and the Look and Feel choice already turn off.
     static let properties = TransitionProperties(hasMotion: false)
 
     // MARK: - Actions - Transition
