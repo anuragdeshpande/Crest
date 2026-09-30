@@ -250,9 +250,6 @@ jobs:
           installer_name="Installer-${RELEASE_ASSET_BASE}.dmg"
           checksum_name="Checksum-${RELEASE_ASSET_BASE}.dmg.sha256"
           symbols_name="Debug-Symbols-${RELEASE_ASSET_BASE}.dSYM.zip"
-          webkit_installer_name="Installer-${RELEASE_ASSET_BASE}-WebKit.dmg"
-          webkit_checksum_name="Checksum-${RELEASE_ASSET_BASE}-WebKit.dmg.sha256"
-          webkit_symbols_name="Debug-Symbols-${RELEASE_ASSET_BASE}-WebKit.dSYM.zip"
           keychain_path="$RUNNER_TEMP/crest-signing.keychain-db"
           api_key_path="$RUNNER_TEMP/AuthKey_${APP_STORE_CONNECT_API_KEY_ID}.p8"
           p12_path="$RUNNER_TEMP/developer-id-application.p12"
@@ -340,8 +337,9 @@ jobs:
             spctl --assess --type open --context context:primary-signature --verbose=4 "$image"
           }
 
-          # --- WebKit: the alternate download, and the source of the product's
-          # resolved entitlements. ---
+          # --- Entitlements: Xcode's Developer ID export of the WebKit
+          # composition resolves the entitlements Crest is signed with. That
+          # app only supplies them; it is not published. ---
           xcodebuild archive \
             -project Crest.xcodeproj \
             -scheme Crest \
@@ -384,13 +382,8 @@ jobs:
             exit 1
           fi
 
-          package_disk_image "$app_path" "$publish_path/$webkit_installer_name" "Crest WebKit" webkit
-          ditto -c -k --keepParent \
-            "$archive_path/dSYMs/Crest.app.dSYM" \
-            "$publish_path/$webkit_symbols_name"
-
-          # --- Chromium: the default download. The engine is prebuilt and
-          # published once per engine revision; see
+          # --- Crest: Chromium's engine with Crest's interface and WebKit. The
+          # engine is prebuilt and published once per engine revision; see
           # Scripts/control-plane/publish-chromium-engine.py. ---
           engine_root="$release_root/engine"
           engine_tag="$(python3 Scripts/control-plane/chromium_engine.py tag)"
@@ -451,15 +444,12 @@ jobs:
           (
             cd "$publish_path"
             shasum -a 256 "$installer_name" > "$checksum_name"
-            shasum -a 256 "$webkit_installer_name" > "$webkit_checksum_name"
           )
 
       - name: Attest release disk image
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: |
-            ${{ runner.temp }}/crest-release/publish/Installer-${{ needs.preflight.outputs.asset_base }}.dmg
-            ${{ runner.temp }}/crest-release/publish/Installer-${{ needs.preflight.outputs.asset_base }}-WebKit.dmg
+          subject-path: ${{ runner.temp }}/crest-release/publish/Installer-${{ needs.preflight.outputs.asset_base }}.dmg
 
       - name: Create GitHub Release
         shell: zsh {0}
@@ -508,9 +498,6 @@ jobs:
           installer_name="Installer-${RELEASE_ASSET_BASE}.dmg"
           checksum_name="Checksum-${RELEASE_ASSET_BASE}.dmg.sha256"
           symbols_name="Debug-Symbols-${RELEASE_ASSET_BASE}.dSYM.zip"
-          webkit_installer_name="Installer-${RELEASE_ASSET_BASE}-WebKit.dmg"
-          webkit_checksum_name="Checksum-${RELEASE_ASSET_BASE}-WebKit.dmg.sha256"
-          webkit_symbols_name="Debug-Symbols-${RELEASE_ASSET_BASE}-WebKit.dSYM.zip"
 
           release_note_arguments=(
             --repository "$GITHUB_REPOSITORY"
@@ -531,9 +518,6 @@ jobs:
           installer_asset="$publish_path/$installer_name"
           checksum_asset="$publish_path/$checksum_name"
           symbols_asset="$publish_path/$symbols_name"
-          webkit_installer_asset="$publish_path/$webkit_installer_name"
-          webkit_checksum_asset="$publish_path/$webkit_checksum_name"
-          webkit_symbols_asset="$publish_path/$webkit_symbols_name"
 
           if [[ "$RELEASE_CHANNEL" != "stable" ]]; then
             ensure_prerelease
@@ -542,19 +526,13 @@ jobs:
               --release-tag "$RELEASE_TAG" \
               --asset "$installer_asset" \
               --asset "$checksum_asset" \
-              --asset "$symbols_asset" \
-              --asset "$webkit_installer_asset" \
-              --asset "$webkit_checksum_asset" \
-              --asset "$webkit_symbols_asset"
+              --asset "$symbols_asset"
           else
             release_arguments=(
               "$RELEASE_TAG"
               "$installer_asset"
               "$checksum_asset"
               "$symbols_asset"
-              "$webkit_installer_asset"
-              "$webkit_checksum_asset"
-              "$webkit_symbols_asset"
               --title "$RELEASE_TITLE"
               --notes-file "$release_notes"
               --verify-tag
@@ -600,7 +578,6 @@ jobs:
           updates_checkout="$RUNNER_TEMP/crest-updates-branch"
           release_root="$RUNNER_TEMP/crest-release"
           installer_name="Installer-${RELEASE_ASSET_BASE}.dmg"
-          webkit_installer_name="Installer-${RELEASE_ASSET_BASE}-WebKit.dmg"
           release_note_state_filename="release-note-publication.json"
           mkdir -p "$sparkle_root" "$feed_source" "$updates_checkout"
           if [[ "$RELEASE_CHANNEL" == "development" ]]; then
@@ -625,7 +602,9 @@ jobs:
           tar -xf "$sparkle_root/Sparkle-${sparkle_version}.tar.xz" -C "$sparkle_root"
 
           retry_github git fetch origin updates
-          # Update each product composition through its own signed feed.
+          # Each composition reads its own signed feed. A WebKit-only copy of
+          # Crest reads the -webkit feed, which offers the same Crest installer
+          # so that copy updates into the dual-engine app.
           generate_feed() {
             local appcast="$1" installer="$2" source="$3"
             mkdir -p "$source"
@@ -655,7 +634,7 @@ jobs:
             fi
           }
           generate_feed "$appcast_filename" "$installer_name" "$feed_source"
-          generate_feed "$webkit_appcast_filename" "$webkit_installer_name" "$feed_source-webkit"
+          generate_feed "$webkit_appcast_filename" "$installer_name" "$feed_source-webkit"
 
           git -C "$updates_checkout" init --initial-branch=updates
           git -C "$updates_checkout" remote add origin \

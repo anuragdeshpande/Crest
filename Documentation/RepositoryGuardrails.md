@@ -122,9 +122,10 @@ version, isolation, and measurement contracts, with:
 python3 -m unittest discover -s Scripts/Tests
 ```
 
-`Scripts/validate.sh` runs this suite before the app tests. CI also runs the
-suite in a separate macOS job, including release workflow, version, release-note
-publication, public-source, and CloudKit environment contracts. These tests do
+`Scripts/validate.sh` runs this suite before the app tests. The manually
+dispatched **Build Crest** workflow also runs it in a separate macOS job,
+including release workflow, version, release-note publication, public-source,
+and CloudKit environment contracts. These tests do
 not build the app; the shell-based version tests require macOS `plutil`, Git,
 zsh, and ripgrep.
 
@@ -132,7 +133,7 @@ zsh, and ripgrep.
 rejects coding-assistant instructions or state, machine-local editor files,
 local environment configuration, and Apple signing or provisioning material.
 Ignored local worktrees do not enter the public snapshot, while an accidental
-forced add fails CI.
+forced add fails the check.
 
 Do not add feature-specific source-topology tests. The repository-wide guards
 own framework and dependency direction; feature behavior belongs in focused

@@ -508,18 +508,19 @@ core and `CrestChromiumUIProduct`, and packages the product with
 `package-chromium-host.py --product --distribution`: every executable, library
 and bundle is signed innermost first with the hardened runtime and a secure
 timestamp, the renderer and GPU helpers keep Chromium's JIT entitlement, and
-the app receives Crest's resolved entitlements, taken from the notarized
-WebKit export built in the same run, over Chromium's device entitlements. The
-workflows then notarize the app and its disk image. The dual-engine Chromium
-build is the default desktop download; WebKit is published beside it as an
-alternate. Each installed product follows its own feed, regardless of the
-engine chosen for pages.
+the app receives Crest's resolved entitlements, taken from the WebKit
+Developer ID export built in the same run, over Chromium's device entitlements.
+The workflows then notarize the app and its disk image. The dual-engine
+Chromium build is the only desktop download; the WebKit export is not
+published. Each composition follows its own feed regardless of the engine
+chosen for pages, and every `-webkit` feed offers the dual-engine installer so
+an installed WebKit-only build updates into it.
 
 The final experimental publication remains on `appcast-experimental.xml` and
 `appcast-experimental-webkit.xml`, but bundles Development as the default update
 channel. On first launch after that install, Crest adopts Development once;
 subsequent user channel choices remain respected. Keep those final experimental
 feeds available so installations that update later can still make the transition.
-Development build numbers exceed every published channel and both products.
+Development build numbers exceed every published channel and feed.
 Merging a PR into main dispatches the development release. Chromium maintenance
 also targets main and publishes verified engine updates to Development.

@@ -2,13 +2,22 @@
 
 Crest has one official distribution path per platform:
 
-- **macOS:** direct distribution from GitHub Releases, signed with Developer ID,
-  notarized by Apple, and updated through Sparkle 2;
+- **macOS:** one app, Crest, with the Chromium and WebKit engines. It is
+  distributed directly from GitHub Releases, signed with Developer ID, notarized
+  by Apple, and updated through Sparkle 2;
 - **iPhone and iPad:** TestFlight and the App Store.
 
-There is no Mac App Store build. Keeping one macOS product avoids incompatible
-sandbox capabilities, duplicate update behavior, and user confusion over which
-build supports native extension companions.
+There is no Mac App Store build, and no separate WebKit-only download. Keeping
+one macOS product avoids incompatible sandbox capabilities, duplicate update
+behavior, and user confusion over which build supports extensions.
+
+The release build downloads a prebuilt Chromium engine instead of compiling
+Chromium. Each engine is published once as a `chromium-engine-<key>` release,
+keyed by its inputs; see "Releasing" in
+[the Chromium engine README](../CrestEngines/Chromium/README.md). When a commit's
+engine is missing, the **Ensure Chromium engine** job builds and publishes it on
+the registered build Mac if `CHROMIUM_CI_ENABLED` is set, and otherwise stops the
+release before signing.
 
 ## Release channels
 
@@ -17,6 +26,7 @@ build supports native extension companions.
 | Stable | Push an exact `v<marketing-version>` tag | `v<version>`, Latest, non-prerelease | Default |
 | Nightly | Daily schedule or manual dispatch, only when the source commit changes | New `nightly-<version>-<date>-<build>-r<run>.<attempt>` prerelease | `nightly` |
 | Development | PR merged into `main`, or manual workflow dispatch | New `development-<version>-<date>-<build>-r<run>.<attempt>` prerelease | `development` |
+| Experimental | Manual dispatch of **Publish experimental macOS release** for a branch | New `experimental-<version>-<branch>-<date>-<build>-r<run>.<attempt>` prerelease | `experimental` |
 
 Browse [Stable](https://github.com/pauljoda/Crest/releases?q=prerelease%3Afalse),
 [Nightly](https://github.com/pauljoda/Crest/releases?q=prerelease%3Atrue+%22Nightly+builds%22), or
@@ -27,8 +37,9 @@ channel. GitHub's
 accepts `prerelease:false`, `prerelease:true "Nightly builds"`, and
 `prerelease:true "Development builds"` to filter channels using their release-note
 descriptions.
-Only stable releases receive GitHub's Latest designation. Manual dispatch
-offers development and nightly; stable publication requires a tag push.
+Only stable releases receive GitHub's Latest designation. Manual dispatch of
+**Publish macOS release** offers development and nightly; stable publication
+requires a tag push. Experimental builds test a branch before it reaches `main`.
 
 The **Publish development build after merge** workflow dispatches **Publish
 macOS release** with `channel=development` on `main`. It runs only after a PR
@@ -43,7 +54,7 @@ match it exactly. Distributed build numbers add the GitHub Actions run number
 to Crest's public-repository build epoch. The epoch keeps Sparkle ordering
 strictly increasing across the repository migration; the run number keeps every
 subsequent published update newer than the prior build. Preflight also reads
-both signed appcasts and raises the build number above every published build,
+every signed appcast and raises the build number above every published build,
 so retries and delayed runs cannot publish an update that Sparkle considers older.
 
 The appcast is hosted at:
@@ -54,6 +65,11 @@ Development builds use a separate signed feed so frequent commits cannot prune
 stable or nightly entries:
 
 `https://raw.githubusercontent.com/pauljoda/Crest/updates/appcast-development.xml`
+
+Experimental builds use `appcast-experimental.xml`. Each feed also has a
+`-webkit` twin, such as `appcast-webkit.xml`, which WebKit-only builds of Crest
+read. Those twins now offer the same Crest installer, so a WebKit-only copy
+updates into the dual-engine app on its next check.
 
 The `updates` branch is workflow-owned. It contains the appcasts, a short
 README, and `release-note-publication.json`, whose independent stable, nightly,
@@ -100,20 +116,27 @@ contract tests locally for the exact commit, following the
 [repository guardrails](RepositoryGuardrails.md). The production workflow follows
 these steps:
 
-1. regenerate the project and check version metadata, product identity, and
+1. find the Chromium engine for the commit's engine key, building it on the
+   registered Mac when it is missing and that builder is enabled;
+2. regenerate the project and check version metadata, product identity, and
    cache hygiene;
-2. import the Developer ID identity into a temporary keychain and install the
+3. import the Developer ID identity into a temporary keychain and install the
    matching release provisioning profile;
-3. archive and export an arm64 Developer ID build with hardened runtime and
-   Crest's production CloudKit, push, and keychain entitlements;
-4. verify the app's signature, bundle identifier, and architecture;
-5. notarize and staple the app;
-6. create, sign, notarize, staple, and Gatekeeper-check the disk image;
-7. publish the build-provenance attestation, then reconcile and digest-verify
+4. archive and export the WebKit composition as an arm64 Developer ID build.
+   Xcode's export resolves Crest's production CloudKit, push, and keychain
+   entitlements; the exported app only supplies them and is not published;
+5. download and checksum the Chromium engine, build the native core and Crest's
+   interface framework, and package them with the engine as `Crest.app`, signed
+   with hardened runtime and those entitlements;
+6. verify the app's signature, bundle identifier, update channel, and build
+   number;
+7. notarize and staple the app;
+8. create, sign, notarize, staple, and Gatekeeper-check the disk image;
+9. publish the build-provenance attestation, then reconcile and digest-verify
    the disk image, checksum, and dSYM;
-8. sign the Sparkle appcast, advance only that channel's release-note cursor,
-   and publish both in one `updates` branch commit after the release assets
-   exist.
+10. sign the Sparkle appcast and its `-webkit` twin, advance only that channel's
+    release-note cursor, and publish them in one `updates` branch commit after
+    the release assets exist.
 
 If any signing, notarization, appcast, or branch-push step fails, neither the
 appcast nor its release-note cursor advances. An update therefore never points
@@ -164,12 +187,15 @@ Before publishing a stable tag:
 1. confirm `CHANGELOG.md`, `Documentation/ReleaseNotes.json`, and the marketing
    version are ready;
 2. complete local app and release-script tests for the commit being published;
-3. confirm the main-branch validation and Pages workflows are green;
-4. confirm all seven release secrets are available to the production job;
-5. create and push the exact version tag;
-6. inspect the workflow's signature, notarization, Gatekeeper, checksum, and
+3. dispatch **Build Crest** on `main`, and confirm it and the Pages workflow are
+   green;
+4. confirm the commit's Chromium engine is published:
+   `gh release view "$(python3 Scripts/control-plane/chromium_engine.py tag)"`;
+5. confirm all seven release secrets are available to the production job;
+6. create and push the exact version tag;
+7. inspect the workflow's signature, notarization, Gatekeeper, checksum, and
    attestation results;
-7. install the published disk image on a clean macOS account and exercise both
+8. install the published disk image on a clean macOS account and exercise both
    a manual update check and the normal relaunch path.
 
 For a new release line, explicitly set the intended version with
@@ -181,19 +207,20 @@ maintained [iPhone and iPad listing](../Marketing/AppStore/README.md) against
 the release's mobile capabilities.
 
 Commit the version and release documentation together, push that commit to
-`main`, and wait for its validation workflow to pass before creating and
+`main`, and wait for a **Build Crest** run on it to pass before creating and
 pushing an annotated `vX.Y.Z` tag at that same commit. A new release line uses
 `Scripts/check-version.sh` and the release-note catalog check;
 `--fix-commit` applies only to patch increases on the existing line.
 Pushing the stable tag starts macOS publication. App Store build selection,
 submission, and release are separate steps in App Store Connect.
 
-Nightly and development builds use the same signing, notarization, and
-verification gates as a stable build. Each prerelease retains its own
-asset set after the signed appcast has advanced. Development
+Nightly, development, and experimental builds use the same signing,
+notarization, and verification gates as a stable build. Each prerelease retains
+its own asset set after the signed appcast has advanced. Development
 publication keeps only the latest queued public commit when dispatches arrive
-faster than Apple notarization. Every distributed build defaults to its own
-channel, while an existing user choice remains authoritative.
+faster than Apple notarization. Stable, nightly, and development builds default
+to their own channel, and experimental builds default to Development. An
+existing user choice remains authoritative.
 
 ## Local macOS iteration
 
@@ -205,9 +232,11 @@ Scripts/install-local-macos-release.sh
 ```
 
 The command requires Crest's Developer ID identity and provisioning profile in
-the local keychain/Xcode profile directory. It archives with production iCloud,
-push, keychain, hardened-runtime, and extension-companion signing, verifies the
-export, replaces `/Applications/Crest.app`, and relaunches it. It reuses the
+the local keychain/Xcode profile directory. It archives the WebKit composition
+(the `Crest` scheme) with production iCloud, push, keychain, and
+hardened-runtime signing, verifies the export, replaces `/Applications/Crest.app`,
+and relaunches it. That build has no Chromium engine or extensions; it is not the
+app that GitHub Releases publish. It reuses the
 greater of the installed build number and current development appcast by
 default. That prevents the current public build from immediately replacing a
 local iteration without outranking the next published Sparkle build. Set
@@ -216,7 +245,7 @@ local iteration without outranking the next published Sparkle build. Set
 Merging a PR into `main` automatically starts development publication. Direct
 pushes to `main` do not publish or advance an appcast. To publish a separately
 validated branch, dispatch **Publish macOS release** with the `development`
-channel after the local build passes the signed-app extension and update checks.
+channel from that branch.
 
 ## Verify a downloaded release
 
