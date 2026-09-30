@@ -717,7 +717,10 @@ bool CrestBrowserWindow::IsFullscreen() const {
   return (crest::WindowForBrowser(browser_).styleMask & NSWindowStyleMaskFullScreen) != 0;
 }
 
-void CrestBrowserWindow::Hide() { [crest::WindowForBrowser(browser_) orderOut:nil]; }
+// An extension's popup that shows as a tab leaves the person's window alone.
+void CrestBrowserWindow::Hide() {
+  if (crest::OwnsWindow(browser_)) [crest::WindowForBrowser(browser_) orderOut:nil];
+}
 
 void CrestBrowserWindow::ShowInactive() {
   crest::OnEngineWindowShown(browser_, false);
@@ -726,11 +729,16 @@ void CrestBrowserWindow::ShowInactive() {
 
 void CrestBrowserWindow::Deactivate() {}
 
-void CrestBrowserWindow::Maximize() { if (!IsMaximized()) [crest::WindowForBrowser(browser_) zoom:nil]; }
+void CrestBrowserWindow::Maximize() {
+  if (crest::OwnsWindow(browser_) && !IsMaximized()) [crest::WindowForBrowser(browser_) zoom:nil];
+}
 
-void CrestBrowserWindow::Minimize() { [crest::WindowForBrowser(browser_) miniaturize:nil]; }
+void CrestBrowserWindow::Minimize() {
+  if (crest::OwnsWindow(browser_)) [crest::WindowForBrowser(browser_) miniaturize:nil];
+}
 
 void CrestBrowserWindow::Restore() {
+  if (!crest::OwnsWindow(browser_)) return;
   NSWindow* window = crest::WindowForBrowser(browser_);
   if (window.isMiniaturized) [window deminiaturize:nil];
   if (window.isZoomed) [window zoom:nil];
@@ -1056,18 +1064,12 @@ void CrestBrowserWindow::Show() {
 
 void CrestBrowserWindow::Close() {
   // The BrowserView/WebUIBrowserWindow close protocol, minus the OS window:
-  // beforeunload gets a veto, then tabs close (TabStripEmpty() re-enters
-  // Close()), and an empty browser is destroyed synchronously.
-  if (!UnloadController::From(browser_)->HandleBeforeClose()) {
-    return;
-  }
+  // beforeunload gets a veto, then tabs close, and TabStripEmpty() re-enters
+  // Close() for the empty Browser, which schedules its own deletion. It is
+  // never deleted here: the unload and tab strip code that emptied it is
+  // still on the stack, as it is when a page's unload finishes the close
+  // `chrome.windows.remove` started.
   UnloadController::From(browser_)->OnWindowClosing();
-  if (!browser_->tab_strip_model()->empty()) {
-    browser_->tab_strip_model()->CloseAllTabs();
-    return;
-  }
-  browser_->SynchronouslyDestroyBrowser();
-  // `this` is deleted.
 }
 
 bool CrestBrowserWindow::IsActive() const {
@@ -1114,7 +1116,7 @@ bool CrestBrowserWindow::IsVisible() const {
 
 void CrestBrowserWindow::SetBounds(const gfx::Rect& bounds) {
   NSWindow* window = crest::WindowForBrowser(browser_);
-  if (!window || IsFullscreen()) return;
+  if (!window || IsFullscreen() || !crest::OwnsWindow(browser_)) return;
   // Chromium and extensions use the primary display's top-left origin, even
   // for windows on other displays. Use the inverse of GetBounds's conversion.
   [window setFrame:gfx::ScreenRectToNSRect(bounds) display:YES];

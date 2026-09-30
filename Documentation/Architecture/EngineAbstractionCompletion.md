@@ -29,7 +29,8 @@ Rules every engine keeps:
   person installed, and is destroyed with everything in it when the window
   closes.
 - Crest never opens a window the person did not ask for. New windows appear
-  only from a person's action or an explicit extension `windows.create`; a
+  only from a person's action or an extension's `windows.create` for a normal
+  window. An extension's popup opens as a tab in the current window, and a
   window a page asks for, such as a sign-in popup, opens as a Quick Window over
   its opener's window. DevTools and side panels dock inside the Crest window.
 - A page another page opens stays on its opener's engine. A site's engine

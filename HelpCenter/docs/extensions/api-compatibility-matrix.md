@@ -38,7 +38,7 @@ Crest does not install Firefox add-ons or Safari Web Extensions. Many of them al
 | Toolbar actions and popups | The action appears in the Space's extension strip or in Site Controls. Its popup opens below the button in a window attached to the Crest window. Pinned actions belong to the Space, so they appear even on the Start Page. |
 | Side panels | `chrome.sidePanel` opens as a card beside the page it belongs to. The action's context menu, an icon click set to open the panel, and `sidePanel.open()` and `close()` all reach that card. |
 | Keyboard shortcuts | `chrome.commands` shortcuts work when Crest's own shortcuts do not use the same keys. Change them on Chromium's extension shortcuts page, linked from Crest's Extensions settings. See [Set extension keyboard shortcuts](./keyboard-shortcuts.md). |
-| New windows | `chrome.windows.create` opens a Crest window in the Space that owns the extension's profile. A requested window state is ignored. A request no Space can host fails with an error. |
+| New windows | `chrome.windows.create` opens a Crest window in the Space that owns the extension's profile. A popup window, such as a password manager's popout, opens as a tab in the current window instead, and the extension can still find, move and close it as its own window. A requested window state is ignored. A request no Space can host fails with an error. |
 | Private windows | Only extensions you allow in private windows run there. |
 | Tab sharing and debugging bars | Chromium's confirmation bars, such as the one `chrome.debugger` shows, appear inside the page. |
 | Updates | Chromium updates Chrome Web Store extensions and checks their signatures and permissions. |

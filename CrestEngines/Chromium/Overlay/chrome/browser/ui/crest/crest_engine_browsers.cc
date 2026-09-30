@@ -38,12 +38,14 @@ struct EngineBrowsers::KeptBrowser final : TabStripModelObserver {
               std::string profile_id,
               std::string window_id,
               bool holds_pages,
-              std::optional<EngineWindow> placed = std::nullopt)
+              std::optional<EngineWindow> placed = std::nullopt,
+              bool keeps = false)
       : owner(keeper),
         browser(kept),
         profile(std::move(profile_id)),
         window(std::move(window_id)),
         holds_window_pages(holds_pages),
+        keeps_tabs(keeps),
         engine(std::move(placed)),
         strip(kept->tab_strip_model()) {
     strip->AddObserver(this);
@@ -71,12 +73,17 @@ struct EngineBrowsers::KeptBrowser final : TabStripModelObserver {
   const raw_ptr<Browser> browser;
   // The Crest profile and window the Browser belongs to; both are empty for
   // one no Crest window could take, whose tabs are offered and then refused.
+  // An extension's popup follows its tab to whichever window shows it.
   const std::string profile;
-  const std::string window;
+  std::string window;
   // Whether `window`'s pages of `profile` go in this Browser. A window that
   // already had a Browser for the profile keeps it, and one the engine created
   // there later only holds its own tabs until the window adopts them.
   const bool holds_window_pages;
+  // Whether this Browser's tabs stay in it wherever they show: the popup an
+  // extension created, which is that extension's window even while its tab
+  // shows in a window of the person's.
+  const bool keeps_tabs;
   std::optional<EngineWindow> engine;
   raw_ptr<TabStripModel> strip;
 };
@@ -109,6 +116,16 @@ bool EngineBrowsers::MoveToWindow(content::WebContents* contents,
                                   const std::string& window) {
   if (!contents) {
     return false;
+  }
+  // An extension's popup keeps its tab, so the window the extension named
+  // still holds it and closes only it; the popup shows in `window` instead.
+  if (KeptBrowser* popup = HoldingKept(contents); popup && popup->keeps_tabs) {
+    if (popup->profile != profile_id) {
+      return false;
+    }
+    popup->window = window;
+    popup->strip->ActivateTabAt(popup->strip->GetIndexOfWebContents(contents));
+    return true;
   }
   Browser* target = ForWindow(profile_id, window);
   if (!target) {
@@ -178,6 +195,11 @@ Browser* EngineBrowsers::ForWindow(const std::string& profile_id, const std::str
 std::string EngineBrowsers::WindowOf(const Browser* browser) const {
   KeptBrowser* kept = browser ? Find(browser) : nullptr;
   return kept ? kept->window : std::string();
+}
+
+bool EngineBrowsers::OwnsWindow(const Browser* browser) const {
+  KeptBrowser* kept = browser ? Find(browser) : nullptr;
+  return !kept || !kept->keeps_tabs;
 }
 
 void EngineBrowsers::CloseWindow(const std::string& window) {
@@ -297,10 +319,13 @@ EngineBrowsers::KeptBrowser* EngineBrowsers::HoldingKept(content::WebContents* c
   return found == kept_.end() ? nullptr : found->get();
 }
 
+// A Browser whose last tab closed is deleted once Chromium's close unwinds,
+// and takes no new pages meanwhile.
 EngineBrowsers::KeptBrowser* EngineBrowsers::WindowBrowser(const std::string& profile_id,
                                                            const std::string& window) const {
   auto found = std::find_if(kept_.begin(), kept_.end(), [&](const auto& kept) {
-    return kept->holds_window_pages && kept->profile == profile_id && kept->window == window;
+    return kept->holds_window_pages && kept->profile == profile_id && kept->window == window &&
+           !kept->browser->IsDeleteScheduled();
   });
   return found == kept_.end() ? nullptr : found->get();
 }
@@ -311,9 +336,16 @@ EngineBrowsers::KeptBrowser* EngineBrowsers::WindowBrowser(const std::string& pr
 // refused rather than routed into an unrelated Space; an off-the-record
 // profile belongs to the private window and is refused when that window is
 // closed.
+//
+// A normal window `chrome.windows.create` asked for gets a Crest window of its
+// own. A popup it asked for, which Chromium makes an app popup, joins the
+// window the person is using as a tab it keeps, and never holds that window's
+// other pages, which its extension could otherwise close with the popup.
 bool EngineBrowsers::Place(Browser* browser) {
-  const bool own_window = own_window_profile_ == browser->GetProfile();
+  const bool requested = own_window_profile_ == browser->GetProfile();
   own_window_profile_ = nullptr;
+  const bool keeps_tabs = requested && !browser->is_type_normal();
+  const bool own_window = requested && !keeps_tabs;
   const EngineProfiles& profiles = binding_->Profiles();
   const std::string profile_id = profiles.IdFor(browser->GetProfile());
   if (profile_id.empty() || profiles.IsDeleting(profile_id)) {
@@ -323,9 +355,9 @@ bool EngineBrowsers::Place(Browser* browser) {
   if (!placement) {
     return false;
   }
-  const bool holds_window_pages = !WindowBrowser(profile_id, placement->window);
+  const bool holds_window_pages = !keeps_tabs && !WindowBrowser(profile_id, placement->window);
   kept_.push_back(std::make_unique<KeptBrowser>(*this, browser, profile_id, placement->window, holds_window_pages,
-                                                EngineWindow{.space = placement->space}));
+                                                EngineWindow{.space = placement->space}, keeps_tabs));
   return true;
 }
 
@@ -376,6 +408,10 @@ void OnBrowserWindowDestroyed(Browser* browser) {
 
 void OnEngineWindowShown(Browser* browser, bool focused) {
   EngineBinding::Get().Browsers().Shown(browser, focused);
+}
+
+bool OwnsWindow(const Browser* browser) {
+  return EngineBinding::Get().Browsers().OwnsWindow(browser);
 }
 
 }  // namespace crest
