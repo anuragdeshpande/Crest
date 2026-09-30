@@ -6,6 +6,8 @@ struct BrowserFolderArtworkContent: View {
     let color: BrandColor
     var isExpanded = false
     let iconOnly: Bool
+    var tintsTitle = false
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if iconOnly, let glyph = Self.customGlyph(for: symbol) {
@@ -20,12 +22,22 @@ struct BrowserFolderArtworkContent: View {
                     }
                 }
             }
-            .foregroundStyle(.primary)
+            .foregroundStyle(symbolStyle)
             .transaction { $0.animation = nil }
         } else {
             BrowserFolderFaces(glyph: Self.customGlyph(for: symbol), color: color, isExpanded: isExpanded)
                 .foregroundStyle(faceForeground)
         }
+    }
+
+    /// Matches the tinted title beside it. Without a tint the glyph keeps the
+    /// inherited hierarchical style, which a highlighted menu row inverts.
+    private var symbolStyle: AnyShapeStyle {
+        guard
+            let tint = BrowserFolderAppearancePolicy.symbolColor(
+                for: symbol, color: color, tintsTitle: tintsTitle, onDarkBackground: colorScheme == .dark)
+        else { return AnyShapeStyle(.primary) }
+        return AnyShapeStyle(tint.color)
     }
 
     private var faceForeground: Color {
@@ -157,6 +169,8 @@ private struct BrowserFolderFaceProjection: GeometryEffect {
             BrowserFolderArtworkContent(symbol: "folder.fill", color: .ocean, isExpanded: false, iconOnly: false)
             BrowserFolderArtworkContent(symbol: "star.fill", color: .ocean, isExpanded: true, iconOnly: false)
             BrowserFolderArtworkContent(symbol: "star.fill", color: .ocean, isExpanded: false, iconOnly: true)
+            BrowserFolderArtworkContent(
+                symbol: "star.fill", color: .ocean, isExpanded: false, iconOnly: true, tintsTitle: true)
         }.font(.system(size: 32)).padding(32)
     }
 #endif

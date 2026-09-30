@@ -3473,6 +3473,10 @@
     "floating-sidebar-stays-for-its-popups": {
       "category": "fixed",
       "message": "A hidden sidebar you've revealed stays open while something you opened from it is still on screen, like an extension popup, a folder color picker, or a confirmation, and while you're renaming something in it."
+    },
+    "folder-symbol-follows-tinted-title": {
+      "category": "improved",
+      "message": "Folder symbols take the folder color when tinted folder titles are turned on."
     }
   }
 }

@@ -28,9 +28,12 @@ struct BrowserFolderArtwork: View {
     var isExpanded = false
     @AppStorage(BrowserFolderAppearancePreference.iconOnlyKey, store: BrowserFolderAppearancePreference.defaults)
     private var iconOnly = BrowserLookAndFeelDefaults.foldersIconOnly
+    @AppStorage(BrowserFolderAppearancePreference.tintsTitleKey, store: BrowserFolderAppearancePreference.defaults)
+    private var tintsTitle = BrowserLookAndFeelDefaults.foldersTintTitle
 
     var body: some View {
-        BrowserFolderArtworkContent(symbol: symbol, color: color, isExpanded: isExpanded, iconOnly: iconOnly)
+        BrowserFolderArtworkContent(
+            symbol: symbol, color: color, isExpanded: isExpanded, iconOnly: iconOnly, tintsTitle: tintsTitle)
     }
 
     static func customGlyph(for symbol: String) -> Text? {

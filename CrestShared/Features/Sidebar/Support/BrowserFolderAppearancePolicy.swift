@@ -28,6 +28,15 @@ enum BrowserFolderAppearancePolicy {
             alpha: face.alpha)
     }
 
+    /// An icon-only symbol follows its tinted title, so the glyph and the words
+    /// beside it read as one folder. Emoji keep the colors they ship with.
+    static func symbolColor(for symbol: String, color: BrandColor, tintsTitle: Bool, onDarkBackground: Bool)
+        -> BrandColor?
+    {
+        guard tintsTitle, BrowserIconSymbol.emoji(from: symbol) == nil else { return nil }
+        return titleColor(color, onDarkBackground: onDarkBackground)
+    }
+
     static func compositedColor(_ color: BrandColor, opacity: Double, background: BrandColor)
         -> BrandColor
     {
