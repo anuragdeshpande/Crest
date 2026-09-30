@@ -3477,6 +3477,10 @@
     "folder-symbol-follows-tinted-title": {
       "category": "improved",
       "message": "Folder symbols take the folder color when tinted folder titles are turned on."
+    },
+    "feature-flags-follow-webkit-default": {
+      "category": "fixed",
+      "message": "Feature Flags in Settings shows WebKit's flags when WebKit is your default engine, instead of an empty page."
     }
   }
 }
