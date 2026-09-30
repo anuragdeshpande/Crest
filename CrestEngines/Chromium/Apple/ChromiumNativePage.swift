@@ -99,15 +99,15 @@
 
         /// Puts the page's view in its surface once the binding created the
         /// page and the surface is in a window, and shows the page there, as
-        /// its window's own page, when its host presents it. The engine
-        /// focuses a page it shows; one that may not take focus hands it back
-        /// to what held it. A host that only draws a Space the window
-        /// does not show keeps the page hidden from the engine.
+        /// its window's own page, while its host has it on screen: presented,
+        /// or in the preview of a Space the person swipes to or from, which
+        /// never takes focus. A host whose Space is off screen keeps the page
+        /// hidden from the engine.
         func attachIfPossible(takingFocus takesFocus: Bool = true) {
             guard !disposed, created, let window = surface.window,
                 let windowID = window.identifier.flatMap({ UUID(uuidString: $0.rawValue) }), let pages
             else { return }
-            guard surface.isPresented else {
+            guard surface.presentation != .hidden else {
                 if let view = host?.view(forPage: pageID) { embed(view) }
                 detach()
                 return
@@ -117,19 +117,37 @@
             else { return }
             embed(view)
             guard !isShown else { return }
+            show(in: window, takingFocus: takesFocus && surface.presentation == .presented)
+        }
+
+        /// The host showing the page's view changed how it shows it, as its
+        /// Space did: the page comes back on screen, or leaves it, as it does
+        /// when the person switches tabs. A page its Space's preview kept on
+        /// screen through a swipe is shown again as the Space settles, which
+        /// focuses it as it would a page coming on screen.
+        func presentationDidChange(takingFocus takesFocus: Bool) {
+            guard surface.presentation != .hidden else {
+                detach()
+                return
+            }
+            guard isShown, surface.presentation == .presented else {
+                attachIfPossible(takingFocus: takesFocus)
+                return
+            }
+            guard takesFocus, let window = surface.window else { return }
+            show(in: window, takingFocus: true)
+        }
+
+        /// Asks the engine to show the page. The engine focuses a page it
+        /// shows; one that may not take focus hands it back to what held it.
+        private func show(in window: NSWindow, takingFocus takesFocus: Bool) {
+            guard let pages else { return }
             let responder = window.firstResponder
             let shown = pages.request(ShowPage(pageID: pageID))
             isShown = shown
-            DiagnosticLog.pages.notice("Chromium page \(pageID) shows in window \(windowID) (shown: \(shown))")
+            DiagnosticLog.pages.notice("Chromium page \(pageID) shows (shown: \(shown), focus: \(takesFocus))")
             guard !takesFocus, window.firstResponder !== responder else { return }
             window.makeFirstResponder(Self.focusOwner(of: responder))
-        }
-
-        /// The host presenting the page's view started or stopped presenting
-        /// it, as its Space did: the page comes back on screen, or leaves it,
-        /// as it does when the person switches tabs.
-        func presentationDidChange(takingFocus takesFocus: Bool) {
-            if surface.isPresented { attachIfPossible(takingFocus: takesFocus) } else { detach() }
         }
 
         private func embed(_ view: NSView) {
@@ -430,8 +448,10 @@
             page?.presentationDidChange(takingFocus: host.allowsPageFocus)
         }
         func presentationGeometryDidChange() { layoutEngineView() }
-        /// Whether the host this surface is in presents its page to the person.
-        var isPresented: Bool { (superview as? BrowserWebHostView)?.presentsPage ?? true }
+        /// How the host this surface is in shows its page.
+        var presentation: BrowserPagePresentation {
+            (superview as? BrowserWebHostView)?.presentation ?? .presented
+        }
     }
     extension ChromiumNativePage: BrowserPageContentScripting {
         func install(_ script: BrowserContentScript, receive: @escaping @MainActor (BrowserContentMessage) -> Void)

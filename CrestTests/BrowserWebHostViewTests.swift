@@ -193,22 +193,24 @@ final class BrowserWebHostViewTests: XCTestCase {
     }
 
     /// A Space the window stops showing keeps its page's view in its host,
-    /// so leaving it and coming back never moves the view; the host tells the
-    /// page it left the screen and came back instead, once each, as a tab
+    /// so swiping away from it and back never moves the view; the host tells
+    /// the page each change in how it is shown instead, once each, as a tab
     /// switch does.
     func testASpaceRoundTripHidesAndShowsItsPageOnceWithoutMovingItsView() {
         let view = BrowserNativeSurfaceProbe()
         let host = BrowserWebHostView()
         host.attach(view)
 
-        host.updatePresentation(presentsPage: false)
-        host.updatePresentation(presentsPage: false)
-        host.updatePresentation(presentsPage: true)
-        host.updatePresentation(presentsPage: true)
+        host.updatePresentation(.preview)
+        host.updatePresentation(.hidden)
+        host.updatePresentation(.hidden)
+        host.updatePresentation(.preview)
+        host.updatePresentation(.presented)
+        host.updatePresentation(.presented)
 
         XCTAssertTrue(view.superview === host)
-        XCTAssertEqual(view.presentedOnAttach, [true])
-        XCTAssertEqual(view.presentations, [false, true])
+        XCTAssertEqual(view.presentedOnAttach, [.presented])
+        XCTAssertEqual(view.presentations, [.preview, .hidden, .preview, .presented])
         XCTAssertTrue(view.detachedHosts.isEmpty)
     }
 
@@ -217,13 +219,13 @@ final class BrowserWebHostViewTests: XCTestCase {
     func testAPageJoiningAHiddenSpaceShowsOnlyWhenItsSpaceReturns() {
         let view = BrowserNativeSurfaceProbe()
         let host = BrowserWebHostView()
-        host.updatePresentation(presentsPage: false)
+        host.updatePresentation(.hidden)
         host.attach(view)
 
-        host.updatePresentation(presentsPage: true)
+        host.updatePresentation(.presented)
 
-        XCTAssertEqual(view.presentedOnAttach, [false])
-        XCTAssertEqual(view.presentations, [true])
+        XCTAssertEqual(view.presentedOnAttach, [.hidden])
+        XCTAssertEqual(view.presentations, [.presented])
     }
 
     func testFocusPolicyRequiresAPermittedOwnerAndNoCompetingPresentation() {
@@ -822,14 +824,14 @@ private final class BrowserFocusRefusingWindow: NSWindow {
 private final class BrowserNativeSurfaceProbe: NSView, BrowserNativePageSurfaceLifecycle {
     var attachedHosts: [BrowserWebHostView] = []
     var detachedHosts: [BrowserWebHostView] = []
-    /// Whether each host presented the page as the surface joined it.
-    var presentedOnAttach: [Bool] = []
+    /// How each host showed the page as the surface joined it.
+    var presentedOnAttach: [BrowserPagePresentation] = []
     /// Each presentation the surface heard of while it stayed in its host.
-    var presentations: [Bool] = []
+    var presentations: [BrowserPagePresentation] = []
     func didAttach(to host: BrowserWebHostView) {
         attachedHosts.append(host)
-        presentedOnAttach.append(host.presentsPage)
+        presentedOnAttach.append(host.presentation)
     }
     func willDetach(from host: BrowserWebHostView) { detachedHosts.append(host) }
-    func presentationDidChange(in host: BrowserWebHostView) { presentations.append(host.presentsPage) }
+    func presentationDidChange(in host: BrowserWebHostView) { presentations.append(host.presentation) }
 }

@@ -24,6 +24,14 @@ struct BrowserRootPageSurface: View {
         isSelectedSpace && contentPresentation == .interactive
     }
 
+    /// How the window shows this Space's pages: as the person's, as the
+    /// preview the pager draws while the person swipes to or from the Space,
+    /// or not at all.
+    private var pagePresentation: BrowserPagePresentation {
+        if isInteractive { return .presented }
+        return contentPresentation == .inactive ? .hidden : .preview
+    }
+
     /// The tab the window shows in this Space.
     private var shownTab: TabStateModel? {
         model.browser.selectedTabID(in: space.id).flatMap { space.tabs.model($0) }
@@ -60,6 +68,7 @@ struct BrowserRootPageSurface: View {
             }
             .environment(\.browserPagePresentationWindowID, model.windowState?.id)
             .environment(\.spaceContentIsInteractive, isInteractive)
+            .environment(\.browserPagePresentation, pagePresentation)
             .allowsHitTesting(isInteractive)
             .accessibilityHidden(!isInteractive)
             .browserSplitContentDropZone(

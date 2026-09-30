@@ -257,15 +257,30 @@ final class BrowserWebFocusRestorationController {
     }
 }
 
+/// How a window shows the page in one of its hosts.
+enum BrowserPagePresentation {
+    /// Off screen, in a Space the window does not show. The Space keeps its
+    /// page's view in its host so the page keeps its place, but the page's
+    /// engine treats it as hidden, as it does a tab the person switched away
+    /// from.
+    case hidden
+    /// On screen in a Space the person swipes to or from, which draws the
+    /// page as it moves. The engine keeps rendering the page, which takes no
+    /// input or focus until its Space settles.
+    case preview
+    /// The page the window presents to the person.
+    case presented
+}
+
 /// Optional engine hooks. The host owns AppKit attachment and focus; an
 /// adapter owns engine-specific observers such as WebKit's link-hover overlay.
 @MainActor
 protocol BrowserNativePageSurfaceLifecycle: AnyObject {
     func didAttach(to host: BrowserWebHostView)
     func willDetach(from host: BrowserWebHostView)
-    /// The host showing this view started or stopped presenting its page to
-    /// the person, as its Space did, while the view stayed in it; see
-    /// `BrowserWebHostView.presentsPage`.
+    /// The host showing this view changed how it shows its page, as its
+    /// Space did, while the view stayed in it; see
+    /// `BrowserWebHostView.presentation`.
     func presentationDidChange(in host: BrowserWebHostView)
     func presentationGeometryDidChange()
 }
@@ -312,12 +327,10 @@ final class BrowserWebHostView: NSView {
     private var titleBarTrackingArea: NSTrackingArea?
     private var focusRestorationGate = BrowserWebFocusRestorationGate.suppressed
     private var isPageActive = false
-    /// Whether the window presents this host's page to the person. A Space
-    /// the window does not show keeps its page's view in its host, for the
-    /// Space's preview as the person swipes to it and so the page keeps its
-    /// place, but its engine treats the page as off screen, as it does a tab
-    /// the person switched away from.
-    private(set) var presentsPage = true
+    /// How the window shows this host's page. A Space keeps its page's view
+    /// in its host whether the window shows the Space or not, so the page
+    /// keeps its place and its Space's preview draws it as the person swipes.
+    private(set) var presentation = BrowserPagePresentation.presented
     private var focusRestorationAttemptGeneration = 0
     /// When this host claimed `hostedWebView`: the newest claim is the largest.
     private var claim = 0
@@ -449,12 +462,13 @@ final class BrowserWebHostView: NSView {
 
     // MARK: - Actions - Presentation
 
-    /// Tells the page's engine the page left the screen or came back when the
-    /// window stops or starts presenting it, as a tab switch does by moving
-    /// the page's view out of and into a host. The view stays here all along.
-    func updatePresentation(presentsPage: Bool) {
-        guard presentsPage != self.presentsPage else { return }
-        self.presentsPage = presentsPage
+    /// Tells the page's engine the window changed how it shows the page: the
+    /// page left the screen or came back, as a tab switch does by moving the
+    /// page's view out of and into a host, or its Space's preview settled.
+    /// The view stays here all along.
+    func updatePresentation(_ presentation: BrowserPagePresentation) {
+        guard presentation != self.presentation else { return }
+        self.presentation = presentation
         guard let hostedWebView, hostedWebView.superview === self else { return }
         (hostedWebView as? any BrowserNativePageSurfaceLifecycle)?.presentationDidChange(in: self)
     }

@@ -2,21 +2,22 @@ import SwiftUI
 
 extension EnvironmentValues {
     @Entry var browserPagePresentationWindowID: UUID? = nil
+    /// How the window shows the Space this page is drawn in.
+    @Entry var browserPagePresentation = BrowserPagePresentation.presented
     @Entry var browserWebFocusRestorationGate =
         BrowserWebFocusRestorationGate.suppressed
 }
 
 struct BrowserPlatformWebView: NSViewRepresentable {
     @Environment(\.browserPagePresentationWindowID) private var presentationWindowID
-    /// Whether the window shows the Space this page is drawn in.
-    @Environment(\.spaceContentIsInteractive) private var presentsPage
+    @Environment(\.browserPagePresentation) private var presentation
     let page: BrowserPage
     let isPageActive: Bool
     let focusRestorationGate: BrowserWebFocusRestorationGate
 
     func makeNSView(context: Context) -> BrowserWebHostView {
         let host = BrowserWebHostView()
-        host.updatePresentation(presentsPage: presentsPage)
+        host.updatePresentation(presentation)
         host.attach(
             page.nativeView,
             focusRestoration: page.focusRestoration,
@@ -41,7 +42,7 @@ struct BrowserPlatformWebView: NSViewRepresentable {
         )
         // After the attachment, so a page that arrives with its Space comes
         // on screen once, and with the focus the update just settled.
-        host.updatePresentation(presentsPage: presentsPage)
+        host.updatePresentation(presentation)
     }
 
     static func dismantleNSView(_ host: BrowserWebHostView, coordinator: Void) {
