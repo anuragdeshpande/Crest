@@ -18,7 +18,7 @@ and the wire in detail.
 | Target | UI | Engines | Launch |
 | --- | --- | --- | --- |
 | `CrestChromiumUIProduct`, packaged by `package-chromium-host.py --product` | `CrestShared` and `CrestMac` inside the Chromium host | Chromium (default), WebKit | Installed; the default desktop download |
-| `Crest` | `CrestShared` and `CrestMac` | WebKit | Not published. Its Developer ID export supplies the release's resolved entitlements, and `install-local-macos-release.sh` installs it for local checks |
+| `Crest` | `CrestShared` and `CrestMac` | WebKit | Not published. Its Developer ID export supplies the resolved entitlements for release and local release packages |
 | `CrestMobile` | `CrestShared` and `CrestMobile` | WebKit | Installed |
 | `CrestChromiumUI`, `CrestNativeCore`, `CrestMobileNativeCore` | The same UI | As their product | Review: `CREST_REVIEW_BUILD` names an isolated launch |
 

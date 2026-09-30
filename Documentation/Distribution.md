@@ -224,23 +224,30 @@ existing user choice remains authoritative.
 
 ## Local macOS iteration
 
-Maintainers can build and install the real Release configuration without
-publishing an update:
+Maintainers can build and install the dual-engine Release app, packaged the
+way the release workflow packages it, without publishing an update:
 
 ```bash
 Scripts/install-local-macos-release.sh
 ```
 
 The command requires Crest's Developer ID identity and provisioning profile in
-the local keychain/Xcode profile directory. It archives the WebKit composition
-(the `Crest` scheme) with production iCloud, push, keychain, and
-hardened-runtime signing, verifies the export, replaces `/Applications/Crest.app`,
-and relaunches it. That build has no Chromium engine or extensions; it is not the
-app that GitHub Releases publish. It reuses the
-greater of the installed build number and current development appcast by
-default. That prevents the current public build from immediately replacing a
-local iteration without outranking the next published Sparkle build. Set
-`CREST_LOCAL_BUILD_NUMBER` only when a specific local bundle version is needed.
+the local keychain/Xcode profile directory, the .NET SDK, and the GitHub CLI. It
+downloads the published Chromium engine matching the checkout's engine inputs
+and caches it in `~/Library/Caches/Crest-local-release`. Set
+`CREST_CHROMIUM_APP` to a locally built `Chromium.app` to package that engine
+instead. It then archives and exports the WebKit composition to resolve the
+production iCloud, push, and keychain entitlements, builds the native core and
+`CrestChromiumUIProduct`, and packages them with the engine, signed with
+hardened runtime. Finally it quits the installed Crest, replaces
+`/Applications/Crest.app`, and relaunches it. The app is signed but not
+notarized. Builds reuse `~/Library/Developer/Xcode/DerivedData/Crest-LocalRelease`.
+
+The build number defaults to the greater of the installed build number and the
+current development appcast. That prevents the current public build from
+immediately replacing a local iteration without outranking the next published
+Sparkle build. Set `CREST_LOCAL_BUILD_NUMBER` only when a specific local bundle
+version is needed.
 
 Merging a PR into `main` automatically starts development publication. Direct
 pushes to `main` do not publish or advance an appcast. To publish a separately
