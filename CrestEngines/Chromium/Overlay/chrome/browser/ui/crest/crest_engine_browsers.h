@@ -30,6 +30,11 @@ class EngineBinding;
 // itself is offered to the core, which adopts it for a tab of its own or
 // refuses it.
 //
+// A popup an extension creates, as a password manager's popout, shows as a
+// tab in the window the person is using, and its tab stays in its own
+// Browser: the extension still has the window it asked for, whose id,
+// `chrome.windows.remove` and close events are that tab's alone.
+//
 // Each Browser is built on the platform's BrowserWindow, which Chromium's
 // window factory makes for it and which reports here when the Browser is
 // created, shown and destroyed. The platform only makes and hosts windows and
@@ -66,6 +71,9 @@ class EngineBrowsers final {
   Browser* ForWindow(const std::string& profile_id, const std::string& window);
   // The Crest window `browser` belongs in, or empty for none.
   std::string WindowOf(const Browser* browser) const;
+  // Whether `browser` may move, resize, hide or minimize the Crest window it
+  // belongs in. An extension's popup shown as a tab there may not.
+  bool OwnsWindow(const Browser* browser) const;
   // The Crest window whose Browser is being created now, or empty.
   const std::string& creating_window() const { return creating_window_; }
 
@@ -82,8 +90,9 @@ class EngineBrowsers final {
   void Shown(Browser* browser, bool focused);
   void Destroyed(Browser* browser);
   // Whether the engine may create a Browser for itself in `profile`, which
-  // `chrome.windows.create` asks before it creates one. That Browser gets a
-  // Crest window of its own.
+  // `chrome.windows.create` asks before it creates one. A normal window gets a
+  // Crest window of its own, and a popup a tab in the window the person is
+  // using.
   bool MayCreate(Profile* profile);
 
  private:
@@ -108,8 +117,8 @@ class EngineBrowsers final {
   raw_ptr<Browser> bootstrap_ = nullptr;
   std::string creating_window_;
   // The profile `chrome.windows.create` is about to create a Browser in, for
-  // the one turn between asking and creating: that Browser gets a Crest window
-  // of its own. Every other Browser the engine creates joins an open window.
+  // the one turn between asking and creating: that Browser is the extension's
+  // own window. Every other Browser the engine creates joins an open window.
   raw_ptr<Profile> own_window_profile_ = nullptr;
   base::WeakPtrFactory<EngineBrowsers> weak_factory_{this};
 };

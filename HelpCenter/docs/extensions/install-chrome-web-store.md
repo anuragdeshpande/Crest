@@ -9,7 +9,7 @@ keywords: [Chrome Web Store, Add to Crest, CRX3, install extension, Space]
 
 # Install from the Chrome Web Store
 
-Crest for Mac installs Chrome extensions from the Chrome Web Store. Extensions run on the Chromium engine. The WebKit build of Crest for Mac, and Crest on iPhone and iPad, run no extensions.
+Crest for Mac installs Chrome extensions from the Chrome Web Store. Extensions run on Chromium pages. Pages you open in WebKit, and Crest on iPhone and iPad, run no extensions.
 
 ## Before you add it
 

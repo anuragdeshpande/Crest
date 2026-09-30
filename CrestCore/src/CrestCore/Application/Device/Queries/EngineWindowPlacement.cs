@@ -11,7 +11,7 @@ namespace CrestCore.Contracts;
 /// it is stacked, and are declined once it is not. The person's own join the
 /// frontmost window over the persistent session, unless the engine asked for
 /// a window of its own (`OwnWindow`), as an extension's `chrome.windows.create`
-/// does, or none is open: then a new window opens.
+/// does for a normal window, or none is open: then a new window opens.
 public sealed record EngineWindowPlacement(Guid ProfileId, bool OwnWindow, IReadOnlyList<Guid> WindowIds)
     : Query<EngineWindowPlace> {
     #region Actions - Answering

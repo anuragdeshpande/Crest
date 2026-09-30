@@ -2,7 +2,7 @@
 
 Crest is a native SwiftUI browser for Apple silicon. It treats a **Space** as the primary privacy and organization boundary.
 
-Browser rules live in a portable .NET core, and pages render through one of two engine adapters. On Mac, Chromium is the default engine and WebKit is the alternate desktop build. iPhone and iPad use WebKit. Both engines share the same core, UI and sync records. See [Portable browser control plane](Architecture/ControlPlane.md) and [Engine abstraction](Architecture/EngineAbstractionCompletion.md).
+Browser rules live in a portable .NET core, and pages render through one of two engine adapters. On Mac, one app hosts both: Chromium is the default engine, and WebKit takes the pages a person, a website rule or protected video sends to it. Chromium loads the first time a page or extension needs it. Extensions run only in Chromium. iPhone and iPad use WebKit. Both engines share the same core, UI and sync records. See [Portable browser control plane](Architecture/ControlPlane.md) and [Engine abstraction](Architecture/EngineAbstractionCompletion.md).
 
 ## Source map
 

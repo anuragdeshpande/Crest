@@ -412,7 +412,12 @@ window, and a profile with no Space to host it is declined rather than routed
 into an unrelated Space. `focused: false` opens the window without making it
 key; a requested window `state` is ignored. A request no Space can host is refused
 before its window is created, so `chrome.windows.create` reports an error
-instead of leaving its promise unsettled. Picture-in-picture keeps its Views window, which Chromium drives on
+instead of leaving its promise unsettled. A popup an extension creates, such as
+a password manager's popout, opens as a tab in the window the person is using
+instead of a window of its own. Its tab stays in the popup's own `Browser`, so
+the extension's window id, `chrome.windows.remove` and `windows.onRemoved` still
+cover that tab alone, and the popup's bounds, minimize and hide requests leave
+the person's window as it is. Picture-in-picture keeps its Views window, which Chromium drives on
 its own, and so does a DevTools frontend the user has undocked.
 
 A page's own `window.close()` does not close its WebContents. After its
@@ -422,7 +427,9 @@ and the page reports `PageCloseRequested`; Crest's core closes the page's tab
 or Quick Window only when another page opened it, as it does for WebKit. A close
 the browser starts, such as an extension's `chrome.tabs.remove` or
 `chrome.windows.remove`, keeps Chromium's own unload flow and destroys the
-WebContents, and the core then closes the Crest tab once. Chromium never
+WebContents, and the core then closes the Crest tab once. A `Browser` whose last
+tab closed deletes itself on a later task, as it does under Views: the unload
+and tab strip code that emptied it is still running when its window closes. Chromium never
 discards a Crest page (`chrome.tabs.discard` or its own memory saver), because a
 discard replaces the tab's WebContents; the core unloads pages under memory
 pressure instead.
@@ -508,18 +515,19 @@ core and `CrestChromiumUIProduct`, and packages the product with
 `package-chromium-host.py --product --distribution`: every executable, library
 and bundle is signed innermost first with the hardened runtime and a secure
 timestamp, the renderer and GPU helpers keep Chromium's JIT entitlement, and
-the app receives Crest's resolved entitlements, taken from the notarized
-WebKit export built in the same run, over Chromium's device entitlements. The
-workflows then notarize the app and its disk image. The dual-engine Chromium
-build is the default desktop download; WebKit is published beside it as an
-alternate. Each installed product follows its own feed, regardless of the
-engine chosen for pages.
+the app receives Crest's resolved entitlements, taken from the WebKit
+Developer ID export built in the same run, over Chromium's device entitlements.
+The workflows then notarize the app and its disk image. The dual-engine
+Chromium build is the only desktop download; the WebKit export is not
+published. Each composition follows its own feed regardless of the engine
+chosen for pages, and every `-webkit` feed offers the dual-engine installer so
+an installed WebKit-only build updates into it.
 
 The final experimental publication remains on `appcast-experimental.xml` and
 `appcast-experimental-webkit.xml`, but bundles Development as the default update
 channel. On first launch after that install, Crest adopts Development once;
 subsequent user channel choices remain respected. Keep those final experimental
 feeds available so installations that update later can still make the transition.
-Development build numbers exceed every published channel and both products.
+Development build numbers exceed every published channel and feed.
 Merging a PR into main dispatches the development release. Chromium maintenance
 also targets main and publishes verified engine updates to Development.

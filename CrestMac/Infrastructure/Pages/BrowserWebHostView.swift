@@ -127,6 +127,20 @@ final class BrowserWebFocusRestorationController {
         hasPendingRestoration = false
     }
 
+    /// Takes the responder already inside the web view as the page's own,
+    /// when focus reached the page ahead of the selection that makes it the
+    /// focused one, as a click in an unfocused split card does. Nothing is
+    /// left to restore, so an older candidate cannot take focus from it.
+    func adoptCurrentFocus() -> Bool {
+        guard let webView, let responder = webView.window?.firstResponder as? NSView,
+            Self.isView(responder, containedIn: webView)
+        else { return false }
+        candidate = responder
+        permittedOutgoingWebView = nil
+        hasPendingRestoration = false
+        return true
+    }
+
     func requestRestoration(displacing outgoingWebView: NSView? = nil) {
         guard validCandidate() != nil else {
             hasPendingRestoration = false

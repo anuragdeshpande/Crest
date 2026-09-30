@@ -130,8 +130,8 @@ engine` workflow checks for its published engine, including the full input key,
 archive, and checksum. If missing, it builds and publishes that engine on the
 Mac. An existing artifact skips the Mac entirely. The signing job then downloads
 that engine, verifies its checksum, builds Crest's native core and UI from the
-same commit, and signs and notarizes the installers. It publishes the Chromium
-and WebKit experimental feeds. Stable and development workflows are unchanged.
+same commit, and signs and notarizes the installer. It publishes the
+experimental feed and its `-webkit` twin, which offers the same installer.
 
 ## Enabling automatic upstream releases
 

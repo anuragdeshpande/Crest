@@ -35,6 +35,10 @@ void OnBrowserWindowDestroyed(Browser* browser);
 // reserved for that Browser when the Browser's first tab is offered, so this
 // only records whether `chrome.windows.create` asked for focus.
 void OnEngineWindowShown(Browser* browser, bool focused);
+// Whether `browser` may move, resize, hide or minimize the Crest window it
+// shows in. An extension's popup that shows as a tab of the person's window
+// may not.
+bool OwnsWindow(const Browser* browser);
 // Whether a browsing window the engine wants to create for itself has a Crest
 // Space to live in. A window Crest is creating for itself always does.
 //

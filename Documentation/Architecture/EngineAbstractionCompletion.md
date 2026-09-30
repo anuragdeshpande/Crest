@@ -29,7 +29,8 @@ Rules every engine keeps:
   person installed, and is destroyed with everything in it when the window
   closes.
 - Crest never opens a window the person did not ask for. New windows appear
-  only from a person's action or an explicit extension `windows.create`; a
+  only from a person's action or an extension's `windows.create` for a normal
+  window. An extension's popup opens as a tab in the current window, and a
   window a page asks for, such as a sign-in popup, opens as a Quick Window over
   its opener's window. DevTools and side panels dock inside the Crest window.
 - A page another page opens stays on its opener's engine. A site's engine
@@ -47,9 +48,9 @@ Rules every engine keeps:
 
 The core owns the session, the device and the pages on every shipping target.
 On macOS the Chromium composition (`CrestChromiumUIProduct`, packaged by
-`package-chromium-host.py --product`) is the default desktop product, with
-WebKit registered beside it. The WebKit
-`Crest` target is published as the alternate desktop build, and `CrestMobile`
+`package-chromium-host.py --product`) is the only desktop product, with
+WebKit registered beside it. The WebKit-only `Crest` target is not published;
+its Developer ID export supplies the product's resolved entitlements. `CrestMobile`
 runs WebKit on iPhone and iPad.
 
 Chromium's binding is portable C++ inside the engine, keeps Chromium's
@@ -228,15 +229,16 @@ tear-off placement geometry, drag geometry and default-browser prompt cadence.
 - Product packaging: `.github/workflows/release.yml` and
   `.github/workflows/experimental-release.yml` download
   the prebuilt engine, packages `CrestChromiumUIProduct`, signs it with Crest's
-  entitlements and embedded provisioning profile, and notarizes both apps.
+  entitlements and embedded provisioning profile, and notarizes it.
   Never use the review entitlements file for the product: it turns on the app
   sandbox and would strand installed data.
 - The Safe Storage keychain item name must not change. A rename rotates the
   encryption key and resets Chromium's tracked preferences.
-- `release.yml` publishes Chromium as the default Mac download and WebKit
-  as the alternate, each with its own development and stable feeds.
-  `project.yml` defaults to the development update channel. Update feeds
-  follow the product family, independently of the chosen engine preference.
+- `release.yml` publishes the Chromium composition as the only Mac download.
+  Each feed keeps a `-webkit` twin that offers the same installer, so an
+  installed WebKit-only build updates into it. `project.yml` defaults to the
+  development update channel. Update feeds follow the product family,
+  independently of the chosen engine preference.
 
 ## Not built, by decision
 

@@ -2,7 +2,7 @@
 title: Localhost and developer tools
 description: Preview phone, desktop, and custom viewport sizes, capture pages, and inspect websites with Crest’s Mac developer tools.
 slug: /localhost-developer-tools
-keywords: [localhost, developer mode, viewport, responsive, Web Inspector, console, network, capture]
+keywords: [localhost, developer mode, viewport, responsive, Web Inspector, DevTools, Chromium, console, network, capture]
 ---
 
 # Localhost and developer tools
@@ -23,13 +23,13 @@ This previews the page’s layout at the chosen dimensions; it does not reproduc
 - Copy the current link.
 - Open Site Settings and inspect permissions.
 - Use **Capture in Portrait Mode**, **Copy Full Page Capture**, or drag a region to copy it.
-- Toggle the Web Inspector Console, Network panel, or element inspection.
+- Toggle the inspector's Console, Network panel, or element inspection.
 
 Automatic localhost tools follow the focused address. The manual toolbar toggle lets you inspect other sites too.
 
-## Open Web Inspector directly
+## Open the inspector directly
 
-Use **Option-Command-I**, the menu, or the command palette. Web Inspector follows the focused page, including the focused card inside Split View.
+Use **Option-Command-I**, the menu, or the command palette. A Chromium page opens Chromium DevTools in the window, and a WebKit page opens Web Inspector. The inspector follows the focused page, including the focused card inside Split View.
 
 ## Security boundary
 

@@ -18,7 +18,7 @@ and the wire in detail.
 | Target | UI | Engines | Launch |
 | --- | --- | --- | --- |
 | `CrestChromiumUIProduct`, packaged by `package-chromium-host.py --product` | `CrestShared` and `CrestMac` inside the Chromium host | Chromium (default), WebKit | Installed; the default desktop download |
-| `Crest` | `CrestShared` and `CrestMac` | WebKit | Installed; the alternate desktop build |
+| `Crest` | `CrestShared` and `CrestMac` | WebKit | Not published. Its Developer ID export supplies the resolved entitlements for release and local release packages |
 | `CrestMobile` | `CrestShared` and `CrestMobile` | WebKit | Installed |
 | `CrestChromiumUI`, `CrestNativeCore`, `CrestMobileNativeCore` | The same UI | As their product | Review: `CREST_REVIEW_BUILD` names an isolated launch |
 
@@ -456,7 +456,9 @@ itself for `chrome.windows.create`, a renderer's popup or an extension's app
 window. It creates, finds and closes them, moves a page's tab between them
 when its view attaches in another window, offers the tabs the engine opens
 by itself, and closes a profile's `Browser`s when its Space is deleted or its
-private window closes.
+private window closes. An extension's popup is the exception to moving: its
+tab shows in the person's window but stays in the popup's `Browser`, which
+remains the extension's window.
 
 Chromium's Mac shell (`crest_chrome_host.mm` behind the typed `CrestMacShell`
 and `CrestMacUI` protocols in `CrestChromiumHost.h`) does only what AppKit

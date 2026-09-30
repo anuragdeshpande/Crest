@@ -9,7 +9,7 @@ keywords: [1Password, native messaging, trusted browser, Add Browser, authorize 
 
 # Set up 1Password in Crest
 
-The 1Password Chrome Web Store extension runs in the Chromium build of Crest for Mac. To unlock and fill through the 1Password app, the app must trust Crest as a browser.
+The 1Password Chrome Web Store extension runs on Chromium pages in Crest for Mac. To unlock and fill through the 1Password app, the app must trust Crest as a browser.
 
 :::caution Use the signed Crest release
 1Password checks the browser's code signature. Use the Developer ID signed and notarized Crest release installed in `/Applications`. A development build carries a different signature, and 1Password rejects it.

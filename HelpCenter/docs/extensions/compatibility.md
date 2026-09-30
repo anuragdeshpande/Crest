@@ -11,8 +11,8 @@ keywords: [extension compatibility, known limitations, Chrome extension, Chromiu
 
 Crest for Mac runs Chrome extensions from the Chrome Web Store on its Chromium engine. The [extension compatibility](./api-compatibility-matrix.md) page lists which browser features Crest connects to its interface. This page collects the limits.
 
-:::info Mac, Chromium build
-Extensions run only in the Chromium build of Crest for Mac. The WebKit build for Mac, and Crest on iPhone and iPad, run no extensions. Installations and settings stay in one Space on one device.
+:::info Mac, Chromium pages
+Extensions run only on Chromium pages in Crest for Mac. Pages you open in WebKit, including protected-video pages Crest moves there, run without extensions, as does Crest on iPhone and iPad. Installations and settings stay in one Space on one device.
 :::
 
 ## Package formats
@@ -39,6 +39,6 @@ Extensions that talk to a Mac app, such as password managers, depend on that app
 
 ## Extensions from older Crest versions
 
-Earlier WebKit-based versions of Crest ran extensions through their own compatibility layer. Those installations do not carry over to the Chromium build. Install each extension again from the Chrome Web Store in the Space you want.
+Earlier versions of Crest ran extensions in WebKit through their own compatibility layer. Crest no longer runs extensions in WebKit, and those installations do not carry over. Install each extension again from the Chrome Web Store in the Space you want.
 
 If an installed extension misbehaves, continue with [Troubleshoot an extension](./troubleshoot-partial-compatibility.md).

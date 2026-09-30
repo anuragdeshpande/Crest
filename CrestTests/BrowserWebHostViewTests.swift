@@ -542,6 +542,52 @@ final class BrowserWebHostViewTests: XCTestCase {
         XCTAssertFalse(setup.window.firstResponder === addressField)
     }
 
+    /// A click in an unfocused split card focuses the page under the pointer
+    /// before the card's selection arrives. The selection boundary keeps that
+    /// focus, even in an engine whose responders never report themselves, as
+    /// Chromium's do not, and a responder the page remembered from before,
+    /// such as its docked inspector, cannot take it back.
+    func testFocusAClickPutInASplitCardSurvivesItsSelection() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let page = NSView(frame: window.contentLayoutRect)
+        let content = BrowserFocusableViewProbe(frame: page.bounds)
+        let inspector = BrowserFocusableViewProbe(frame: page.bounds)
+        let addressField = NSTextField(string: "https://example.com")
+        page.addSubview(content)
+        page.addSubview(inspector)
+        window.contentView = NSView(frame: page.frame)
+        window.contentView?.addSubview(page)
+        window.contentView?.addSubview(addressField)
+        window.makeKeyAndOrderFront(nil)
+        addTeardownBlock { window.orderOut(nil) }
+        let focus = BrowserWebFocusRestorationController(webView: page)
+        XCTAssertTrue(window.makeFirstResponder(inspector))
+        focus.captureBeforeDeparture()
+        focus.requestRestoration()
+
+        XCTAssertTrue(window.makeFirstResponder(content))
+        AddressFocusAction.resign(in: window, keepingFocusIn: page)
+        XCTAssertTrue(focus.adoptCurrentFocus())
+        focus.restoreIfNeeded(
+            in: page,
+            gate: .init(browserChromeOwnsFocus: false, pageChromeOwnsFocus: false),
+            applicationIsActive: true,
+            accessibilityOwnsFocus: false,
+            menuIsTracking: false,
+            windowIsKey: true
+        )
+        XCTAssertTrue(window.firstResponder === content)
+
+        XCTAssertTrue(window.makeFirstResponder(addressField))
+        AddressFocusAction.resign(in: window, keepingFocusIn: page)
+        XCTAssertTrue(window.firstResponder === window, "The address field still gives up focus as the selection moves.")
+    }
+
     func testPresentationFocusProtectionBlocksOnlyTheMountingTurn() {
         let setup = focusHostSetup()
         XCTAssertTrue(setup.window.makeFirstResponder(nil))
@@ -790,6 +836,11 @@ private final class BrowserKeyboardHandlerProbe: NSResponder {
         events.append(event)
         onKeyDown?()
     }
+}
+
+@MainActor
+private final class BrowserFocusableViewProbe: NSView {
+    override var acceptsFirstResponder: Bool { true }
 }
 
 private struct FocusHostSetup {
