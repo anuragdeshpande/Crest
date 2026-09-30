@@ -41,13 +41,11 @@ Only stable releases receive GitHub's Latest designation. Manual dispatch of
 **Publish macOS release** offers development and nightly; stable publication
 requires a tag push. Experimental builds test a branch before it reaches `main`.
 
-The **Publish development build after merge** workflow dispatches **Publish
-macOS release** with `channel=development` on `main`. It runs only after a PR
-is merged into `main`, including PRs from forks; closing an unmerged PR does
-nothing. The trigger does not check out PR code or use signing secrets. The
-release builds the current `main` commit when dispatched, which can include
-subsequent merges if several PRs land together, and uses the existing
-`production` environment and serialized publication queue.
+**Publish macOS release** also runs when a PR is merged into `main`, including
+PRs from forks, and publishes Development from the merge commit. Closing an
+unmerged PR does nothing. It never checks out the PR's own code: it builds the
+merge commit on `main` with the existing `production` environment and
+serialized publication queue. A direct push to `main` publishes nothing.
 
 The marketing version comes from `Config/Version.xcconfig`. Stable tags must
 match it exactly. Distributed build numbers add the GitHub Actions run number

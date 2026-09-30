@@ -529,5 +529,5 @@ channel. On first launch after that install, Crest adopts Development once;
 subsequent user channel choices remain respected. Keep those final experimental
 feeds available so installations that update later can still make the transition.
 Development build numbers exceed every published channel and feed.
-Merging a PR into main dispatches the development release. Chromium maintenance
+Merging a PR into main publishes the development release from the merge commit. Chromium maintenance
 also targets main and publishes verified engine updates to Development.

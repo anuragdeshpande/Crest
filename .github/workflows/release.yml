@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "v*.*.*"
+  # A PR merged into main publishes Development from the merge commit, never
+  # from the PR's own code; closing an unmerged PR does nothing.
+  pull_request_target:
+    branches: [main]
+    types: [closed]
   schedule:
     - cron: "15 8 * * *"
   workflow_dispatch:
@@ -24,12 +29,15 @@ permissions:
   artifact-metadata: write
 
 concurrency:
-  group: crest-macos-release
+  # A PR closed without merging publishes nothing, so it stays out of the
+  # queue instead of replacing a publication waiting there.
+  group: ${{ github.event_name == 'pull_request_target' && !github.event.pull_request.merged && format('crest-unmerged-pr-{0}', github.run_id) || 'crest-macos-release' }}
   cancel-in-progress: false
 
 jobs:
   preflight:
     name: Resolve publication
+    if: github.event_name != 'pull_request_target' || github.event.pull_request.merged
     runs-on: ubuntu-latest
     outputs:
       asset_base: ${{ steps.release.outputs.asset_base }}
@@ -41,9 +49,12 @@ jobs:
       release_tag: ${{ steps.release.outputs.release_tag }}
       release_title: ${{ steps.release.outputs.release_title }}
       should_publish: ${{ steps.release.outputs.should_publish }}
+      source_sha: ${{ steps.release.outputs.source_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Empty except for a merged PR, whose event commit is not main's.
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
 
       - name: Resolve release identity and previous publication
@@ -79,7 +90,8 @@ jobs:
           build_epoch=1000
           build_number="$((build_epoch + GITHUB_RUN_NUMBER))"
           release_date="$(date -u +%Y-%m-%d)"
-          short_sha="$(git rev-parse --short=7 "$GITHUB_SHA")"
+          source_sha="$(git rev-parse HEAD)"
+          short_sha="$(git rev-parse --short=7 "$source_sha")"
           retry_github git fetch origin updates
           # Reruns and delayed runs must also outrank completed publications.
           build_number="$(
@@ -90,6 +102,8 @@ jobs:
 
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
             channel=stable
+          elif [[ "$GITHUB_EVENT_NAME" == "pull_request_target" ]]; then
+            channel=development
           elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             channel="$REQUESTED_CHANNEL"
             if [[ "$channel" != "development" && "$channel" != "nightly" ]]; then
@@ -176,7 +190,7 @@ jobs:
           fi
 
           should_publish=true
-          if [[ "$channel" == "nightly" && "$previous_commit" == "$GITHUB_SHA" ]]; then
+          if [[ "$channel" == "nightly" && "$previous_commit" == "$source_sha" ]]; then
             should_publish=false
             printf 'Nightly %s already publishes %s; skipping an unchanged build.\n' \
               "$release_tag" "$short_sha" >> "$GITHUB_STEP_SUMMARY"
@@ -192,6 +206,7 @@ jobs:
             printf 'release_tag=%s\n' "$release_tag"
             printf 'release_title=%s\n' "$release_title"
             printf 'should_publish=%s\n' "$should_publish"
+            printf 'source_sha=%s\n' "$source_sha"
           } >> "$GITHUB_OUTPUT"
 
   engine:
@@ -202,7 +217,7 @@ jobs:
     permissions:
       contents: write
     with:
-      source_sha: ${{ github.sha }}
+      source_sha: ${{ needs.preflight.outputs.source_sha }}
 
   release:
     name: Sign, notarize, and publish
@@ -214,6 +229,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
 
       - name: Ensure build tools are available
@@ -237,7 +253,7 @@ jobs:
           DEVELOPER_ID_PROVISIONING_PROFILE_BASE64: ${{ secrets.DEVELOPER_ID_PROVISIONING_PROFILE_BASE64 }}
           RELEASE_ASSET_BASE: ${{ needs.preflight.outputs.asset_base }}
           RELEASE_BUILD_NUMBER: ${{ needs.preflight.outputs.build_number }}
-          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
           RELEASE_CHANNEL: ${{ needs.preflight.outputs.channel }}
         run: |
           set -euo pipefail
@@ -461,6 +477,7 @@ jobs:
           RELEASE_CHANNEL: ${{ needs.preflight.outputs.channel }}
           RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
           RELEASE_TITLE: ${{ needs.preflight.outputs.release_title }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
         run: |
           set -euo pipefail
 
@@ -476,7 +493,7 @@ jobs:
               if gh release create \
                   "$RELEASE_TAG" \
                   --repo "$GITHUB_REPOSITORY" \
-                  --target "$GITHUB_SHA" \
+                  --target "$SOURCE_SHA" \
                   --title "$RELEASE_TITLE" \
                   --notes-file "$release_notes" \
                   --prerelease \
@@ -504,7 +521,7 @@ jobs:
             --server-url "$GITHUB_SERVER_URL"
             --channel "$RELEASE_CHANNEL"
             --release-tag "$RELEASE_TAG"
-            --current-ref "$GITHUB_SHA"
+            --current-ref "$SOURCE_SHA"
             --previous-entry "$RELEASE_NOTE_MARKER"
             --asset-name "$installer_name"
           )
