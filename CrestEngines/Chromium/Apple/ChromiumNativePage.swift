@@ -279,13 +279,19 @@
             pages?.request(RefreshStoreListing(pageID: pageID))
         }
 
+        /// The extension a store listing names. A listing is `/detail/<id>` or
+        /// `/detail/<name>/<id>`, and its reviews and support pages add a segment
+        /// after the identifier.
         static func webStoreExtensionID(_ url: URL?) -> String? {
-            guard let url, url.scheme == "https", url.host == "chromewebstore.google.com",
-                url.pathComponents.count >= 3, url.pathComponents[1] == "detail",
-                let id = url.pathComponents.last, id.count == 32,
-                id.allSatisfy({ ("a"..."p").contains(String($0)) })
+            guard let url, url.scheme == "https", url.host == "chromewebstore.google.com"
             else { return nil }
-            return id
+            let parts = Array(url.pathComponents.dropFirst())
+            guard parts.count >= 2, parts[0] == "detail" else { return nil }
+            let isID: (String) -> Bool = { candidate in
+                candidate.count == 32 && candidate.allSatisfy({ ("a"..."p").contains(String($0)) })
+            }
+            if parts.count > 2, isID(parts[2]) { return parts[2] }
+            return isID(parts[1]) ? parts[1] : nil
         }
 
         /// A page still being created takes the zoom once it exists.

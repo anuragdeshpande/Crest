@@ -25,19 +25,26 @@ bool IsWebStoreURL(const GURL& url) {
   return url.SchemeIs(url::kHttpsScheme) && url.host() == "chromewebstore.google.com";
 }
 
-// The extension a store detail URL names, or an empty string for any other
-// store page. Chrome Web Store identifiers are 32 characters from a-p.
+// Chrome Web Store identifiers are 32 characters from a-p.
+bool IsExtensionID(std::string_view candidate) {
+  if (candidate.size() != 32) return false;
+  for (char character : candidate)
+    if (character < 'a' || character > 'p') return false;
+  return true;
+}
+
+// The extension a store listing URL names, or an empty string for any other
+// store page. A listing is /detail/<id> or /detail/<name>/<id>, and its
+// reviews and support pages add a segment after the identifier.
 std::string WebStoreExtensionID(const GURL& url) {
   if (!IsWebStoreURL(url)) return std::string();
   const std::string_view path = url.path();
   std::vector<std::string_view> parts = base::SplitStringPiece(
       path, "/", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
   if (parts.size() < 2 || parts.front() != "detail") return std::string();
-  std::string_view candidate = parts.back();
-  if (candidate.size() != 32) return std::string();
-  for (char character : candidate)
-    if (character < 'a' || character > 'p') return std::string();
-  return std::string(candidate);
+  if (parts.size() > 2 && IsExtensionID(parts[2])) return std::string(parts[2]);
+  if (IsExtensionID(parts[1])) return std::string(parts[1]);
+  return std::string();
 }
 
 // The isolated-world script. It uses DOM and CSSOM APIs only: the store's
@@ -50,8 +57,10 @@ const char* CrestStoreScript() {
                  remove: 'Remove from Crest', busy: 'Installing…' };
   var state = { id: '', installed: false, busy: false };
   var adopted = null, hovering = false, pending = false;
+  // The host's listing rule: /detail/<id> or /detail/<name>/<id>, optionally
+  // followed by the listing's reviews or support page.
   function detailID() {
-    var match = /\/detail\/(?:[^\/]+\/)?([a-p]{32})(?:\/|$)/.exec(location.pathname);
+    var match = /^\/detail\/(?:[^\/]+\/)?([a-p]{32})(?:\/|$)/.exec(location.pathname);
     return match ? match[1] : '';
   }
   function label(button) { return button.querySelector('span[jsname="V67aGc"]') || button; }
@@ -63,24 +72,31 @@ const char* CrestStoreScript() {
     var rect = element.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0;
   }
-  function installLabel(value) {
-    return /^(add to|added to|remove from) (chrome|crest)$/i.test(value) || value === labels.busy;
+  // The store words its button in the page's language, and some languages
+  // leave Chrome out of it, so the button is known by what the store does
+  // with it: it is the labelled control the store disables for a browser that
+  // is not Chrome, or the one that names Chrome or, once adopted, Crest.
+  function installButton(button) {
+    var value = text(label(button));
+    return value !== '' && (button.disabled || /chrome|crest/i.test(value));
   }
   // The listing's own install button: the one in the section that carries the
   // extension's title, so a related listing's button is never adopted.
   function locate() {
     if (shown(adopted)) return adopted;
     adopted = null; hovering = false;
+    if (!detailID()) return null;
     var headings = document.querySelectorAll('h1'), scope = null;
     for (var heading = 0; heading < headings.length; heading++) {
       if (!shown(headings[heading])) continue;
       scope = headings[heading].closest('section');
       break;
     }
-    var buttons = (scope || document).querySelectorAll('button');
+    if (!scope) return null;
+    var buttons = scope.querySelectorAll('button');
     for (var index = 0; index < buttons.length; index++) {
       var button = buttons[index];
-      if (!shown(button) || !installLabel(text(label(button)))) continue;
+      if (!shown(button) || !installButton(button)) continue;
       adopted = button;
       button.addEventListener('pointerenter', function() { hovering = true; render(); });
       button.addEventListener('pointerleave', function() { hovering = false; render(); });
@@ -106,38 +122,30 @@ const char* CrestStoreScript() {
     }
   }
   // Crest installs extensions itself, so the store's prompts to switch to
-  // Chrome are noise. Each prompt is found from its own wording and hidden at
-  // the outermost element that still says nothing else, so the listing around
-  // it is never affected.
-  function hidePrompt(pattern, limit) {
-    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    var node;
-    while ((node = walker.nextNode())) {
-      if (!pattern.test(node.nodeValue || '')) continue;
-      var element = node.parentElement, box = null;
-      while (element && element !== document.body && text(element).length <= limit) {
-        box = element;
-        element = element.parentElement;
-      }
-      // A prompt the store re-rendered leaves the hidden original behind, so
-      // a match that is already hidden is not the one to act on.
-      if (!box || box.style.display === 'none') continue;
-      box.style.display = 'none';
-      return;
+  // Chrome are noise. Their wording follows the page's language, so each is
+  // found from the action it offers: the dialog links to Chrome's download
+  // page, and the listing's notice holds the store's Install Chrome button,
+  // which the store's own analytics name 276336.
+  var promptActions = '[role="dialog"] a[href^="https://www.google.com/chrome/"], ' +
+                      'button[jslog^="276336;"]';
+  // The outermost element around a notice's action that holds no other
+  // control and no heading, so the listing around it is never affected.
+  function notice(action) {
+    var box = action;
+    for (var parent = box.parentElement; parent && parent !== document.body;
+         parent = parent.parentElement) {
+      if (parent.querySelector('h1, h2, h3') ||
+          parent.querySelectorAll('a[href], button').length > 1) break;
+      box = parent;
     }
+    return box;
   }
-  var swept = 0, sweeping = 0;
   function hidePrompts() {
-    // A prompt can be the last thing the store adds, so a suppressed sweep is
-    // always retried rather than dropped.
-    var waiting = 500 - (Date.now() - swept);
-    if (waiting > 0) {
-      if (!sweeping) sweeping = setTimeout(function() { sweeping = 0; hidePrompts(); }, waiting);
-      return;
+    var actions = document.querySelectorAll(promptActions);
+    for (var index = 0; index < actions.length; index++) {
+      var box = actions[index].closest('[role="dialog"]') || notice(actions[index]);
+      if (box.style.display !== 'none') box.style.display = 'none';
     }
-    swept = Date.now();
-    hidePrompt(/switch to chrome to install/i, 140);
-    hidePrompt(/switch to chrome\?/i, 260);
   }
   function render() {
     relax();
@@ -152,6 +160,11 @@ const char* CrestStoreScript() {
     button.removeAttribute('disabled');
     button.setAttribute('aria-disabled', state.busy ? 'true' : 'false');
     button.setAttribute('aria-label', wanted);
+    // The labels are Crest's English, whatever the store's language, so
+    // assistive technology reads them as English and a right-to-left page
+    // keeps the progress label's ellipsis at its end.
+    if (button.lang !== 'en') button.lang = 'en';
+    if (button.dir !== 'ltr') button.dir = 'ltr';
   }
   function schedule() {
     if (pending) return;

@@ -356,14 +356,17 @@ button is inert in the ungoogled baseline, so Crest takes it over: a script in
 an isolated world, injected only into `chromewebstore.google.com` documents in a
 regular profile, relabels that button **Add to Crest**, **Added to Crest** or
 **Remove from Crest** from Chromium's own registry and routes a click into the
-same install review. The click is delivered as a request in the listing's own
-URL fragment, and the host installs only the extension the listing's address
-names, so a store page cannot name another one. The same script releases the
-store's desktop minimum width, which is wider than a Crest page card and would
-otherwise push the listing and its button past the card's edge, and hides the
-store's prompts to switch to Chrome. Crest mode also restores
-Chromium's declared-URL extension update requests; signature and permission
-checks remain owned by Chromium.
+same install review. The store words its pages in the reader's language, so the
+script finds the button and the store's prompts by their markup and the actions
+they offer rather than by translated text, and a listing behaves the same in
+every store language and on its reviews and support pages. The click is
+delivered as a request in the listing's own URL fragment, and the host installs
+only the extension the listing's address names, so a store page cannot name
+another one. The same script releases the store's desktop minimum width, which
+is wider than a Crest page card and would otherwise push the listing and its
+button past the card's edge, and hides the store's prompts to switch to Chrome.
+Crest mode also restores Chromium's declared-URL extension update requests;
+signature and permission checks remain owned by Chromium.
 
 Companion apps such as Apple's Passwords helper and 1Password register their
 native-messaging hosts for Google Chrome and do not know Crest's directories. In
