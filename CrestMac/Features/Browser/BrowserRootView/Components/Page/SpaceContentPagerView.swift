@@ -106,6 +106,11 @@ final class SpaceContentPagerView<Content: View>: NSView {
 
     private func receive(_ value: SpacePagerPresentation.Snapshot) {
         guard value.spaceIDs == spaces.map(\.id) else { return }
+        // A selection that arrives mid-slide leaves the roots built for the
+        // Space selected before it, so the page it lands on would never take
+        // input. A settled slide supplies the latest roots, as the sidebar's
+        // pager does.
+        let settles = value.phase == .idle && snapshot?.phase != .idle
         snapshot = value
         if let release = value.transition, value.phase == .settling, bounds.width > 0 {
             if transition == release {
@@ -140,7 +145,7 @@ final class SpaceContentPagerView<Content: View>: NSView {
         } else {
             stopAnimations()
             prepareHosts(
-                at: value.position, destination: value.destinationID, refresh: false,
+                at: value.position, destination: value.destinationID, refresh: settles,
                 preparesNeighbors: value.phase == .idle)
             positionHosts(at: value.position)
         }
