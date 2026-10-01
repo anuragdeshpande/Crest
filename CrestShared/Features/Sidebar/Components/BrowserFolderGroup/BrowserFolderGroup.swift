@@ -24,6 +24,9 @@ struct BrowserFolderGroup: View {
     /// How many folders hold this one.
     let depth: Int
     let context: BrowserSidebarListContext
+    /// The tab a collapsed folder around this one keeps on screen, which this
+    /// folder shows in place of its contents.
+    var inheritedKeptTabID: UUID? = nil
 
     @Environment(\.sidebarSpacePresentation) private var spacePresentation
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -50,7 +53,7 @@ struct BrowserFolderGroup: View {
     private var configuration: BrowserFolderGroupConfiguration {
         BrowserFolderGroupConfiguration(
             sidebarInteraction: sidebarInteraction, folder: folder, depth: depth, context: context,
-            spacePresentation: spacePresentation)
+            spacePresentation: spacePresentation, inheritedKeptTabID: inheritedKeptTabID)
     }
 
     private var isExpanded: Binding<Bool> {
@@ -98,10 +101,10 @@ struct BrowserFolderGroup: View {
     var body: some View {
         let configuration = self.configuration
         let interaction = self.interaction
-        let isExpanded = !folder.isCollapsed
+        let showsContents = configuration.showsContents
         VStack(spacing: 0) {
             BrowserFolderGroupSurface(configuration: configuration, interaction: interaction)
-            if isExpanded {
+            if showsContents {
                 folderContents(configuration: configuration)
             }
         }
@@ -112,7 +115,7 @@ struct BrowserFolderGroup: View {
                 intensity: configuration.displayBranding?.folderColorIntensity ?? 0,
                 textColorMode: configuration.displayBranding?.textColorMode ?? .automatic,
                 leadingInset: CrestSpacing.small + CGFloat(depth) * BrowserFolderLayout.nestingIndent,
-                hasVisibleContents: isExpanded || configuration.keptCollapsedItem(for: collapsedTabVisibility) != nil,
+                hasVisibleContents: showsContents || configuration.keptItem(for: collapsedTabVisibility) != nil,
                 isSelected: BrowserSidebarSelection.showsSelected(.folder(folder.id), in: context),
                 folderID: folder.id, reorder: sidebarInteraction.sidebarReorderState)
         )
@@ -124,7 +127,7 @@ struct BrowserFolderGroup: View {
         .browserSidebarReorderZone(
             .folder(folder.id),
             state: sidebarInteraction.sidebarReorderState,
-            isActive: !isExpanded
+            isActive: !showsContents
         )
         .modifier(
             BrowserFolderReorderReservation(configuration: configuration)
@@ -165,12 +168,28 @@ struct BrowserFolderGroup: View {
         else {
             return
         }
+        if inheritedKeptTabID != nil { expandFoldersAround() }
         isExpanded.wrappedValue = true
         sidebarInteraction.editingFolderRequest = BrowserFolderRuntimeAssignment(
             folderID: childID,
             spaceID: configuration.spaceID,
             profileID: configuration.profileID
         )
+    }
+
+    /// Opens every collapsed folder that holds this one. A folder drawn on a
+    /// collapsed folder's way to its kept tab shows only that way, so a child
+    /// made here would stay hidden, and its title could never start editing,
+    /// until the folders around it open.
+    private func expandFoldersAround() {
+        var parentID = folder.parentID
+        var visited: Set<UUID> = []
+        while let id = parentID, visited.insert(id).inserted, let parent = context.space.folders.model(id) {
+            if parent.isCollapsed {
+                context.browser.setFolderCollapsed(id, matching: configuration.assignment, isCollapsed: false)
+            }
+            parentID = parent.parentID
+        }
     }
 
     private func unloadKeptCollapsedTab(_ tabID: UUID) {
@@ -358,6 +377,7 @@ extension BrowserFolderGroup: @MainActor Equatable {
     /// as SwiftUI compares a view's inputs: a list that redraws leaves them be.
     static func == (lhs: BrowserFolderGroup, rhs: BrowserFolderGroup) -> Bool {
         lhs.folder === rhs.folder && lhs.depth == rhs.depth && lhs.context == rhs.context
+            && lhs.inheritedKeptTabID == rhs.inheritedKeptTabID
     }
 }
 
