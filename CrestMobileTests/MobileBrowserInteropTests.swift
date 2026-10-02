@@ -143,6 +143,68 @@ final class MobileBrowserInteropTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    func testADownloadFromAnotherSiteFollowsThePagesAutomaticDownloadChoice() async throws {
+        let filename = "crest-cdn-\(UUID().uuidString).payload"
+        let server = try MobileDownloadHTTPServer(
+            payload: Data("download served by another site".utf8),
+            filename: filename,
+            pageHTML: "<!doctype html><title>Release</title>"
+        )
+        let port = try await server.start()
+        let pageURL = try XCTUnwrap(URL(string: "http://localhost:\(port)/page"))
+        // The file comes from another site, as a release page's files come
+        // from its CDN.
+        let fileURL = try XCTUnwrap(URL(string: "http://127.0.0.1:\(port)/\(filename)"))
+        let profile = BrowsingProfile()
+        let tab = TabState.Seed(title: "Release", url: nil, placement: .current)
+        let space = SpaceState.Seed(
+            profileID: profile.id,
+            name: "Download Space",
+            symbol: "arrow.down.circle",
+            accent: .teal,
+            folders: [],
+            tabs: [tab]
+        )
+        let browser = BrowserStore.hostingPages(SessionState.Seed(spaces: [space]))
+        let permissionCenter = BrowserSitePermissionCenter(core: browser.core)
+        let downloads = MobileBrowserDownloads(core: browser.core, permissionCenter: permissionCenter)
+        let page = try XCTUnwrap(
+            browser.openWebKitPage(in: space.id, for: tab.id).map { opened in
+                MobileBrowserPage(
+                    corePage: opened.core,
+                    webKitPage: opened.webKit,
+                    tab: browser.pageTab(tab.id, in: space.id),
+                    space: browser.hostedSpace(space.id),
+                    downloadCenter: downloads.center,
+                    permissionCenter: permissionCenter,
+                    openNewTab: { _ in }
+                )
+            }
+        )
+        permissionCenter.setDecision(
+            .denyPersistently,
+            for: .automaticDownloads,
+            origin: try XCTUnwrap(SiteOrigin(url: pageURL)),
+            in: space.id
+        )
+        defer { server.stop() }
+
+        page.webView.load(URLRequest(url: pageURL))
+        try await waitUntil(timeout: 5) {
+            page.webView.backForwardList.currentItem?.url == pageURL && !page.webView.isLoading
+        }
+        // While this navigation becomes a download, the web view's URL is
+        // already the file's; the page's site still owns the choice.
+        page.webView.load(URLRequest(url: fileURL))
+
+        let center = downloads.center
+        try await waitUntil(timeout: 5) {
+            center.items.contains { $0.phase != .preparing }
+        }
+        XCTAssertEqual(center.items.first?.phase, .blockedAutomaticDownload)
+        await Self.removeDataStore(profile.id)
+    }
+
     func testADownloadsSignInIsAskedThroughItsPagesHostAndItsCredentialCompletesIt() async throws {
         let filename = "crest-auth-\(UUID().uuidString).payload"
         let server = try MobileDownloadHTTPServer(
@@ -612,14 +674,29 @@ private final class MobileDownloadHTTPServer: @unchecked Sendable {
     private let responseData: Data
     private let unauthorizedResponseData: Data
     private let requiredAuthorizationHeader: String?
+    /// The page `GET /page` answers with, when the server has one.
+    private let pageResponseData: Data?
 
     init(
         payload: Data,
         filename: String,
         mimeType: String = "application/octet-stream",
-        basicAuthentication: (username: String, password: String)? = nil
+        basicAuthentication: (username: String, password: String)? = nil,
+        pageHTML: String? = nil
     ) throws {
         listener = try NWListener(using: .tcp, on: .any)
+        pageResponseData = pageHTML.map { html in
+            Data(
+                """
+                HTTP/1.1 200 OK\r
+                Content-Type: text/html\r
+                Content-Length: \(html.utf8.count)\r
+                Connection: close\r
+                \r
+                \(html)
+                """.utf8
+            )
+        }
         let header = """
             HTTP/1.1 200 OK\r
             Content-Type: \(mimeType)\r
@@ -688,9 +765,13 @@ private final class MobileDownloadHTTPServer: @unchecked Sendable {
                 }
                 let request = data.flatMap { String(data: $0, encoding: .utf8) }?.lowercased()
                 let response =
-                    requiredAuthorizationHeader.map {
-                        request?.contains($0) == true ? responseData : unauthorizedResponseData
-                    } ?? responseData
+                    if let pageResponseData, request?.hasPrefix("get /page ") == true {
+                        pageResponseData
+                    } else {
+                        requiredAuthorizationHeader.map {
+                            request?.contains($0) == true ? responseData : unauthorizedResponseData
+                        } ?? responseData
+                    }
                 connection.send(
                     content: response,
                     contentContext: .defaultMessage,

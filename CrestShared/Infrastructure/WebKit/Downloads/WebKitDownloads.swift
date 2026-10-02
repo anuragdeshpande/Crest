@@ -29,6 +29,10 @@ final class WebKitDownloads: NSObject {
         let sourceURL: URL?
         /// The site its automatic-download choice belongs to.
         let origin: SiteOrigin?
+        /// The Space whose choices answer for it, kept from its start, since
+        /// a page opened only for the download goes away before WebKit asks
+        /// where the file goes.
+        let spaceID: UUID?
         let isUserInitiated: Bool
         var isApprovedRetry = false
         var filename: String
@@ -49,7 +53,7 @@ final class WebKitDownloads: NSObject {
 
         init(
             profileID: UUID, page: WebKitEnginePage, replay: URLRequest?, sourceURL: URL?, origin: SiteOrigin?,
-            isUserInitiated: Bool, filename: String
+            spaceID: UUID?, isUserInitiated: Bool, filename: String
         ) {
             self.profileID = profileID
             pageID = page.id
@@ -57,6 +61,7 @@ final class WebKitDownloads: NSObject {
             self.replay = replay
             self.sourceURL = sourceURL
             self.origin = origin
+            self.spaceID = spaceID
             self.isUserInitiated = isUserInitiated
             self.filename = filename
         }
@@ -95,6 +100,7 @@ final class WebKitDownloads: NSObject {
             profileID: page.profileID, page: page,
             replay: request.flatMap(BrowserDownloadRetryRequestPolicy.replayableRequest(from:)),
             sourceURL: request?.url, origin: Self.origin(of: download, in: page.webView),
+            spaceID: binding.core?.state.pages[page.id]?.spaceID,
             isUserInitiated: download.isUserInitiated || isUserInitiated,
             filename: request?.url?.lastPathComponent.nilIfEmpty ?? "download")
         transfers[transfer.engineID] = transfer
@@ -230,11 +236,11 @@ final class WebKitDownloads: NSObject {
     /// Whether the site may send this file without the person asking for it:
     /// the core's rule over the site's choice and the page's one automatic
     /// download, asking the person through the core when the rule says so.
+    /// A page that is gone can no longer ask, so only a saved choice lets
+    /// its download go on.
     private func allowsAutomatically(_ transfer: Transfer) async -> Bool {
         let initiated = transfer.isUserInitiated || transfer.isApprovedRetry
-        guard let origin = transfer.origin, let page = transfer.page,
-            let spaceID = binding.core?.state.pages[transfer.pageID]?.spaceID
-        else { return initiated }
+        guard let origin = transfer.origin, let spaceID = transfer.spaceID else { return initiated }
         let saved =
             (try? binding.core?.query(
                 SiteDecision(spaceID: spaceID, origin: origin, permission: .automaticDownloads, detail: nil)))?
@@ -248,6 +254,7 @@ final class WebKitDownloads: NSObject {
         case .allow: return true
         case .deny: return false
         case .requestPermission:
+            guard let page = transfer.page else { return false }
             return await page.ask(
                 PermissionQuestion(permission: .automaticDownloads, origin: origin, topLevelOrigin: origin))
         }
@@ -371,9 +378,11 @@ final class WebKitDownloads: NSObject {
 
     /// The site a download belongs to: the page's own, including files its
     /// embedded frames or a CDN serve, so its site controls can change the
-    /// rule; else the frame's, else the file's.
+    /// rule; else the frame's, else the file's. The page is the document it
+    /// shows: while a navigation that becomes a download is under way, the
+    /// web view's URL is already the file's, after any redirect to its CDN.
     private static func origin(of download: WKDownload, in webView: WKWebView) -> SiteOrigin? {
-        if let origin = webView.url.flatMap(SiteOrigin.init(url:)) { return origin }
+        if let origin = webView.backForwardList.currentItem.flatMap({ SiteOrigin(url: $0.url) }) { return origin }
         let frameOrigin = SiteOrigin(download.originatingFrame.securityOrigin)
         if !frameOrigin.host.isEmpty { return frameOrigin }
         return download.originalRequest?.url.flatMap(SiteOrigin.init(url:))

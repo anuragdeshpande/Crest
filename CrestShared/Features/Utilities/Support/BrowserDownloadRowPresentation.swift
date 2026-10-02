@@ -75,7 +75,8 @@ enum BrowserDownloadRowLayoutPolicy {
         hasSecondaryMetrics: Bool,
         statusNeedsAttention: Bool
     ) -> BrowserDownloadRowLayout {
-        guard hasSecondaryMetrics || statusNeedsAttention else {
+        // Without metrics the status is the only line; a second would repeat it.
+        guard hasSecondaryMetrics else {
             return .singleLine
         }
         guard !usesAccessibilityTextSize,
