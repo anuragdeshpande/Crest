@@ -66,9 +66,10 @@ patch files, refreshes host hashes only after strict patch application, and pins
 the new source's PGO profile. It restores the source lock and host hashes if
 preparation fails. Build failures leave the candidate available for inspection.
 An esbuild version change stops for a toolchain review instead of using a stale
-toolchain. New milestones need `--allow-major` and do not automatically ship.
-After validating milestone updates, `fork.json.automaticMajorUpdates` can opt
-those updates into the same automated build and release gates.
+toolchain. New milestones need `--allow-major` here. The schedule builds a new
+milestone for review once the pinned one has no newer fix, but it ships only when
+its PR is merged. `fork.json.automaticMajorUpdates` can also let milestone
+updates release automatically.
 
 The immediate upstream is ungoogled-chromium for macOS. Updates therefore follow
 its releases, not the first Google Chrome announcement. Pulling a Google security
@@ -94,11 +95,10 @@ Configure these repository variables:
 | Variable | Purpose |
 | --- | --- |
 | `CHROMIUM_WORKSPACE` | Absolute persistent workspace path on the Mac |
-| `CHROMIUM_INTEGRATION_BRANCH` | Branch containing the fork policy and scripts, initially `chromium-control-plane` |
 | `CHROMIUM_SDK` | Absolute path to the SDK pinned by the source lock |
 | `CHROMIUM_BUILD_JOBS` | Compiler parallelism, default 4 |
 | `CHROMIUM_CI_ENABLED` | `true` allows manual and scheduled engine builds |
-| `CHROMIUM_UPSTREAM_ENABLED` | `true` builds eligible upstream updates every six hours |
+| `CHROMIUM_UPSTREAM_ENABLED` | `true` builds new upstream releases every six hours and opens a PR for each |
 | `CHROMIUM_AUTO_RELEASE` | `true` permits successful updates to merge and publish experimental |
 
 The workflow must be present on the default branch for its schedule to run. Its
@@ -137,18 +137,20 @@ experimental feed and its `-webkit` twin, which offers the same installer.
 
 Keep `CHROMIUM_UPSTREAM_ENABLED=false` and `CHROMIUM_AUTO_RELEASE=false` during
 initial setup. Manual upstream updates can still build a candidate for review.
-The six-hour schedule becomes active only when `chromium.yml` also exists on the
-repository's default branch. Installing that controller does not require moving
-the Chromium product to the default branch. Its integration branch remains
-`chromium-control-plane`.
+The six-hour schedule runs from `chromium.yml` on the default branch and updates
+the integration branch named in `fork.json`. Every run reports the newest
+upstream release and why it did or did not build it.
 
-Configure required checks and review rules for the integration branch, then set
-`CHROMIUM_UPSTREAM_ENABLED=true` to build eligible updates and open PRs. Set
-`CHROMIUM_AUTO_RELEASE=true` when those updates may also merge and ship to
-experimental. Automation uses normal PR merge rules. It checks the PR head has
+Set `CHROMIUM_UPSTREAM_ENABLED=true` to build new releases and open a PR for
+each. A release gets one PR; later commits on the integration branch do not
+rebuild it, and a closed PR stays closed. Check out the PR branch and run
+`Scripts/install-local-macos-release.sh` to try its published engine; merging
+publishes Development. Set `CHROMIUM_AUTO_RELEASE=true` when those updates may
+also merge and ship to Development on their own. Automation uses normal PR merge
+rules. It checks the PR head has
 not changed, then explicitly dispatches the experimental release at the merged
 commit. Publication fails if the branch moves again before release preflight.
-New milestones still require review unless `automaticMajorUpdates` is enabled.
+New milestones still wait for a merge unless `automaticMajorUpdates` is enabled.
 
 Stable and development Chromium releases need a separate readiness decision and
 implementation. Changing `automaticChannel` to either one fails the current gate.

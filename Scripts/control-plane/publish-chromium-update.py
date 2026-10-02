@@ -59,11 +59,13 @@ def main():
     run(sys.executable, REPO / "Scripts/control-plane/publish-chromium-engine.py",
         "--source", args.source, "--ninja", args.ninja, "--repository", args.repository)
     run("git", "push", "origin", f"HEAD:refs/heads/{branch}")
-    body = (f"Updates the maintained Chromium fork to upstream {tag}.\n\n"
+    body = (f"Updates the maintained Chromium fork to upstream {tag}"
+            f"{', a new Chromium milestone' if args.major_update else ''}.\n\n"
             "The unchanged Crest patch set applied without fuzz, and the performance engine built successfully. "
             f"Engine: `{chromium_engine.release_tag(chromium_engine.engine_key(REPO))}`.\n\n"
-            "The app signing, notarization, and publication workflow runs after promotion. "
-            "A compiled engine alone does not verify native browsing behavior.")
+            "A compiled engine alone does not verify native browsing behavior. To try it, check out this branch "
+            "and run `Scripts/install-local-macos-release.sh`, which installs Crest with this published engine. "
+            "Merging publishes it to Development.")
     existing = json.loads(run("gh", "pr", "list", "--repo", args.repository, "--head", branch,
                               "--base", base, "--state", "open", "--json", "url", capture=True))
     url = existing[0]["url"] if existing else run("gh", "pr", "create", "--repo", args.repository,
