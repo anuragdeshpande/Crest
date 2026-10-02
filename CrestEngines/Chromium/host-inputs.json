@@ -180,7 +180,7 @@
     "after": "a6a5a7eb467b81181d7862cd11abcb6f37522385e49eaa3cd1ac9d8c38d01813"
   },
   "chrome/app/chrome_main_delegate.cc": {
-    "before": "f69c2d491ae6d041cb38c73e3155c055d583aeb2518256be580d0d3a018b1377",
+    "before": "a09f7410ef807db08f3cbcb0d06425c302862bcc3f0bb691fa2e4144a6f1c300",
     "after": "646ba861b2ba303003402fc8a3ab0fb4e61d17cacbe0669203615cd518e7169d"
   },
   "chrome/browser/webauthn/chrome_authenticator_request_delegate.cc": {

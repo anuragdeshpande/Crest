@@ -1646,15 +1646,16 @@
      return;
 --- a/chrome/app/chrome_main_delegate.cc
 +++ b/chrome/app/chrome_main_delegate.cc
-@@ -132,6 +132,7 @@
+@@ -132,6 +132,8 @@
  #if BUILDFLAG(IS_MAC)
  #include "base/apple/foundation_util.h"
  #include "chrome/app/chrome_main_mac.h"
 +#include "chrome/browser/ui/crest/crest_chrome_hooks.h"
++#include "chrome/app/crest_profile_adoption.h"
  #include "chrome/browser/chrome_browser_application_mac.h"
  #include "chrome/browser/mac/code_sign_clone_manager.h"
  #include "chrome/browser/mac/relauncher.h"
-@@ -1067,6 +1068,20 @@
+@@ -1067,6 +1069,20 @@
  }
  
  std::optional<int> ChromeMainDelegate::BasicStartupComplete() {
@@ -1675,6 +1676,27 @@
  #if BUILDFLAG(IS_CHROMEOS)
    ash::BootTimesRecorder::Get()->SaveChromeMainStats();
  #endif
+@@ -1375,6 +1391,20 @@
+   if (chrome::ProcessNeedsProfileDir(process_type)) {
+     InitializeUserDataDir(base::CommandLine::ForCurrentProcess());
+   }
++
++#if BUILDFLAG(IS_MAC)
++  // Finish the engine profile adoption the executable's `main` recorded, if it
++  // recorded one. Moving the directories is all that step could do without the
++  // framework; registering an adopted profile in `Local State` and retiring its
++  // encrypted tracked-preference validators are JSON edits and belong here.
++  // This is the first point at which the user data directory is settled and
++  // `base` is usable, and it is still before the local-state `PrefService` is
++  // built, let alone `ProfileManager`.
++  if (process_type.empty()) {
++    crest::CompleteProfileAdoption(
++        base::PathService::CheckedGet(chrome::DIR_USER_DATA));
++  }
++#endif
+ 
+   // Register component_updater PathProvider after DIR_USER_DATA overridden by
+   // command line flags. Maybe move the chrome PathProvider down here also?
 --- a/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc
 +++ b/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc
 @@ -16,6 +16,7 @@
@@ -1766,37 +1788,6 @@
    // enclave_enabled_status_ determines whether Google Password Manager entries
    // should be offered both for `makeCredential` or `getAssertion`. If reauth
    // needed, instead of offering the actual passkeys or creating a passkey,
---- a/chrome/app/chrome_main_delegate.cc
-+++ b/chrome/app/chrome_main_delegate.cc
-@@ -133,6 +133,7 @@
- #include "base/apple/foundation_util.h"
- #include "chrome/app/chrome_main_mac.h"
- #include "chrome/browser/ui/crest/crest_chrome_hooks.h"
-+#include "chrome/app/crest_profile_adoption.h"
- #include "chrome/browser/chrome_browser_application_mac.h"
- #include "chrome/browser/mac/code_sign_clone_manager.h"
- #include "chrome/browser/mac/relauncher.h"
-@@ -1391,6 +1392,20 @@
-     InitializeUserDataDir(base::CommandLine::ForCurrentProcess());
-   }
- 
-+#if BUILDFLAG(IS_MAC)
-+  // Finish the engine profile adoption the executable's `main` recorded, if it
-+  // recorded one. Moving the directories is all that step could do without the
-+  // framework; registering an adopted profile in `Local State` and retiring its
-+  // encrypted tracked-preference validators are JSON edits and belong here.
-+  // This is the first point at which the user data directory is settled and
-+  // `base` is usable, and it is still before the local-state `PrefService` is
-+  // built, let alone `ProfileManager`.
-+  if (process_type.empty()) {
-+    crest::CompleteProfileAdoption(
-+        base::PathService::CheckedGet(chrome::DIR_USER_DATA));
-+  }
-+#endif
-+
-   // Register component_updater PathProvider after DIR_USER_DATA overridden by
-   // command line flags. Maybe move the chrome PathProvider down here also?
-   component_updater::RegisterPathProvider(chrome::DIR_COMPONENTS,
 --- a/chrome/browser/ui/toasts/toast_controller.cc
 +++ b/chrome/browser/ui/toasts/toast_controller.cc
 @@ -4,6 +4,11 @@
@@ -1945,9 +1936,9 @@
 +    return;
 +  }
 +#endif
-  tabs::TabInterface* active_tab = browser_window_->GetActiveTabInterface();
-  if (!active_tab) {
-    return;
+   tabs::TabInterface* active_tab = browser_window_->GetActiveTabInterface();
+   if (!active_tab) {
+     return;
 --- a/chrome/browser/ui/views/login_handler_views.cc
 +++ b/chrome/browser/ui/views/login_handler_views.cc
 @@ -7,0 +8 @@
