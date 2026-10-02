@@ -143,7 +143,8 @@ upstream release and why it did or did not build it.
 
 Set `CHROMIUM_UPSTREAM_ENABLED=true` to build new releases and open a PR for
 each. A release gets one PR; later commits on the integration branch do not
-rebuild it, and a closed PR stays closed. Check out the PR branch and run
+rebuild it, and a closed PR stays closed. While an update PR is open, the
+schedule waits for it instead of building the next release. Check out the PR branch and run
 `Scripts/install-local-macos-release.sh` to try its published engine; merging
 publishes Development. Set `CHROMIUM_AUTO_RELEASE=true` when those updates may
 also merge and ship to Development on their own. Automation uses normal PR merge

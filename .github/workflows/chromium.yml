@@ -89,14 +89,17 @@ jobs:
           note = ''
           if operation == 'update':
               # One review per upstream release: later commits on the base must
-              # not rebuild it, and a schedule leaves a closed review closed.
+              # not rebuild it, and a schedule leaves a closed review closed. A
+              # schedule also waits while any update is in review, since the next
+              # release builds on what that review changes.
               reviews = json.loads(subprocess.check_output(['gh', 'pr', 'list', '--repo', os.environ['GITHUB_REPOSITORY'],
                   '--base', branch, '--state', 'all', '--limit', '1000', '--json', 'headRefName,url,state'], text=True))
-              existing = [review for review in reviews
-                          if review['headRefName'].startswith(f'codex/chromium-upstream-{tag}-')
-                          and (review['state'] == 'OPEN' or scheduled)]
+              prefix = 'codex/chromium-upstream-'
+              existing = [review for review in reviews if review['headRefName'].startswith(prefix) and (
+                  review['headRefName'].startswith(f'{prefix}{tag}-') and (review['state'] == 'OPEN' or scheduled)
+                  or scheduled and review['state'] == 'OPEN')]
               if existing:
-                  note = f"Chromium {tag} already has a review: {existing[0]['url']} ({existing[0]['state'].lower()})."
+                  note = f"Chromium {tag} is available; {existing[0]['url']} is {existing[0]['state'].lower()}."
                   operation = 'check'
           available = tag or (plan['latest'] if plan['majorReviewRequired'] else '')
           if note:
