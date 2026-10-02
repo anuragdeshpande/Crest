@@ -30,10 +30,13 @@ of approving the Chromium product for stable distribution.
 The workspace contains `sources/<preparation-key>/upstream`, `profiles`, `tools`,
 and the Actions runner. App and ABI updates reuse the same upstream build.
 Changing the upstream recipe gets a new directory and preserves the previous
-working engine. Preparation requires 50 GiB free; compilation keeps a 15 GiB
-reserve. These are minimum gates, not a maximum disk budget. Inspect incomplete
-preparations before resuming them. Remove obsolete source directories only when
-no process uses them and the previous working engine is published.
+working engine. Before an update prepares its source, it removes every other
+prepared source except the one its checkout builds from, so the workspace holds
+at most the integration branch's source and one update's. Preparation requires
+50 GiB free; compilation keeps a 15 GiB reserve. These are minimum gates, not a
+maximum disk budget. Inspect incomplete preparations before resuming them.
+Remove other obsolete source directories only when no process uses them and the
+previous working engine is published.
 
 To adopt an existing completed source/build directory on the same volume:
 

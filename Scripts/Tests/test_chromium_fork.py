@@ -9,7 +9,8 @@ import unittest
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "control-plane"
 sys.path.insert(0, str(SCRIPTS))
-from chromium_fork import exclusive_workspace, refresh_host_inputs, restore_host_base, select_update, sha256, validate_workspace
+from chromium_fork import (exclusive_workspace, prune_sources, refresh_host_inputs, restore_host_base, select_update,
+                           sha256, validate_workspace)
 from chromium_artifact import release_ready
 from chromium_engine import asset_name
 
@@ -90,6 +91,20 @@ class WorkspaceTests(unittest.TestCase):
             elsewhere.mkdir(parents=True)
             with self.assertRaises(ValueError):
                 validate_workspace(workspace, elsewhere)
+
+    def test_pruning_removes_only_other_prepared_sources(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.assertEqual(prune_sources(root, set()), [])
+            sources = root / "sources"
+            pinned, update, superseded = "a" * 20, "b" * 20, "c" * 20
+            for name in (pinned, update, superseded, "manual-build"):
+                (sources / name / "upstream").mkdir(parents=True)
+            (sources / ("d" * 20)).symlink_to(sources / pinned)
+            self.assertEqual(prune_sources(root, {pinned, update}), [superseded])
+            self.assertEqual(sorted(path.name for path in sources.iterdir()),
+                             [pinned, update, "d" * 20, "manual-build"])
+            self.assertTrue((sources / pinned / "upstream").is_dir())
 
     def test_host_refresh_requires_every_patch_hunk_and_preserves_source(self):
         with tempfile.TemporaryDirectory() as temporary:

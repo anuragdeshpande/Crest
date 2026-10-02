@@ -25,6 +25,8 @@ ENGINE = Path("CrestEngines/Chromium")
 # The directory the workspace's Actions runner works in.
 RUNNER_WORK = "runner-work"
 TAG = re.compile(r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)-([0-9]+)\.([0-9]+)")
+# A prepared source directory is named by its preparation key's first 20 hex digits.
+SOURCE_NAME = re.compile(r"[0-9a-f]{20}")
 PREPARATION_FIELDS = ("chromium", "ungoogledMac", "ungoogled", "inputs", "patches", "crestPatches", "esbuild",
                       "typescript")
 
@@ -110,6 +112,20 @@ def exclusive_workspace(root):
             yield
         finally:
             fcntl.flock(stream, fcntl.LOCK_UN)
+
+
+def prune_sources(root, keep):
+    """Remove prepared sources not named in `keep`; each is a full checkout and build."""
+    sources = root / "sources"
+    if not sources.is_dir():
+        return []
+    removed = []
+    for directory in sorted(sources.iterdir()):
+        if (SOURCE_NAME.fullmatch(directory.name) and directory.name not in keep
+                and directory.is_dir() and not directory.is_symlink()):
+            shutil.rmtree(directory)
+            removed.append(directory.name)
+    return removed
 
 
 def clone_recipe(destination, lock):
@@ -409,10 +425,15 @@ def candidate_lock(repo, root, tag):
 def prepare_update(repo, root, tag):
     lock_path, host_path = repo / ENGINE / "source.lock.json", repo / ENGINE / "host-inputs.json"
     original_lock, original_host = lock_path.read_bytes(), host_path.read_bytes()
+    pinned = Workspace(root, repo).directory.name
     try:
         lock = candidate_lock(repo, root, tag)
         write_json(lock_path, lock)
         workspace = Workspace(root, repo)
+        # Every update needs a new source. Keep only the checkout's own, which its
+        # branch still builds from, and this update's; any other is superseded.
+        for name in prune_sources(root, {pinned, workspace.directory.name}):
+            print(f"Removed superseded Chromium source {name}", flush=True)
         workspace.prepare()
         # New versions may require different esbuild or TypeScript packages. Stop
         # before compilation rather than silently compiling with the previous toolchain.
