@@ -25,6 +25,9 @@ final class EnginePage: BrowserFindExecuting {
     private var findCompletion: (@MainActor (BrowserFindResult) -> Void)?
     private var captures: [UUID: @MainActor (Data?) -> Void] = [:]
     private var exports: [UUID: CheckedContinuation<Data, any Error>] = [:]
+    /// The page's requested multiplier, retained across document and view
+    /// replacement because an engine can reset its renderer's zoom then.
+    private var requestedZoom: CGFloat?
     /// True once the page's owner let it go.
     private var closed = false
 
@@ -77,7 +80,14 @@ final class EnginePage: BrowserFindExecuting {
 
     /// Shows the page at `factor` of its normal size.
     func zoom(to factor: CGFloat) {
+        guard !closed else { return }
+        requestedZoom = factor
         pages.request(ZoomPage(pageID: id, factor: Double(factor)))
+    }
+
+    private func restoreRequestedZoom() {
+        guard !closed, let requestedZoom else { return }
+        pages.request(ZoomPage(pageID: id, factor: Double(requestedZoom)))
     }
 
     // MARK: - Actions - History
@@ -268,6 +278,16 @@ final class EnginePage: BrowserFindExecuting {
 
     /// Hears what the engine finished for the page.
     func receive(_ presentation: EnginePresentation) {
+        // Chromium clears isolated zoom when a document commits. These
+        // presentations arrive after its navigation observers have finished,
+        // so restore the page's own default or manual override at that point.
+        // A recovered view and an engine-rendered error page need it too.
+        switch presentation {
+        case .pageViewReady, .pageNavigationCommitted, .pageNavigationFailed:
+            restoreRequestedZoom()
+        default:
+            break
+        }
         if case .findFinished(let finished) = presentation {
             let completion = findCompletion
             findCompletion = nil

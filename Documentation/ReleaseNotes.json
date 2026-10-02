@@ -3537,6 +3537,10 @@
     "downloads-follow-page-site-choice": {
       "category": "fixed",
       "message": "Downloads follow the Automatic Downloads choice of the site you’re on, including files it serves from another address, such as GitHub release files. A blocked download’s message no longer appears twice."
+    },
+    "chromium-pages-retain-requested-zoom": {
+      "category": "fixed",
+      "message": "Chromium pages use your default zoom when they open and keep your chosen zoom as you navigate."
     }
   }
 }
