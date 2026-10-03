@@ -99,9 +99,9 @@ struct BrowserRootShell: View, BrowserChromeAnimating {
                 )
 
                 BrowserWindowFocusBridge(isWindowFocused: model.isWindowFocusedBinding)
-                .frame(width: 0, height: 0)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+                    .frame(width: 0, height: 0)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
 
                 if let notice = model.visibleNotice {
                     BrowserNoticeView(notice: notice)
