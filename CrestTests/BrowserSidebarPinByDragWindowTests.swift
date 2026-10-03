@@ -196,8 +196,6 @@ private struct BrowserSidebarPinByDragTestSurface: View {
             spaceSettingsPresentation: BrowserSpaceSettingsPresentationState(),
             shortcuts: nil,
             storedSidebarWidth: $sidebarWidth,
-            windowTransparencyIsEnabled: false,
-            windowTransparencyStrength: 0.5,
             commandSurfaceNamespace: commandSurfaceNamespace,
             tabPromotionNamespace: tabPromotionNamespace
         )

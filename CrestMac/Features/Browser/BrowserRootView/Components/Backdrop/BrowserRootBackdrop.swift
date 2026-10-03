@@ -1,53 +1,18 @@
 import SwiftUI
 
-struct BrowserRootBackdrop: View, BrowserChromeAnimating {
+struct BrowserRootBackdrop: View {
     let space: SpaceModel?
     let spaces: [SpaceModel]
-    let transparencyIsEnabled: Bool
-    let transparencyStrength: Double
-    let isWindowFocused: Bool
-
-    @Environment(\.accessibilityReduceMotion) var reduceMotion
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
-        ZStack {
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .opacity(backdropMaterialOpacity)
-            // Preserve coverage while colors change. Replacing this whole
-            // layer for a Space ID briefly exposes the material during a fade.
-            SpaceBackdropBlend(spaces: spaces, selectedSpace: space) {
-                BrowserWindowAtmosphere(space: $0)
-            }
-            .opacity(baseLayerOpacity)
+        // Preserve coverage while colors change. Replacing this whole layer for
+        // a Space ID briefly exposes the window background during a fade.
+        SpaceBackdropBlend(spaces: spaces, selectedSpace: space) {
+            BrowserWindowAtmosphere(space: $0)
         }
         // The window's background, wherever no page or control covers it, is
         // chrome: the title bar strip above a page and the gaps around it.
         .overlay { BrowserWindowTitleBarSurface() }
         .ignoresSafeArea()
-        .animation(
-            chromeAnimation(CrestMotion.windowBackdrop),
-            value: baseLayerOpacity
-        )
-        .animation(
-            chromeAnimation(CrestMotion.windowBackdrop),
-            value: backdropMaterialOpacity
-        )
-    }
-
-    private var baseLayerOpacity: Double {
-        BrowserWindowTransparencyPolicy.baseLayerOpacity(
-            isEnabled: transparencyIsEnabled && !reduceTransparency,
-            strength: transparencyStrength,
-            isWindowFocused: isWindowFocused
-        )
-    }
-
-    private var backdropMaterialOpacity: Double {
-        BrowserWindowTransparencyPolicy.backdropMaterialOpacity(
-            isEnabled: transparencyIsEnabled && !reduceTransparency,
-            isWindowFocused: isWindowFocused
-        )
     }
 }

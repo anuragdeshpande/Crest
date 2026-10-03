@@ -19,7 +19,7 @@ Control whether newly opened links receive focus, whether you follow tabs moved 
 
 ## Look and Feel
 
-Customize the browser on this device with a live preview. Choose sidebar position, borderless pages, transparency and borders, tab shape and scale, pinned-tab layout, tab and address-field colors, and an app icon palette. Set default page zoom anywhere from **25% to 500%**. Use presets to get started or reset individual changed settings.
+Customize the browser on this device with a live preview. Choose sidebar position, the window border, tab shape and scale, pinned-tab layout, tab and address-field colors, and an app icon palette. Set default page zoom anywhere from **25% to 500%**. Use presets to get started or reset individual changed settings.
 
 Space crests, backgrounds, folder color intensity, and folder text colors live in **Spaces → Appearance**. See [Customize and arrange Spaces](../customize-spaces/).
 

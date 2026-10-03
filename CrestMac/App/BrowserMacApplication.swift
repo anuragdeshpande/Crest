@@ -23,7 +23,6 @@ final class BrowserMacApplication {
     let passkeyAccess: BrowserPasskeyAccessController
     let shortcuts: BrowserShortcutStore
     let spaceSettingsPresentation: BrowserSpaceSettingsPresentationState
-    let windowTransparency: BrowserWindowTransparencyStore
     let softwareUpdates: BrowserSoftwareUpdateService
     let sidebarWidgets: BrowserSidebarWidgetRuntime
     let pagePoolRegistry: BrowserPagePoolRegistry
@@ -271,9 +270,6 @@ final class BrowserMacApplication {
         let shortcuts = BrowserShortcutStore(core: core, legacyOverrides: legacyDevice.shortcuts)
         self.shortcuts = shortcuts
         self.passkeyAccess = passkeyAccess
-        self.windowTransparency = BrowserWindowTransparencyStore.launch(
-            usesIsolatedLaunch: usesIsolatedLaunch
-        )
         self.softwareUpdates = softwareUpdates
         self.sidebarWidgets = sidebarWidgets
         self.pages = pages
@@ -331,7 +327,6 @@ final class BrowserMacApplication {
             settingsTabContent(
                 browser: model.browser, pages: model.pages, presentation: model.spaceSettingsPresentation)
         )
-        .environment(windowTransparency)
         .environment(softwareUpdates)
         .environment(passkeyAccess)
         .environment(browser.core)
@@ -351,7 +346,6 @@ final class BrowserMacApplication {
             shortcuts: shortcuts
         )
         .modifier(BrowserChromeAppearancePersistence())
-        .environment(windowTransparency)
         .environment(softwareUpdates)
         .environment(passkeyAccess)
         .environment(privateBrowser.core)

@@ -508,9 +508,8 @@ private struct ChromeContinuityTestShell: View {
         BrowserRootShell(
             model: model, transientBrowsing: BrowserTransientBrowsingCoordinator(),
             spaceSettingsPresentation: BrowserSpaceSettingsPresentationState(), shortcuts: nil,
-            storedSidebarWidth: .constant(289), appearance: appearance, windowTransparencyIsEnabled: false,
-            windowTransparencyStrength: 0, commandSurfaceNamespace: commandNamespace,
-            tabPromotionNamespace: tabNamespace
+            storedSidebarWidth: .constant(289), appearance: appearance,
+            commandSurfaceNamespace: commandNamespace, tabPromotionNamespace: tabNamespace
         )
         .environment(model.sidebarInteraction)
     }

@@ -17,7 +17,6 @@ struct BrowserLookAndFeelSidebarCrop: View {
     @AppStorage(BrowserChromeAppearancePreference.borderWidthKey, store: BrowserChromeAppearancePreference.defaults)
     private var borderWidth = BrowserLookAndFeelDefaults.windowBorderWidth
 
-    @Environment(\.browserSettingsAtmosphereOpacity) private var atmosphereOpacity
     private var pageZoom = BrowserDefaultPageZoomStore.shared
     @Environment(\.layoutDirection) private var layoutDirection
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -88,7 +87,7 @@ struct BrowserLookAndFeelSidebarCrop: View {
         }
         .frame(width: width, height: height, alignment: .topLeading)
         .background {
-            BrowserSpaceBannerBackground(branding: branding).opacity(atmosphereOpacity)
+            BrowserSpaceBannerBackground(branding: branding)
         }
     }
 
@@ -117,7 +116,6 @@ struct BrowserLookAndFeelSidebarCrop: View {
     /// with it and the panel stays opaque.
     private func travellingAtmosphere(cropWidth: CGFloat, sidebarWidth: CGFloat) -> some View {
         BrowserSpaceBannerBackground(branding: branding)
-            .opacity(atmosphereOpacity)
             .frame(width: cropWidth)
             .offset(x: edge == .leading ? 0 : -(cropWidth - sidebarWidth))
             .frame(width: sidebarWidth, alignment: .leading)

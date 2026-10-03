@@ -26,7 +26,6 @@ struct BrowserLookAndFeelSettingsPane: View {
                 }
             }
             .frame(width: width, alignment: .leading)
-            .browserPlatformSettingsAtmosphere()
         }
     }
 

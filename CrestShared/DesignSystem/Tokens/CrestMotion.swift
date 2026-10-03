@@ -63,8 +63,6 @@ enum CrestMotion {
     static let toolbarTransition: TimeInterval = 0.24
     /// Removing transient feedback or secondary chrome.
     static let dismissalTransition: TimeInterval = 0.18
-    /// Crossfading the window's material and branded base layers.
-    static let windowBackdropTransition: TimeInterval = 0.16
     /// Hover feedback for sidebar rows.
     static let hoverTransition: TimeInterval = 0.14
     /// Expanding or collapsing a sidebar disclosure group.
@@ -135,9 +133,6 @@ enum CrestMotion {
     static var floatingPane: Animation { .smooth(duration: floatingPaneTransition) }
     static var toolbar: Animation { .snappy(duration: toolbarTransition) }
     static var dismissal: Animation { .easeOut(duration: dismissalTransition) }
-    static var windowBackdrop: Animation {
-        .easeInOut(duration: windowBackdropTransition)
-    }
     static var hover: Animation { .easeInOut(duration: hoverTransition) }
     static var disclosure: Animation { .snappy(duration: disclosureTransition) }
     static var loadingProgress: Animation {

@@ -306,7 +306,6 @@ final class BrowserMacWindows {
                     }
                 )
                 .modifier(BrowserChromeAppearancePersistence())
-                .environment(application.windowTransparency)
                 .environment(application.softwareUpdates)
                 .modifier(QuickWindowTitle(model: model, request: current, window: window))
             },

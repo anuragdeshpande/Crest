@@ -5,29 +5,6 @@ import XCTest
 
 @MainActor
 final class BrowserSettingsPaneTests: XCTestCase {
-    func testIsolatedLaunchNeverConstructsPersistentPreferences() {
-        var persistentFactoryWasCalled = false
-        let store = BrowserWindowTransparencyStore.launch(
-            usesIsolatedLaunch: true,
-            makePersistentPersistence: {
-                persistentFactoryWasCalled = true
-                return InMemoryBrowserWindowTransparencyPersistence()
-            },
-            makeIsolatedPersistence: {
-                InMemoryBrowserWindowTransparencyPersistence(
-                    preference: BrowserWindowTransparencyPreference(
-                        isEnabled: false,
-                        strength: 0.1
-                    )
-                )
-            }
-        )
-
-        XCTAssertFalse(persistentFactoryWasCalled)
-        XCTAssertFalse(store.isEnabled)
-        XCTAssertEqual(store.strength, 0.1)
-    }
-
     func testMacWebTextAssistanceDisablesAutomaticCorrectionsWithoutDisablingTextReplacement() throws {
         let suiteName = "crest.tests.webkit-text-input.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

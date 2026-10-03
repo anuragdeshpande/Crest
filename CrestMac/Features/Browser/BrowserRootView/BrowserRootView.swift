@@ -6,8 +6,6 @@ struct BrowserRootView: View {
     private let shortcuts: BrowserShortcutStore?
     private let persistSidebarWidth: (Double) -> Void
 
-    @Environment(BrowserWindowTransparencyStore.self)
-    private var windowTransparency
     @Environment(\.browserChromeAppearance) private var appearance
     @State private var model: BrowserRootModel
     @State private var storedSidebarWidth: Double
@@ -60,8 +58,6 @@ struct BrowserRootView: View {
             shortcuts: shortcuts,
             storedSidebarWidth: $storedSidebarWidth,
             appearance: appearance,
-            windowTransparencyIsEnabled: windowTransparency.isEnabled,
-            windowTransparencyStrength: windowTransparency.strength,
             commandSurfaceNamespace: commandSurfaceNamespace,
             tabPromotionNamespace: tabPromotionNamespace
         )
@@ -98,7 +94,6 @@ struct BrowserRootView: View {
         initialSidebarWidth: Double(BrowserChromeLayout.sidebarIdealWidth),
         persistSidebarWidth: { _ in }
     )
-    .environment(BrowserWindowTransparencyPreviewFixture.makeStore())
     .frame(width: 1_120, height: 720)
 }
 
@@ -115,7 +110,6 @@ struct BrowserRootView: View {
         initialSidebarWidth: Double(BrowserChromeLayout.sidebarIdealWidth),
         persistSidebarWidth: { _ in }
     )
-    .environment(BrowserWindowTransparencyPreviewFixture.makeStore())
     .frame(width: 1_120, height: 720)
 }
 
@@ -132,6 +126,5 @@ struct BrowserRootView: View {
         initialSidebarWidth: Double(BrowserChromeLayout.sidebarIdealWidth),
         persistSidebarWidth: { _ in }
     )
-    .environment(BrowserWindowTransparencyPreviewFixture.makeStore())
     .frame(width: 1_120, height: 720)
 }

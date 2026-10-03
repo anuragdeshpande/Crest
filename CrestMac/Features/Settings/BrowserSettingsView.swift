@@ -138,5 +138,4 @@ struct BrowserSettingsView: View {
         cloudSync: BrowserCloudSyncController(core: browser.core, configuration: nil),
         shortcuts: BrowserShortcutStore()
     )
-    .environment(BrowserWindowTransparencyPreviewFixture.makeStore())
 }

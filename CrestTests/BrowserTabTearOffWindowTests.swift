@@ -242,7 +242,6 @@ private struct TearOffTestSurface: View {
             model: model, transientBrowsing: BrowserTransientBrowsingCoordinator(),
             spaceSettingsPresentation: BrowserSpaceSettingsPresentationState(), shortcuts: nil,
             storedSidebarWidth: $sidebarWidth,
-            windowTransparencyIsEnabled: false, windowTransparencyStrength: 0.5,
             commandSurfaceNamespace: commandNamespace, tabPromotionNamespace: tabNamespace)
     }
 }

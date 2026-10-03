@@ -50,6 +50,5 @@ struct BrowserQuickWindowWindowSurface: View {
         spaceAccess: BrowserQuickWindowPreviewFixture.makeAccessController(), pagePoolRegistry: nil, dismiss: {},
         openBrowserWindow: {}
     )
-    .environment(BrowserWindowTransparencyPreviewFixture.makeStore())
     .frame(width: BrowserQuickWindowLayout.defaultWidth, height: BrowserQuickWindowLayout.defaultHeight)
 }

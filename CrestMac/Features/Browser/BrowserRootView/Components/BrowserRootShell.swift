@@ -7,8 +7,6 @@ struct BrowserRootShell: View, BrowserChromeAnimating {
     let shortcuts: BrowserShortcutStore?
     @Binding var storedSidebarWidth: Double
     var appearance = BrowserChromeAppearance()
-    let windowTransparencyIsEnabled: Bool
-    let windowTransparencyStrength: Double
     let commandSurfaceNamespace: Namespace.ID
     let tabPromotionNamespace: Namespace.ID
 
@@ -35,10 +33,7 @@ struct BrowserRootShell: View, BrowserChromeAnimating {
             } else {
                 BrowserRootBackdrop(
                     space: model.browser.shownSpace,
-                    spaces: BrowserSidebarAccessPolicy.availableSpaces(in: model.browser),
-                    transparencyIsEnabled: windowTransparencyIsEnabled,
-                    transparencyStrength: windowTransparencyStrength,
-                    isWindowFocused: model.isWindowFocused
+                    spaces: BrowserSidebarAccessPolicy.availableSpaces(in: model.browser)
                 )
 
                 BrowserSidebarPageLayout(
@@ -103,10 +98,7 @@ struct BrowserRootShell: View, BrowserChromeAnimating {
                     reduceMotion: reduceMotion
                 )
 
-                BrowserWindowTransparencyBridge(
-                    isEnabled: windowTransparencyIsEnabled && !reduceTransparency,
-                    isWindowFocused: model.isWindowFocusedBinding
-                )
+                BrowserWindowFocusBridge(isWindowFocused: model.isWindowFocusedBinding)
                 .frame(width: 0, height: 0)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)

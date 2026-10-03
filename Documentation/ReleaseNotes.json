@@ -3573,6 +3573,10 @@
     "crest-07-chromium-and-webkit": {
       "category": "new",
       "message": "Crest 0.7 brings Chromium and WebKit together on Mac, with Chrome Web Store extensions and engine choices for each website. iPhone and iPad continue to use WebKit."
+    },
+    "opaque-mac-windows-external-display-load": {
+      "category": "fixed",
+      "message": "Crest windows on Mac no longer keep the system's WindowServer busy, which could use a lot of CPU on large or high-refresh external displays. The focused-window transparency setting has been removed."
     }
   }
 }

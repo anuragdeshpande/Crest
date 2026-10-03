@@ -842,7 +842,7 @@ final class BrowserWebCompatibilityTests: XCTestCase {
                 rootView: BrowserQuickWindowWindowSurface(
                     model: model, spaceAccess: spaceAccess, pagePoolRegistry: registry,
                     dismiss: { [weak window] in window?.close() }, openBrowserWindow: {}
-                ).environment(BrowserWindowTransparencyPreviewFixture.makeStore()))
+                ))
             windows.append(window)
             window.makeKeyAndOrderFront(nil)
         }
