@@ -295,9 +295,9 @@ engine::ExtensionActionList EngineExtensions::PageActions(content::WebContents* 
 
 // The pinned strip belongs to the Space, not to whatever page is open in it:
 // a Space showing its Start Page still has the extensions the person pinned.
-// A private window reads the same Space's list, narrowed to the extensions
-// allowed in private windows; the registry, the actions and the pins all
-// belong to the regular profile that owns it.
+// Private profiles derive from the engine root, never a Space, so they have
+// no installed Space extensions or pins. The registry belongs to whichever
+// original profile owns this off-the-record profile.
 engine::ExtensionActionList EngineExtensions::Pinned(Profile* profile, const std::string& profile_id) {
   engine::ExtensionActionList list;
   const bool private_mode = profile->IsOffTheRecord();

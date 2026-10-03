@@ -11,6 +11,12 @@ There is no Mac App Store build, and no separate WebKit-only download. Keeping
 one macOS product avoids incompatible sandbox capabilities, duplicate update
 behavior, and user confusion over which build supports extensions.
 
+Crest 0.7 opens the release line with `MARKETING_VERSION = 0.7.0` and stable
+tag `v0.7.0`. User-facing release copy calls it Crest 0.7. Mac requires Apple
+silicon and macOS 26.1 or later; iPhone and iPad remain WebKit apps with 26.1
+deployment targets. The packaged Mac app and Sparkle feed take the higher
+minimum macOS version required by the engine and the native UI framework.
+
 The release build downloads a prebuilt Chromium engine instead of compiling
 Chromium. Each engine is published once as a `chromium-engine-<key>` release,
 keyed by its inputs; see "Releasing" in
@@ -114,8 +120,9 @@ contract tests locally for the exact commit, following the
 [repository guardrails](RepositoryGuardrails.md). The production workflow follows
 these steps:
 
-1. find the Chromium engine for the commit's engine key, building it on the
-   registered Mac when it is missing and that builder is enabled;
+1. validate the exact source SHA through the reusable **Build Crest** workflow
+   and find the Chromium engine for its engine key, building it on the registered
+   Mac when it is missing and that builder is enabled. Signing waits for both;
 2. regenerate the project and check version metadata, product identity, and
    cache hygiene;
 3. import the Developer ID identity into a temporary keychain and install the
@@ -185,8 +192,8 @@ Before publishing a stable tag:
 1. confirm `CHANGELOG.md`, `Documentation/ReleaseNotes.json`, and the marketing
    version are ready;
 2. complete local app and release-script tests for the commit being published;
-3. dispatch **Build Crest** on `main`, and confirm it and the Pages workflow are
-   green;
+3. confirm **Build Crest** passed on the intended `main` commit and the Pages
+   workflow is green. The stable release will validate its exact source again;
 4. confirm the commit's Chromium engine is published:
    `gh release view "$(python3 Scripts/control-plane/chromium_engine.py tag)"`;
 5. confirm all seven release secrets are available to the production job;
@@ -194,7 +201,9 @@ Before publishing a stable tag:
 7. inspect the workflow's signature, notarization, Gatekeeper, checksum, and
    attestation results;
 8. install the published disk image on a clean macOS account and exercise both
-   a manual update check and the normal relaunch path.
+   a manual update check and the normal relaunch path. For 0.7, cover an upgrade
+   from the previous stable WebKit-only app and an existing Chromium build,
+   preserving Space and tab identity, engine profiles, and unsaved-changes prompts.
 
 For a new release line, explicitly set the intended version with
 `Scripts/set-version.sh --release X.Y.Z`. Routine fixes use

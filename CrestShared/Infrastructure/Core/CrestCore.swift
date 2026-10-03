@@ -65,6 +65,7 @@ final class CrestCore {
     /// (e) moves live revocation into engine commands, the pages' permission
     /// plumbing learns this way what a change covered.
     @ObservationIgnored private var sitePermissionFollowers: [Follower<SitePermissionsChanged>] = []
+    @ObservationIgnored private var notificationAccessFollowers: [Follower<Void>] = []
     /// Who hears the questions the core asks the person and those that no
     /// longer wait, once their batch is applied.
     @ObservationIgnored private var promptFollowers: [Follower<Change>] = []
@@ -352,7 +353,15 @@ final class CrestCore {
         var closesReady: [CloseReady] = []
         var dataDeleted: [DataDeleted] = []
         var movedPages: [UUID] = []
+        var notificationAccessChanged = false
         for change in changes {
+            switch change {
+            case .sitePermissionsChanged, .spaceLockChanged, .spacesChanged, .spaceSettingsChanged,
+                .workspaceChanged, .workspaceOpened, .workspaceClosed, .dataDeleted:
+                notificationAccessChanged = true
+            default:
+                break
+            }
             if case .pageChanged(let changed) = change, let before = state.pages[changed.page.id]?.engine,
                 before != changed.page.engine
             {
@@ -389,6 +398,12 @@ final class CrestCore {
             if case .dataDeleted(let deleted) = change { dataDeleted.append(deleted) }
         }
         state.finishBatch()
+        // Profile notifications have no live page to withdraw them when a
+        // Space locks, disappears, or changes its permission choices.
+        if notificationAccessChanged {
+            notificationAccessFollowers.removeAll { $0.owner == nil }
+            for follower in notificationAccessFollowers { follower.handler(()) }
+        }
         if !pageRecords.isEmpty { engines.recordsApplied(pageRecords) }
         if !permissionChanges.isEmpty { sitePermissionsChanged(permissionChanges) }
         if !promptChanges.isEmpty { promptsChanged(promptChanges) }
@@ -417,6 +432,11 @@ final class CrestCore {
     func followSitePermissions(_ owner: AnyObject, _ handler: @escaping @MainActor (SitePermissionsChanged) -> Void) {
         sitePermissionFollowers.removeAll { $0.owner == nil }
         sitePermissionFollowers.append(Follower(owner: owner, handler: handler))
+    }
+
+    func followNotificationAccess(_ owner: AnyObject, _ handler: @escaping @MainActor () -> Void) {
+        notificationAccessFollowers.removeAll { $0.owner == nil }
+        notificationAccessFollowers.append(Follower(owner: owner) { _ in handler() })
     }
 
     /// Calls `handler` with each question the core asks the person and each

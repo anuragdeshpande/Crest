@@ -51,7 +51,7 @@ struct BrowserSoftwareUpdateSidebarWidget: View {
                 }
 
                 if hasDetails, let showDetails {
-                    Button("What's New", action: showDetails)
+                    Button("What's New") { showDetails() }
                         .buttonStyle(.plain)
                         .font(CrestTypography.metadata.weight(.medium))
                         .foregroundStyle(CrestBrandTheme.accent)
@@ -288,5 +288,5 @@ private struct BrowserSoftwareUpdateApplicationIcon: View {
 extension EnvironmentValues {
     /// Opens the full release notes for the update a card presents. Nil where
     /// the shell has no window to show them in, which leaves out What's New.
-    @Entry var browserSoftwareUpdateDetails: (@MainActor () -> Void)? = nil
+    @Entry var browserSoftwareUpdateDetails: BrowserSoftwareUpdateDetailsAction? = nil
 }

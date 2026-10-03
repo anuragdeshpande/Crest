@@ -120,7 +120,7 @@ enum BrowserUtilityListPreviewFixture {
             failure: nil,
             message: message,
             risk: nil,
-            isAcknowledged: false
+            isAcknowledged: false, canPause: false, canResume: false
         )
     }
 

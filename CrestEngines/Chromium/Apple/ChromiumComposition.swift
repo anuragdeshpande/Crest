@@ -58,7 +58,7 @@
                         return anchor
                     },
                     reviewPersistenceID: "chromium-native-ui-review")
-                chromium.follow(application.browser.core)
+                chromium.follow(application)
                 chromiumEngine = chromium
                 adoptLegacyWindowList(into: application)
                 return application
@@ -93,7 +93,7 @@
                         return anchor
                     },
                     reviewPersistenceID: "chromium-native-ui-review")
-                runtime.engine.follow(application.browser.core)
+                runtime.engine.follow(application)
                 chromiumEngine = runtime.engine
                 adoptLegacyWindowList(into: application)
                 return application

@@ -6,7 +6,7 @@ namespace CrestCore.Contracts;
 /// permission ledger's JSON spell a capability as its `Name`, so a name never
 /// changes. Within one origin, saved choices are listed by name.
 public sealed class SitePermission {
-    #region Variables
+    #region Static Variables
 
     public static readonly SitePermission Camera = new(name: "camera", title: "Camera", symbol: "video",
         requestTitle: "Wants to use your camera", isMedia: true, isEngineEnforced: true);
@@ -18,7 +18,7 @@ public sealed class SitePermission {
     public static readonly SitePermission Location = new(name: "location", title: "Location", symbol: "location",
         requestTitle: "Wants to use your location", isEngineEnforced: true);
     public static readonly SitePermission Notifications = new(name: "notifications", title: "Notifications", symbol: "bell",
-        requestTitle: "Wants to send notifications while this page is open", isEngineEnforced: true);
+        requestTitle: "Wants to send notifications", isEngineEnforced: true);
     // A site gets no automatic pop-ups until the person allows them.
     public static readonly SitePermission Popups = new(name: "popups", title: "Automatic Pop-ups", symbol: "macwindow.on.rectangle",
         requestTitle: "Requests permission", askTitle: "Blocked by Default", askChoiceTitle: "Default (Block)");
@@ -35,6 +35,10 @@ public sealed class SitePermission {
     public static IReadOnlyList<SitePermission> All { get; } =
         [Camera, Microphone, CameraAndMicrophone, Location, Notifications, Popups, AutomaticDownloads, ExternalApplications,
             ScreenSharing];
+
+    #endregion
+
+    #region Variables
 
     public string Name { get; }
 

@@ -1,15 +1,26 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
+using CrestCore.Domain;
+
 namespace CrestCore.Application;
 
-/// Reads the numbers in the JSON of a synced record the same way however its
+/// Reads identities and numbers at the sync JSON boundary. Numbers read the same way however a
 /// node was built. A number parsed from text reads as any numeric type that
 /// holds it, while one built in code reads only as the type it was built
 /// with, so a typed `GetValue` would read a record the codec built differently
 /// from the same record parsed from the journal.
 internal static class SyncJson {
     #region Actions - Reading
+
+    /// A nonempty sync identity, accepting the legacy wrapped spelling as well
+    /// as a bare UUID. Session repair has its own more tolerant stored decoder.
+    public static Guid Identity(JsonNode? value) {
+        if (value is JsonObject obj) value = obj[StoredSessionCodec.Key.RawValue];
+        var id = Guid.Parse(value!.GetValue<string>());
+        if (id == Guid.Empty) throw new BrowserRuleException(BrowserRuleCodes.InvalidIdentity);
+        return id;
+    }
 
     /// `node` as a double. Throws `InvalidOperationException` when it holds no
     /// number.

@@ -197,7 +197,7 @@ extension BrowserStore {
     /// Gives the tab `emoji` as its icon, which the core refuses when its
     /// first character does not present as an emoji.
     func setTabEmojiIcon(_ emoji: String, for id: UUID, in spaceID: UUID) {
-        setSessionTabIcon(.emoji, emoji: emoji, tabID: id, in: spaceID)
+        _ = setSessionTabIcon(.emoji, emoji: emoji, tabID: id, in: spaceID)
     }
 
     @discardableResult

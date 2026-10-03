@@ -149,10 +149,17 @@ targetTemplates:
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: ${hostCompilationConditions}
         SWIFT_OBJC_BRIDGING_HEADER: "$(PROJECT_DIR)/CrestEngines/Chromium/Apple/CrestChromiumHost.h"
         SWIFT_INCLUDE_PATHS: "$(PROJECT_DIR)/CrestContracts/include"
-        CREST_CORE_LIBRARY_DIR: "$(PROJECT_DIR)/CrestCore/src/CrestCore.Native/bin/Release/net10.0/osx-arm64/publish"
+        CREST_CORE_LIBRARY_DIR: "$(BUILT_PRODUCTS_DIR)/CrestCore"
         OTHER_LDFLAGS: '$(inherited) "$(CREST_CORE_LIBRARY_DIR)/CrestCore.Native.dylib"'
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @loader_path/../../.."
         SWIFT_EMIT_LOC_STRINGS: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+    preBuildScripts:
+      - name: Build portable core
+        script: python3 "$SRCROOT/Scripts/control-plane/build-apple-core.py"
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - "$(CREST_CORE_LIBRARY_DIR)/CrestCore.Native.dylib"
 targets:
   CrestChromiumUI:
     templates:
@@ -240,36 +247,38 @@ targets:
     type: bundle.unit-test
     platform: macOS
     sources:
-      - path: CrestTests/BrowserTabStateArchiveTests.swift
-      - path: CrestTests/BrowserDataRetentionTests.swift
-      - path: CrestTests/BrowserWebHostViewTests.swift
-      - path: CrestTests/BrowserPageNavigationMarkerTests.swift
-      - path: CrestTests/BrowserFindSessionTests.swift
-      - path: CrestTests/EnginePageAvailabilityTests.swift
-      - path: CrestTests/BrowserSoftwareUpdateChannelTests.swift
-      - path: CrestTests/BrowserShortcutTests.swift
-      - path: CrestTests/BrowserDurableTabCloseTests.swift
-      - path: CrestTests/BrowserWebsiteDataStoreTests.swift
-      - path: CrestTests/BrowserPagePoolTests.swift
-      - path: CrestTests/BrowserCurrentTabFolderTests.swift
-      - path: CrestTests/BrowserSplitGroupSessionTests.swift
-      - path: CrestTests/BrowserSplitTabCopyTests.swift
-      - path: CrestTests/BrowserStoreTests.swift
-      - path: CrestTests/BrowserStoreWorkspaceTests.swift
-      - path: CrestTests/BrowserCloudRecordCodecTests.swift
-      - path: CrestTests/BrowserCloudSyncStateTests.swift
-      - path: CrestTests/BrowserLaunchEnvironmentTests.swift
-      - path: CrestTests/BrowserCoreSessionAuthorityTests.swift
-      - path: CrestTests/SuspendingBrowserSpaceDataDeleter.swift
-      - path: CrestTests/Support/BrowserPage+WebKitTestAccess.swift
-      - path: CrestTests/Support/BrowserPagePool+Presenting.swift
-      - path: CrestTests/Support/BrowserInstalledRelease.swift
-      - path: CrestTests/Support/BrowserPrivacyHTTPServer.swift
-      - path: CrestTests/Support/BrowserStore+SidebarOutline.swift
-      - path: CrestTests/Support/BrowserStore+SidebarDrops.swift
-      - path: CrestTests/Support/BrowserStore+Unlocking.swift
-      - path: CrestTests/Support/BrowserStoredSessionHarness.swift
-      - path: CrestTests/Support/StoredSyncJournal.swift
+      - path: CrestTests
+        includes:
+          - BrowserTabStateArchiveTests.swift
+          - BrowserDataRetentionTests.swift
+          - BrowserWebHostViewTests.swift
+          - BrowserPageNavigationMarkerTests.swift
+          - BrowserFindSessionTests.swift
+          - EnginePageAvailabilityTests.swift
+          - BrowserSoftwareUpdateChannelTests.swift
+          - BrowserShortcutTests.swift
+          - BrowserDurableTabCloseTests.swift
+          - BrowserWebsiteDataStoreTests.swift
+          - BrowserPagePoolTests.swift
+          - BrowserCurrentTabFolderTests.swift
+          - BrowserSplitGroupSessionTests.swift
+          - BrowserSplitTabCopyTests.swift
+          - BrowserStoreTests.swift
+          - BrowserStoreWorkspaceTests.swift
+          - BrowserCloudRecordCodecTests.swift
+          - BrowserCloudSyncStateTests.swift
+          - BrowserLaunchEnvironmentTests.swift
+          - BrowserCoreSessionAuthorityTests.swift
+          - SuspendingBrowserSpaceDataDeleter.swift
+          - Support/BrowserPage+WebKitTestAccess.swift
+          - Support/BrowserPagePool+Presenting.swift
+          - Support/BrowserInstalledRelease.swift
+          - Support/BrowserPrivacyHTTPServer.swift
+          - Support/BrowserStore+SidebarOutline.swift
+          - Support/BrowserStore+SidebarDrops.swift
+          - Support/BrowserStore+Unlocking.swift
+          - Support/BrowserStoredSessionHarness.swift
+          - Support/StoredSyncJournal.swift
     dependencies:
       - target: CrestNativeCore
     settings:

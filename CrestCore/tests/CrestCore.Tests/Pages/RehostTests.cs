@@ -24,7 +24,11 @@ public sealed partial class BrowserContractsTests {
         app.Drain();
 
         // The old engine closes the page, its question ends, and the new engine creates the page heading to what it showed.
-        var moved = app.Send(new RehostPage(page, EngineKind.Chromium));
+        app.Send(new RehostPage(page, EngineKind.Chromium));
+        Assert.Equal(new CheckBeforeUnload(page), webKitBinding.Commands[^1]);
+        Assert.Empty(chromiumBinding.Commands);
+        app.Report(webKit, new BeforeUnloadAnswered(page, Proceeds: true));
+        var moved = app.Drain();
         var state = Assert.Single(moved.OfType<PageChanged>()).Page;
         Assert.Equal((EngineKind.Chromium, PagePhase.Opening, article), (state.Engine, state.Phase, state.Live.Address));
         Assert.Contains(new PromptSettled(prompt), moved);
@@ -62,6 +66,8 @@ public sealed partial class BrowserContractsTests {
         // So does a load the person asks for.
         app.Send(new ChooseSiteEngine(space, new WebAddress(article).Origin!, EngineKind.Chromium));
         app.Send(new Navigate(page, article));
+        Assert.Equal(new CheckBeforeUnload(page), webKitBinding.Commands[^1]);
+        app.Report(webKit, new BeforeUnloadAnswered(page, Proceeds: true));
         Assert.Equal(new ClosePage(page, KeepsState: false), webKitBinding.Commands[^1]);
         Assert.IsType<CreatePage>(chromiumBinding.Commands[^1]);
     }

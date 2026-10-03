@@ -5,21 +5,19 @@
 #ifndef CHROME_APP_CREST_USER_DATA_DIR_H_
 #define CHROME_APP_CREST_USER_DATA_DIR_H_
 
-// Chooses the engine profile root a Crest product bundle uses when it is
-// launched without arguments, and adopts the engine profiles an earlier build
-// left in Chromium's shared default directory.
-//
-// This is consumed by the browser executable's `main`, before the Chromium
-// framework is loaded, so it deliberately uses only libc and libc++: no
-// //base, no logging, no Objective-C runtime.
-
+// Runs before the Chromium framework is loaded. Keep profile adoption in libc
+// and libc++ until the browser process can finish its JSON metadata edits.
 #include <dirent.h>
+#include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/errno.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -30,119 +28,222 @@ inline bool IsDirectory(const std::string& path) {
   return stat(path.c_str(), &info) == 0 && S_ISDIR(info.st_mode);
 }
 
+inline bool PathExists(const std::string& path) {
+  struct stat info;
+  return lstat(path.c_str(), &info) == 0 || errno != ENOENT;
+}
+
+inline bool SyncDirectory(const std::string& path) {
+  const int file = open(path.c_str(), O_RDONLY | O_DIRECTORY);
+  if (file < 0) {
+    return false;
+  }
+  const bool synced = fsync(file) == 0;
+  close(file);
+  return synced;
+}
+
 inline bool MakeDirectoryTree(const std::string& path) {
   if (IsDirectory(path)) {
     return true;
   }
   const auto separator = path.find_last_of('/');
+  const std::string parent = path.substr(0, separator);
   if (separator != std::string::npos && separator > 0 &&
-      !MakeDirectoryTree(path.substr(0, separator))) {
+      !MakeDirectoryTree(parent)) {
     return false;
   }
-  return mkdir(path.c_str(), 0700) == 0 || IsDirectory(path);
+  if (mkdir(path.c_str(), 0700) != 0 && !IsDirectory(path)) {
+    return false;
+  }
+  return separator == std::string::npos || separator == 0 ||
+         SyncDirectory(parent);
 }
 
-// The engine profile directories Crest creates for its own Spaces. They are the
-// only state in a shared Chromium user data directory that belongs to Crest:
-// `Default`, `Local State`, `Safe Browsing`, crash state and every other entry
-// belongs to whichever Chromium created that directory.
+// A record never admits paths, only immediate profile directory names.
+inline bool IsCrestProfileName(const std::string& name) {
+  return name.starts_with("Crest-") && name.size() > 6 &&
+         name.find_first_of("/\r\n") == std::string::npos;
+}
+
+// A failed migration must not open one half of a split profile set. Retaining
+// the record lets the next launch retry after the filesystem problem is fixed.
+[[noreturn]] inline void StopProfileAdoption(const std::string& directory) {
+  fprintf(stderr,
+          "Crest: cannot finish profile adoption in %s. Existing profiles "
+          "were preserved. Resolve the filesystem error and reopen Crest.\n",
+          directory.c_str());
+  exit(EXIT_FAILURE);
+}
+
 inline std::vector<std::string> CrestProfileDirectories(
     const std::string& directory) {
   std::vector<std::string> names;
   DIR* handle = opendir(directory.c_str());
   if (!handle) {
+    if (errno != ENOENT)
+      StopProfileAdoption(directory);
     return names;
   }
   while (struct dirent* entry = readdir(handle)) {
     const std::string name(entry->d_name);
-    if (name.rfind("Crest-", 0) != 0 || !IsDirectory(directory + "/" + name)) {
-      continue;
+    if (IsCrestProfileName(name) && IsDirectory(directory + "/" + name)) {
+      names.push_back(name);
     }
-    names.push_back(name);
   }
   closedir(handle);
+  std::sort(names.begin(), names.end());
   return names;
 }
 
-// The name of the record a directory adoption leaves in the new engine profile
-// root for the browser process to finish. Moving the directories is all this
-// step can do: registering an adopted profile in `Local State` and retiring its
-// encrypted tracked-preference validators are JSON edits, and no JSON reader
-// exists this early. `crest::CompleteProfileAdoption` consumes the record.
 inline const char* AdoptionRecordName() {
   return "Crest Adoption";
 }
 
-// Records which engine profiles moved and where they came from. Line one is the
-// previous root; every later line is one adopted directory name. A directory
-// name cannot contain a newline, so no quoting is needed.
-inline void WriteAdoptionRecord(const std::string& preferred,
-                                const std::string& previous,
-                                const std::vector<std::string>& adopted) {
-  if (adopted.empty()) {
-    return;
-  }
-  const std::string path = preferred + "/" + AdoptionRecordName();
-  FILE* file = fopen(path.c_str(), "w");
-  if (!file) {
-    fprintf(stderr, "Crest: cannot record adoption in %s (%s); the adopted "
-                    "engine profiles stay unregistered.\n",
-            path.c_str(), strerror(errno));
-    return;
-  }
-  fprintf(file, "%s\n", previous.c_str());
-  for (const std::string& name : adopted) {
-    fprintf(file, "%s\n", name.c_str());
-  }
-  fclose(file);
+inline const char* CompletedAdoptionRecordName() {
+  return "Crest Adoption Complete";
 }
 
-// Returns the user data directory a product bundle should open.
-//
-// Crest keeps its engine state under its own application support directory
-// rather than in `~/Library/Application Support/Chromium`, which every other
-// Chromium on the machine — including Crest's own review and baseline packages
-// — also opens by default. The first launch after that move adopts the engine
-// profiles the previous default directory still holds, and nothing else.
-//
-// Any failure falls back to the previous directory and says so on stderr, so a
-// product launch never loses the Spaces it already has.
+// Serialize both stages across simultaneous launches. Each stage releases its
+// lock before the browser proceeds; normal single-instance routing stays
+// intact.
+class ProfileAdoptionLock {
+ public:
+  explicit ProfileAdoptionLock(const std::string& directory)
+      : file_(open((directory + "/Crest Adoption Lock").c_str(),
+                   O_CREAT | O_RDWR,
+                   0600)) {
+    if (file_ < 0 || flock(file_, LOCK_EX) != 0) {
+      StopProfileAdoption(directory);
+    }
+  }
+  ~ProfileAdoptionLock() { close(file_); }
+  ProfileAdoptionLock(const ProfileAdoptionLock&) = delete;
+  ProfileAdoptionLock& operator=(const ProfileAdoptionLock&) = delete;
+
+ private:
+  int file_;
+};
+
+// Commit the complete plan before the first rename. The legacy record format
+// stays readable: its first line is the source root, followed by profile names.
+inline bool WriteAdoptionRecord(const std::string& preferred,
+                                const std::string& previous,
+                                const std::vector<std::string>& adopted) {
+  if (previous.find_first_of("\r\n") != std::string::npos) {
+    return false;
+  }
+  const std::string path = preferred + "/" + AdoptionRecordName();
+  std::string temporary = path + ".XXXXXX";
+  const int descriptor = mkstemp(temporary.data());
+  if (descriptor < 0) {
+    return false;
+  }
+  FILE* file = fdopen(descriptor, "w");
+  if (!file) {
+    close(descriptor);
+    unlink(temporary.c_str());
+    return false;
+  }
+  bool written = fprintf(file, "%s\n", previous.c_str()) >= 0;
+  for (const std::string& name : adopted) {
+    written = IsCrestProfileName(name) &&
+              fprintf(file, "%s\n", name.c_str()) >= 0 && written;
+  }
+  written = fflush(file) == 0 && written;
+  written = fsync(descriptor) == 0 && written;
+  written = fclose(file) == 0 && written;
+  if (!written || rename(temporary.c_str(), path.c_str()) != 0) {
+    unlink(temporary.c_str());
+    return false;
+  }
+  return SyncDirectory(preferred);
+}
+
+inline bool ReadAdoptionRecord(const std::string& preferred,
+                               std::string& previous,
+                               std::vector<std::string>& adopted) {
+  FILE* file = fopen((preferred + "/" + AdoptionRecordName()).c_str(), "r");
+  if (!file) {
+    return false;
+  }
+  char* line = nullptr;
+  size_t capacity = 0;
+  bool valid = true;
+  bool first = true;
+  while (getline(&line, &capacity, file) >= 0) {
+    std::string value(line);
+    if (value.empty() || value.back() != '\n') {
+      valid = false;
+      break;
+    }
+    value.pop_back();
+    if (first) {
+      previous = value;
+      valid = !value.empty() && value.front() == '/' &&
+              value.find('\r') == std::string::npos;
+      first = false;
+    } else {
+      valid = IsCrestProfileName(value) &&
+              std::find(adopted.begin(), adopted.end(), value) == adopted.end();
+      if (valid)
+        adopted.push_back(value);
+    }
+    if (!valid)
+      break;
+  }
+  valid = valid && !first && !ferror(file);
+  free(line);
+  fclose(file);
+  return valid;
+}
+
 inline std::string AdoptProductUserDataDirectory(const std::string& home) {
   const std::string support = home + "/Library/Application Support";
   const std::string preferred = support + "/Crest/Chromium";
   const std::string previous = support + "/Chromium";
-  if (IsDirectory(preferred)) {
+  if (!MakeDirectoryTree(preferred)) {
+    StopProfileAdoption(preferred);
+  }
+  ProfileAdoptionLock lock(preferred);
+  if (PathExists(preferred + "/" + CompletedAdoptionRecordName())) {
     return preferred;
   }
-  const std::vector<std::string> names = CrestProfileDirectories(previous);
-  if (!MakeDirectoryTree(preferred)) {
-    fprintf(stderr, "Crest: cannot create %s (%s); using %s.\n",
-            preferred.c_str(), strerror(errno), previous.c_str());
-    return previous;
+  std::vector<std::string> names;
+  if (PathExists(preferred + "/" + AdoptionRecordName())) {
+    std::string recorded_previous;
+    if (!ReadAdoptionRecord(preferred, recorded_previous, names) ||
+        recorded_previous != previous) {
+      StopProfileAdoption(preferred);
+    }
+  } else {
+    names = CrestProfileDirectories(previous);
+    // An older build may have stopped before writing its record. Include
+    // already moved directories so their metadata is repaired as well.
+    for (const std::string& name : CrestProfileDirectories(preferred)) {
+      if (std::find(names.begin(), names.end(), name) == names.end())
+        names.push_back(name);
+    }
+    if (!WriteAdoptionRecord(preferred, previous, names)) {
+      StopProfileAdoption(preferred);
+    }
   }
-  std::vector<std::string> adopted;
   for (const std::string& name : names) {
-    if (rename((previous + "/" + name).c_str(),
-               (preferred + "/" + name).c_str()) == 0) {
-      adopted.push_back(name);
+    const std::string source = previous + "/" + name;
+    const std::string destination = preferred + "/" + name;
+    if (PathExists(destination)) {
+      if (PathExists(source) || !IsDirectory(destination))
+        StopProfileAdoption(preferred);
       continue;
     }
-    // A partial adoption would split one Space's profiles across two roots.
-    // Put back what moved and keep using the directory that still has them.
-    fprintf(stderr, "Crest: cannot adopt engine profile %s (%s); using %s.\n",
-            name.c_str(), strerror(errno), previous.c_str());
-    for (const std::string& moved : adopted) {
-      rename((preferred + "/" + moved).c_str(),
-             (previous + "/" + moved).c_str());
+    if (!IsDirectory(source) ||
+        rename(source.c_str(), destination.c_str()) != 0 ||
+        !SyncDirectory(previous) || !SyncDirectory(preferred)) {
+      StopProfileAdoption(preferred);
     }
-    rmdir(preferred.c_str());
-    return previous;
-  }
-  for (const std::string& name : adopted) {
     fprintf(stderr, "Crest: adopted engine profile %s into %s.\n", name.c_str(),
             preferred.c_str());
   }
-  WriteAdoptionRecord(preferred, previous, adopted);
   return preferred;
 }
 

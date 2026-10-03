@@ -5,15 +5,16 @@
 #ifndef CHROME_APP_CREST_PROFILE_ADOPTION_H_
 #define CHROME_APP_CREST_PROFILE_ADOPTION_H_
 
-// Finishes the engine profile adoption that `crest::AdoptProductUserDataDirectory`
-// started.
+// Finishes the engine profile adoption that
+// `crest::AdoptProductUserDataDirectory` started.
 //
 // That step runs in the executable's `main`, before the Chromium framework is
 // loaded, so it can only move directories. Two pieces of adoption are JSON
 // edits and therefore live here instead, in the browser process, at the first
 // point where `base` is usable and no preference store has been read yet:
 //
-//   * an adopted profile directory is unregistered until its `profile.info_cache`
+//   * an adopted profile directory is unregistered until its
+//   `profile.info_cache`
 //     entry moves with it, and
 //   * an adopted profile's encrypted tracked-preference validators are bound to
 //     the OSCrypt key of whichever bundle wrote them, so they must be retired
@@ -45,10 +46,12 @@ namespace crest {
 
 namespace internal {
 
-// Reads one JSON object from disk. An unreadable or non-object file is reported
-// as absent: every caller here treats that as "nothing to carry".
+// Missing metadata needs no repair. Unreadable or corrupt existing metadata
+// is a failure, never permission to replace it with an empty object.
 inline std::optional<base::DictValue> ReadJsonObject(
     const base::FilePath& path) {
+  if (!base::PathExists(path))
+    return base::DictValue();
   std::string contents;
   if (!base::ReadFileToString(path, &contents)) {
     return std::nullopt;
@@ -91,7 +94,7 @@ inline bool StripEncryptedHashes(base::DictValue& node) {
 }
 
 // Retires the encrypted validators in one preference file of an adopted
-// profile. Returns whether the file was rewritten.
+// profile. Returns success, including an absent file or one needing no edits.
 inline bool RetireEncryptedValidators(const base::FilePath& path) {
   std::optional<base::DictValue> preferences = ReadJsonObject(path);
   if (!preferences) {
@@ -99,14 +102,14 @@ inline bool RetireEncryptedValidators(const base::FilePath& path) {
   }
   base::DictValue* protection = preferences->FindDict("protection");
   if (!protection) {
-    return false;
+    return true;
   }
   bool changed = protection->Remove("super_encrypted_hash");
   if (base::DictValue* macs = protection->FindDict("macs")) {
     changed |= StripEncryptedHashes(*macs);
   }
   if (!changed) {
-    return false;
+    return true;
   }
   return WriteJsonObject(path, *preferences);
 }
@@ -115,17 +118,20 @@ inline bool RetireEncryptedValidators(const base::FilePath& path) {
 // `Local State` and into the new root's. Only the keys that name a profile
 // directory are touched; everything else in either file belongs to whichever
 // Chromium wrote it.
-inline void CarryProfileRegistry(const base::FilePath& previous_root,
+inline bool CarryProfileRegistry(const base::FilePath& previous_root,
                                  const base::FilePath& user_data_dir,
                                  const std::vector<std::string>& adopted) {
   std::optional<base::DictValue> previous =
       ReadJsonObject(previous_root.Append("Local State"));
-  if (!previous) {
-    return;
-  }
+  if (!previous)
+    return false;
+  if (previous->empty())
+    return true;
   const base::FilePath destination = user_data_dir.Append("Local State");
-  base::DictValue local_state =
-      ReadJsonObject(destination).value_or(base::DictValue());
+  auto destination_state = ReadJsonObject(destination);
+  if (!destination_state)
+    return false;
+  base::DictValue local_state = std::move(*destination_state);
 
   const base::DictValue* previous_cache =
       previous->FindDictByDottedPath("profile.info_cache");
@@ -158,8 +164,8 @@ inline void CarryProfileRegistry(const base::FilePath& previous_root,
   // `profiles_order` and `last_active_profiles` are lists of directory names.
   // Adopted names keep their previous relative order and are appended after
   // whatever the new root already lists.
-  for (const char* key : {"profile.profiles_order",
-                          "profile.last_active_profiles"}) {
+  for (const char* key :
+       {"profile.profiles_order", "profile.last_active_profiles"}) {
     const base::ListValue* source = previous->FindListByDottedPath(key);
     if (!source) {
       continue;
@@ -194,41 +200,50 @@ inline void CarryProfileRegistry(const base::FilePath& previous_root,
             "Crest: cannot write %s; the adopted engine profiles stay "
             "unregistered.\n",
             destination.AsUTF8Unsafe().c_str());
-    return;
+    return false;
   }
   for (const std::string& name : registered) {
     fprintf(stderr, "Crest: registered adopted engine profile %s.\n",
             name.c_str());
   }
+  return true;
 }
 
 }  // namespace internal
 
-// Finishes the adoption `AdoptProductUserDataDirectory` recorded, if any. Safe
-// to call on every launch and safe to repeat: the record is removed only once
-// the JSON edits have been attempted, and every edit is idempotent.
+// Finish only after all metadata writes succeed. A failure keeps the plan and
+// stops before any profile opens. The next launch safely repeats the edits.
 inline void CompleteProfileAdoption(const base::FilePath& user_data_dir) {
   const base::FilePath record = user_data_dir.Append(AdoptionRecordName());
-  std::string contents;
-  if (!base::ReadFileToString(record, &contents)) {
+  if (!base::PathExists(record))
     return;
-  }
-  const std::vector<std::string> lines = base::SplitString(
-      contents, "\n", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
-  if (lines.size() < 2) {
-    base::DeleteFile(record);
+  ProfileAdoptionLock lock(user_data_dir.value());
+  if (!base::PathExists(record))
     return;
+  std::string previous;
+  std::vector<std::string> adopted;
+  if (!ReadAdoptionRecord(user_data_dir.value(), previous, adopted) ||
+      (!adopted.empty() &&
+       !internal::CarryProfileRegistry(base::FilePath(previous), user_data_dir,
+                                       adopted))) {
+    StopProfileAdoption(user_data_dir.value());
   }
-  const base::FilePath previous_root = base::FilePath(lines.front());
-  const std::vector<std::string> adopted(lines.begin() + 1, lines.end());
-
-  internal::CarryProfileRegistry(previous_root, user_data_dir, adopted);
   for (const std::string& name : adopted) {
     const base::FilePath profile = user_data_dir.Append(name);
-    internal::RetireEncryptedValidators(profile.Append("Secure Preferences"));
-    internal::RetireEncryptedValidators(profile.Append("Preferences"));
+    if (!base::DirectoryExists(profile) ||
+        !internal::RetireEncryptedValidators(
+            profile.Append("Secure Preferences")) ||
+        !internal::RetireEncryptedValidators(profile.Append("Preferences"))) {
+      StopProfileAdoption(user_data_dir.value());
+    }
   }
-  base::DeleteFile(record);
+  if (rename(record.value().c_str(),
+             user_data_dir.Append(CompletedAdoptionRecordName())
+                 .value()
+                 .c_str()) != 0 ||
+      !SyncDirectory(user_data_dir.value())) {
+    StopProfileAdoption(user_data_dir.value());
+  }
 }
 
 }  // namespace crest

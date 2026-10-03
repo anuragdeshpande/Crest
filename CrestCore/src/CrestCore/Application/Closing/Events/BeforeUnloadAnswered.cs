@@ -18,6 +18,7 @@ public sealed record BeforeUnloadAnswered(Guid PageId, bool Proceeds) : EngineEv
         underway.Awaiting = null;
         if (Proceeds) preparations.Advance(changes, app.Issue);
         else preparations.Finish(allowed: false, changes);
+        app.AfterPageReport(changes);
     }
 
     #endregion

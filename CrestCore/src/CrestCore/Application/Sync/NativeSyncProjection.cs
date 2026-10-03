@@ -10,7 +10,7 @@ namespace CrestCore.Application;
 public static class NativeSyncProjection {
     #region Actions - Projection
 
-    internal static Guid Id(JsonNode? value) => NativeSessionAuthority.Id(value);
+    internal static Guid Id(JsonNode? value) => SyncJson.Identity(value);
 
     internal static string? Text(JsonNode? value) => value?.GetValue<string>();
 

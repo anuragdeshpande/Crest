@@ -29,6 +29,7 @@
         /// What waits for the binding to prepare each profile, by the
         /// preparation's identity.
         var preparations: [UUID: CheckedContinuation<Bool, Never>] = [:]
+        private(set) var notifications: ChromiumProfileNotifications?
 
         // MARK: - Initializers
 
@@ -74,8 +75,11 @@
 
         /// Hears the questions `core` asks the person, which this engine's
         /// pages show. Its downloads' questions are the app's to answer.
-        func follow(_ core: CrestCore) {
+        func follow(_ application: BrowserMacApplication) {
+            let core = application.browser.core
             self.core = core
+            notifications = ChromiumProfileNotifications(
+                core: core, center: application.hostedNotificationCenter, pages: pages)
             core.followPrompts(self) { [weak self] change in self?.ask(change) }
         }
 
@@ -164,14 +168,23 @@
         /// Loads a Space's profile so its extensions can be listed before anything
         /// opens in it; answers whether it is ready.
         func prepareProfile(_ profileID: UUID) async -> Bool {
-            await ChromiumComposition.runtime?.whenReady()
+            if let runtime = ChromiumComposition.runtime, !(await runtime.whenReady()) { return false }
+            guard !Task.isCancelled else { return false }
             let preparationID = UUID()
-            return await withCheckedContinuation { continuation in
-                guard pages.request(PrepareProfile(profileID: profileID, preparationID: preparationID)) else {
-                    continuation.resume(returning: false)
-                    return
+            return await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    guard !Task.isCancelled,
+                        pages.request(PrepareProfile(profileID: profileID, preparationID: preparationID))
+                    else {
+                        continuation.resume(returning: false)
+                        return
+                    }
+                    preparations[preparationID] = continuation
                 }
-                preparations[preparationID] = continuation
+            } onCancel: {
+                Task { @MainActor [weak self] in
+                    self?.preparations.removeValue(forKey: preparationID)?.resume(returning: false)
+                }
             }
         }
 

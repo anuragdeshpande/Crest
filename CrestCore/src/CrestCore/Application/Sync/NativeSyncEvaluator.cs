@@ -19,7 +19,7 @@ public static class NativeSyncEvaluator {
         return date;
     }
 
-    private static Guid Id(JsonNode? value) => NativeSessionAuthority.Id(value);
+    private static Guid Id(JsonNode? value) => SyncJson.Identity(value);
 
     private static SyncVersion Version(JsonNode value)
         => new(SyncJson.ULong(value["version"]!["logicalClock"]!), Id(value["version"]!["deviceID"]));

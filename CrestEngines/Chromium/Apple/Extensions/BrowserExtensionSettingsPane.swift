@@ -119,7 +119,7 @@ struct BrowserExtensionsView: View {
 /// Preserves Crest's disclosure row, artwork, version, description, and toggle.
 struct BrowserExtensionRow: View {
     let item: ChromiumExtensionStore.Installed
-    let setEnabled: (Bool) -> Void
+    let setEnabled: @MainActor @Sendable (Bool) -> Void
     let options: () -> Void
     let manage: () -> Void
     let remove: () -> Void

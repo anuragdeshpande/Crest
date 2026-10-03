@@ -2,12 +2,9 @@ import AppKit
 import Foundation
 import UserNotifications
 
-/// Delivers notifications created by a live hosted page through macOS.
-///
-/// The service intentionally stops at the lifetime of the page. Public embedded
-/// WebKit does not expose Safari's service-worker Web Push host, so it would be
-/// misleading to retain deliveries or promise background wake-up after a page
-/// has been released.
+/// Delivers web notifications through macOS while Crest runs. The owner
+/// controls their lifetime: a document for WebKit, a document or profile for
+/// Chromium. This service does not provide background wake-up or Web Push.
 @MainActor
 final class BrowserHostedWebNotificationSystemCenter:
     BrowserHostedWebNotificationCentering

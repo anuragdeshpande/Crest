@@ -555,7 +555,8 @@ engine.
   opened by itself (`PageOffered`) stays on that engine. The site's choice and
   the default engine apply to pages the person opens: typed addresses,
   bookmarks and links from other apps.
-- **Moving a page.** `RehostPage(page, engine)` closes the page on its engine,
+- **Moving a page.** `RehostPage(page, engine, remembersSite)` checks the page's
+  `beforeunload` decision before closing it on its engine,
   keeping nothing, creates it on the other in the same profile and window, and
   loads the address it showed once that engine created it. The page keeps its
   identity, owner and window; its history and form state stay behind, and the
@@ -573,11 +574,15 @@ engine.
   there before any page has opened on the other engine.
 - **Protected media.** Crest's Chromium carries no Widevine. When a page, or
   a frame of its own site, asks for Widevine or PlayReady, Chromium reports
-  `ProtectedMediaUnavailable`. The core moves the page once to an engine with
-  the `protected-media` capability, which WebKit has through the platform's
-  FairPlay, and records that engine for the site, so later visits open there
-  directly. Nothing moves when no engine plays protected media, when the page
-  already moved for this reason, or when the site already has a choice. The
+  `ProtectedMediaUnavailable`. The core automatically attempts a move once per
+  document to an engine with the `protected-media` capability, which WebKit has
+  through the platform's FairPlay. It checks `beforeunload` before moving and
+  validates that the document and website choice have not changed while waiting.
+  Only an allowed move records that engine for the site. Cancelling preserves
+  the page and its website choice without another prompt for that document.
+  No automatic move starts when no engine plays protected media, when the page
+  already moved for this reason, when another close is pending, or when the
+  site already has a choice. The
   Mac window shows a notice with **Move Back**, which records the engine the
   page left for the site and moves it back.
 - **Profiles and website data.** A Space is one profile on every engine. The
@@ -694,7 +699,11 @@ core no longer hosts, or that another engine hosts, changes nothing.
   file is asked about before it has a place. A file a site sends without the
   person's gesture passes the site's automatic-download choice. The binding
   keeps the file handling: staging and moving the file, quarantined, to the
-  place the core settled. The ledger is not persisted.
+  place the core settled. Chromium reports pause and resume availability;
+  `PauseDownload` and `ResumeDownload` validate the record and Space access
+  before sending the command to the owning engine. The binding operates on the
+  original transfer and cannot revive a removed record or approve a risk warning
+  by resuming. The ledger is not persisted.
 - **Close preparation.** Closing pages or windows, and quitting, run a close
   preparation (`PrepareToClosePages`, `PrepareToCloseWindows`,
   `PrepareToQuit`): the core asks each page with a before-unload handler, one
@@ -725,8 +734,15 @@ core no longer hosts, or that another engine hosts, changes nothing.
   allows notifications and the system lets Crest show them. A click brings the
   page's tab and Crest forward, then tells the document, which on Chromium
   hears it through `AnswerWebNotification`. A page whose document changes or
-  that leaves its engine takes its notifications down. Chromium closes a
-  notification a service worker or an extension posts.
+  that leaves its engine takes its notifications down. Chromium's local worker
+  and extension notifications instead report `ProfileNotificationPosted` and
+  `ProfileNotificationClosed`. `ChromiumProfileNotifications` checks
+  `ProfileNotificationDisplayCheck` before and after delivery and before a
+  click, and answers through `AnswerProfileNotification`. Space locks and
+  permission changes withdraw inaccessible notifications. Chromium dispatches
+  worker and extension click events in the owning profile even after the
+  original tab closes. Private profiles, remote Web Push, and app wake-up are
+  not supported by this delivery path.
 - **Residency.** Every device reports memory pressure with
   `ReportMemoryPressure`, and the core unloads the tab pages off screen longest, as many as the device's
   platform gives back: never one a window shows, one showing no document yet,

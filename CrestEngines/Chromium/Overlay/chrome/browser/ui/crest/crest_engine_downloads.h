@@ -29,7 +29,8 @@ class EngineDownloads final {
  public:
   using Report = base::RepeatingCallback<void(engine::EngineEvent)>;
   // The page that shows a download's WebContents, if one does.
-  using PageFor = base::RepeatingCallback<std::optional<engine::Guid>(download::DownloadItem*)>;
+  using PageFor = base::RepeatingCallback<std::optional<engine::Guid>(
+      download::DownloadItem*)>;
 
   EngineDownloads(EngineProfiles& profiles, Report report, PageFor page_for);
   EngineDownloads(const EngineDownloads&) = delete;
@@ -38,13 +39,16 @@ class EngineDownloads final {
 
   bool Owns(download::DownloadItem* item) const;
   void Changed(download::DownloadItem* item);
-  void ChooseDestination(download::DownloadItem* item,
-                         const base::FilePath& suggested_path,
-                         DownloadConfirmationReason reason,
-                         DownloadTargetDeterminerDelegate::ConfirmationCallback callback);
+  void ChooseDestination(
+      download::DownloadItem* item,
+      const base::FilePath& suggested_path,
+      DownloadConfirmationReason reason,
+      DownloadTargetDeterminerDelegate::ConfirmationCallback callback);
 
   bool Settle(const engine::SettleDownloadDestination& settlement);
   bool Cancel(const engine::CancelEngineDownload& command);
+  bool Pause(const engine::PauseEngineDownload& command);
+  bool Resume(const engine::ResumeEngineDownload& command);
   bool Remove(const engine::RemoveEngineDownload& command);
   bool Approve(const engine::ApproveEngineDownload& command);
 
@@ -55,8 +59,10 @@ class EngineDownloads final {
     DownloadTargetDeterminerDelegate::ConfirmationCallback callback;
   };
 
-  std::optional<engine::EngineDownload> Describe(download::DownloadItem* item) const;
-  download::DownloadItem* Find(const std::string& profile, const std::string& download) const;
+  std::optional<engine::EngineDownload> Describe(
+      download::DownloadItem* item) const;
+  download::DownloadItem* Find(const std::string& profile,
+                               const std::string& download) const;
   void CancelIfBlocked(std::string profile, std::string download);
 
   const raw_ref<EngineProfiles> profiles_;

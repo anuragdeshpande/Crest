@@ -172,6 +172,16 @@ final class BrowserDownloadCenter: NSObject {
         if item(itemID)?.phase.isLive == true { send(CancelDownload(downloadID: itemID, message: "Canceled.")) }
     }
 
+    func pause(_ itemID: UUID) {
+        guard item(itemID)?.canPause == true else { return }
+        send(PauseDownload(downloadID: itemID))
+    }
+
+    func resume(_ itemID: UUID) {
+        guard item(itemID)?.canResume == true else { return }
+        send(ResumeDownload(downloadID: itemID))
+    }
+
     /// Clears a record whose download ended. One an engine ran also leaves the
     /// engine's own list.
     func clear(_ itemID: UUID) {

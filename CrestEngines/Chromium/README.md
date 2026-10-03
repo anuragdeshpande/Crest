@@ -1,5 +1,13 @@
 # Chromium source preparation
 
+Crest 0.7 packages this engine with the native SwiftUI interface and portable
+core as the standard Mac app. Chromium is the default; WebKit remains available
+per page, per website, or as the default. The WebKit-only `Crest` Xcode scheme
+is a contributor build, not a second Mac download. iPhone and iPad use WebKit.
+See the [engine guide](../../HelpCenter/docs/browsing/engines.md) for migration,
+supported features, and current limits, and [Distribution](../../Documentation/Distribution.md)
+for the stable release procedure.
+
 ## Maintained fork
 
 Crest maintains a patch fork in this repository. The upstream source archive,
@@ -185,15 +193,19 @@ still wins. The first launch after that move adopts the `Crest-*` engine profile
 directories the previous default directory still holds, and only those:
 `Default` and everything else there belongs to whichever Chromium created that
 directory and is left alone. Each adopted directory is named on standard error.
-If the new directory cannot be created, or a profile cannot be moved, the
-adoption is undone and the launch falls back to the previous directory and says
-so.
+A durable adoption record lists every profile before any directory moves. The
+next launch resumes an interrupted move, including a destination created by an
+earlier build that did not yet write its record. Conflicting copies and I/O
+failures stop startup without opening a partial profile set. The record remains
+for a retry after the filesystem problem is resolved.
 
-Moving the directories is all that step can do: it runs before the framework is
-loaded and has no JSON reader. It records what it moved, and the browser process
-finishes the adoption in `ChromeMainDelegate::PreSandboxStartup`, immediately
-after the user data directory is resolved and before the local-state
-`PrefService` exists, let alone `ProfileManager`. Two things happen there.
+Moving directories runs before the framework is loaded and has no JSON reader.
+The browser process finishes the recorded metadata edits in
+`ChromeMainDelegate::PreSandboxStartup`, after the user data directory is resolved
+and before the local-state `PrefService` or `ProfileManager` exists. Only after
+all metadata writes succeed does the record become `Crest Adoption Complete`.
+Later launches do not adopt profiles another Chromium subsequently creates in
+the old directory.
 
 First, the entries that name an adopted directory are carried out of the
 previous `Local State` into the new one: its `profile.info_cache` record, its
@@ -496,6 +508,19 @@ This guard runs before Chromium loads its framework or opens any profile. The
 host restores its core-managed Spaces directly, without Chrome's profile picker.
 
 ## Releasing
+
+The release workflow calls `Build Crest` for the exact source SHA and waits for
+its core tests, generated-contract and architecture checks, script tests,
+native ABI checks, and product builds before publication. Building the
+Chromium host directly also builds its current native core into the same
+Xcode products directory.
+
+Stable promotion still needs a signed upgrade from each supported previous
+composition, a restart that preserves profiles and session data, and the
+Sparkle update/relaunch path. Exercise permissions, download recovery, and
+notification delivery through the native app. A headless engine smoke check
+does not validate those host integrations. Keep the Google-free protection
+and Web Push limitations in the Help Center accurate when publishing.
 
 Desktop releases check for the engine matching their selected commit.
 If missing, `Ensure Chromium engine` builds it on the registered Apple Silicon

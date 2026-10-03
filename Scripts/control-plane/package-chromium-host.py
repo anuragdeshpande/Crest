@@ -141,6 +141,15 @@ def default_update_channel(repo):
     return channels.pop()
 
 
+def minimum_system_version(engine_info, ui_info):
+    """Launch Services and Sparkle must require every bundled component's OS."""
+    versions = [info["LSMinimumSystemVersion"] for info in (engine_info, ui_info)]
+    for version in versions:
+        if not isinstance(version, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){0,2}", version):
+            raise ValueError(f"Invalid minimum macOS version: {version!r}")
+    return max(versions, key=lambda version: tuple(int(part) for part in version.split(".")))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--browser", required=True, type=Path, help="Built Chromium.app with the Crest overlay")
@@ -304,6 +313,7 @@ def main():
         info["CrestChromiumEngineVersion"] = info["CFBundleShortVersionString"]
         info["CFBundleShortVersionString"] = ui_info["CFBundleShortVersionString"]
         info["CFBundleVersion"] = ui_info["CFBundleVersion"]
+        info["LSMinimumSystemVersion"] = minimum_system_version(info, ui_info)
         info["CFBundleIconFile"] = "Crest"
         info["CFBundleIconName"] = "Crest"
         info["NSDockTilePlugIn"] = "CrestDockTilePlugin.docktileplugin"

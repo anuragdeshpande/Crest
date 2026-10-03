@@ -16,8 +16,10 @@ extension CrestCore {
     @discardableResult
     func open(_ origin: SiteOrigin, in spaceID: UUID, on engine: EngineKind, moving pageID: UUID) -> Bool {
         do {
-            try send(ChooseSiteEngine(spaceID: spaceID, origin: origin, engine: engine))
-            try send(RehostPage(pageID: pageID, engine: engine))
+            guard let page = state.pages[pageID], page.spaceID == spaceID,
+                page.live.address.flatMap({ URL(string: $0) }).flatMap({ SiteOrigin(url: $0) }) == origin
+            else { return false }
+            try send(RehostPage(pageID: pageID, engine: engine, remembersSite: true))
             return true
         } catch {
             Self.pagesLogger.debug(

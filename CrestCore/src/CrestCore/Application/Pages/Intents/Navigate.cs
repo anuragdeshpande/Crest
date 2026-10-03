@@ -21,7 +21,7 @@ public sealed record Navigate(Guid PageId, string Input) : PageIntent {
         var url = AddressResolution.Loading(Input, space.Settings.BrowsingPreferences,
             page.Engine.Supports(EngineCapability.InternalPages));
         if (pages.Chosen(space, url) is { } chosen && !ReferenceEquals(chosen, page.Engine)) {
-            pages.Rehost(page, chosen, url, RehostReason.SiteChoice, turn);
+            turn.Closing.Move(page, chosen, url, RehostReason.SiteChoice, remembersSite: false, turn);
             return;
         }
         pages.Update(page, turn.Changes, () => page.Load(url));

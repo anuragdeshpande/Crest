@@ -29,7 +29,7 @@ namespace crest::engine {
 // SHA-256 of the engine contract alone. A binding registers with it, so the
 // core refuses an engine built against any other contract.
 inline constexpr std::array<uint8_t, 32> kFingerprint = {
-    0xbf, 0x8a, 0x90, 0x44, 0x4f, 0xfe, 0xcf, 0xfa, 0x5a, 0x30, 0xa5, 0x22, 0x9b, 0x01, 0xb8, 0x7c, 0xaa, 0x41, 0xdd, 0xef, 0xbd, 0x78, 0x64, 0x32, 0x4c, 0x67, 0x4b, 0x4c, 0x42, 0xb0, 0xdb, 0xf3};
+    0x60, 0xc6, 0xeb, 0x25, 0xb1, 0x38, 0xc0, 0xad, 0xe2, 0xa3, 0x3b, 0x86, 0x15, 0xa5, 0x89, 0xf9, 0xea, 0x9e, 0x73, 0x22, 0x2d, 0x77, 0xeb, 0x6f, 0x8a, 0x4b, 0x81, 0xf2, 0x59, 0x73, 0x32, 0xd3};
 
 // A GUID in RFC 4122 byte order, as the wire carries it.
 using Guid = std::array<uint8_t, 16>;
@@ -438,6 +438,16 @@ inline bool Read(WireReader& reader, PageMediaActivity& value) {
   return reader.ok();
 }
 
+enum class ProfileNotificationSource : uint32_t {
+  kServiceWorker = 0,
+  kExtension = 1,
+};
+inline void Write(WireWriter& writer, ProfileNotificationSource value) { writer.WriteVarint(static_cast<uint32_t>(value)); }
+inline bool Read(WireReader& reader, ProfileNotificationSource& value) {
+  value = static_cast<ProfileNotificationSource>(reader.ReadEnum(2));
+  return reader.ok();
+}
+
 enum class ShortcutModifiers : uint32_t {
   kNone = 0,
   kCommand = 1,
@@ -699,6 +709,24 @@ inline void Write(WireWriter& writer, const AnswerInfoBar& value) {
 inline bool Read(WireReader& reader, AnswerInfoBar& value) {
   return Read(reader, value.page_id)
       && Read(reader, value.info_bar_id)
+      && Read(reader, value.answer);
+}
+
+struct AnswerProfileNotification {
+  Guid profile_id = {};
+  std::string notification_id;
+  WebNotificationAnswer answer = {};
+
+  friend bool operator==(const AnswerProfileNotification&, const AnswerProfileNotification&) = default;
+};
+inline void Write(WireWriter& writer, const AnswerProfileNotification& value) {
+  Write(writer, value.profile_id);
+  Write(writer, value.notification_id);
+  Write(writer, value.answer);
+}
+inline bool Read(WireReader& reader, AnswerProfileNotification& value) {
+  return Read(reader, value.profile_id)
+      && Read(reader, value.notification_id)
       && Read(reader, value.answer);
 }
 
@@ -1150,6 +1178,8 @@ struct EngineDownload {
   std::optional<EngineDownloadInterruption> interruption;
   std::optional<std::string> failure_detail;
   std::string approval_token;
+  bool can_pause = false;
+  bool can_resume = false;
 
   friend bool operator==(const EngineDownload&, const EngineDownload&) = default;
 };
@@ -1169,6 +1199,8 @@ inline void Write(WireWriter& writer, const EngineDownload& value) {
   Write(writer, value.interruption);
   Write(writer, value.failure_detail);
   Write(writer, value.approval_token);
+  Write(writer, value.can_pause);
+  Write(writer, value.can_resume);
 }
 inline bool Read(WireReader& reader, EngineDownload& value) {
   return Read(reader, value.download_id)
@@ -1185,7 +1217,9 @@ inline bool Read(WireReader& reader, EngineDownload& value) {
       && Read(reader, value.warning)
       && Read(reader, value.interruption)
       && Read(reader, value.failure_detail)
-      && Read(reader, value.approval_token);
+      && Read(reader, value.approval_token)
+      && Read(reader, value.can_pause)
+      && Read(reader, value.can_resume);
 }
 
 struct EngineDownloadChanged {
@@ -2448,6 +2482,21 @@ inline bool Read(WireReader& reader, PageViewUnavailable& value) {
   return Read(reader, value.page_id);
 }
 
+struct PauseEngineDownload {
+  Guid profile_id = {};
+  std::string download_id;
+
+  friend bool operator==(const PauseEngineDownload&, const PauseEngineDownload&) = default;
+};
+inline void Write(WireWriter& writer, const PauseEngineDownload& value) {
+  Write(writer, value.profile_id);
+  Write(writer, value.download_id);
+}
+inline bool Read(WireReader& reader, PauseEngineDownload& value) {
+  return Read(reader, value.profile_id)
+      && Read(reader, value.download_id);
+}
+
 struct PeekRequested {
   Guid page_id = {};
   std::string url;
@@ -2593,6 +2642,51 @@ inline void Write(WireWriter& writer, const PrepareProfile& value) {
 inline bool Read(WireReader& reader, PrepareProfile& value) {
   return Read(reader, value.profile_id)
       && Read(reader, value.preparation_id);
+}
+
+struct ProfileNotificationClosed {
+  Guid profile_id = {};
+  std::string notification_id;
+
+  friend bool operator==(const ProfileNotificationClosed&, const ProfileNotificationClosed&) = default;
+};
+inline void Write(WireWriter& writer, const ProfileNotificationClosed& value) {
+  Write(writer, value.profile_id);
+  Write(writer, value.notification_id);
+}
+inline bool Read(WireReader& reader, ProfileNotificationClosed& value) {
+  return Read(reader, value.profile_id)
+      && Read(reader, value.notification_id);
+}
+
+struct ProfileNotificationPosted {
+  Guid profile_id = {};
+  std::string notification_id;
+  SiteOrigin origin;
+  ProfileNotificationSource source = {};
+  std::string title;
+  std::string body;
+  bool silent = false;
+
+  friend bool operator==(const ProfileNotificationPosted&, const ProfileNotificationPosted&) = default;
+};
+inline void Write(WireWriter& writer, const ProfileNotificationPosted& value) {
+  Write(writer, value.profile_id);
+  Write(writer, value.notification_id);
+  Write(writer, value.origin);
+  Write(writer, value.source);
+  Write(writer, value.title);
+  Write(writer, value.body);
+  Write(writer, value.silent);
+}
+inline bool Read(WireReader& reader, ProfileNotificationPosted& value) {
+  return Read(reader, value.profile_id)
+      && Read(reader, value.notification_id)
+      && Read(reader, value.origin)
+      && Read(reader, value.source)
+      && Read(reader, value.title)
+      && Read(reader, value.body)
+      && Read(reader, value.silent);
 }
 
 struct ProfilePrepared {
@@ -2743,6 +2837,21 @@ inline bool Read(WireReader& reader, RestoreInteractionState& value) {
   return Read(reader, value.page_id)
       && Read(reader, value.state)
       && Read(reader, value.expected_url);
+}
+
+struct ResumeEngineDownload {
+  Guid profile_id = {};
+  std::string download_id;
+
+  friend bool operator==(const ResumeEngineDownload&, const ResumeEngineDownload&) = default;
+};
+inline void Write(WireWriter& writer, const ResumeEngineDownload& value) {
+  Write(writer, value.profile_id);
+  Write(writer, value.download_id);
+}
+inline bool Read(WireReader& reader, ResumeEngineDownload& value) {
+  return Read(reader, value.profile_id)
+      && Read(reader, value.download_id);
 }
 
 struct SaveInteractionState {
@@ -3108,7 +3217,7 @@ inline bool Read(WireReader& reader, ZoomPage& value) {
       && Read(reader, value.factor);
 }
 
-using EngineCommand = std::variant<AdoptOfferedPage, ApproveEngineDownload, CancelEngineDownload, CheckBeforeUnload, ClosePage, CreatePage, DropStagedLink, EraseProfileData, EraseSiteData, ExitPictureInPicture, LoadPage, RecoverPage, RejectOfferedPage, RemoveEngineDownload, SettleAuthentication, SettleDownloadDestination, SettleExtensionInstall, SettlePermission, SettleScriptDialog, StageNavigation>;
+using EngineCommand = std::variant<AdoptOfferedPage, ApproveEngineDownload, CancelEngineDownload, CheckBeforeUnload, ClosePage, CreatePage, DropStagedLink, EraseProfileData, EraseSiteData, ExitPictureInPicture, LoadPage, PauseEngineDownload, RecoverPage, RejectOfferedPage, RemoveEngineDownload, ResumeEngineDownload, SettleAuthentication, SettleDownloadDestination, SettleExtensionInstall, SettlePermission, SettleScriptDialog, StageNavigation>;
 inline void Write(WireWriter& writer, const EngineCommand& value) {
   writer.WriteVarint(value.index());
   std::visit([&writer](const auto& member) { Write(writer, member); }, value);
@@ -3182,54 +3291,66 @@ inline bool Read(WireReader& reader, EngineCommand& value) {
       return true;
     }
     case 11: {
-      RecoverPage member;
+      PauseEngineDownload member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 12: {
-      RejectOfferedPage member;
+      RecoverPage member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 13: {
-      RemoveEngineDownload member;
+      RejectOfferedPage member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 14: {
-      SettleAuthentication member;
+      RemoveEngineDownload member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 15: {
-      SettleDownloadDestination member;
+      ResumeEngineDownload member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 16: {
-      SettleExtensionInstall member;
+      SettleAuthentication member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 17: {
-      SettlePermission member;
+      SettleDownloadDestination member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 18: {
-      SettleScriptDialog member;
+      SettleExtensionInstall member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 19: {
+      SettlePermission member;
+      if (!Read(reader, member)) return false;
+      value = std::move(member);
+      return true;
+    }
+    case 20: {
+      SettleScriptDialog member;
+      if (!Read(reader, member)) return false;
+      value = std::move(member);
+      return true;
+    }
+    case 21: {
       StageNavigation member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
@@ -3398,7 +3519,7 @@ inline bool Read(WireReader& reader, EngineEvent& value) {
   }
 }
 
-using PageRequest = std::variant<ActivateMediaSession, AddContentScript, AnswerInfoBar, AnswerWebNotification, CapturePage, ChangeExtension, CloseInspector, EnterPictureInPicture, EvaluateContentScript, ExportPage, FindInPage, GoToHistoryOffset, HasSidePanel, HidePage, InstalledExtensions, LayoutInspector, MovePageToWindow, MuteMediaSession, OpenInspector, PageCertificates, PageExtensions, PageIcon, PageInspected, PageMedia, PerformMediaAction, PinnedExtensions, PrepareProfile, RefreshPageIcon, RefreshStoreListing, ReloadPage, RestoreInteractionState, SaveInteractionState, SetSitePermission, ShowBlockedPopups, ShowPage, StopLoading, StopMediaCapture, WatchPage, ZoomPage>;
+using PageRequest = std::variant<ActivateMediaSession, AddContentScript, AnswerInfoBar, AnswerProfileNotification, AnswerWebNotification, CapturePage, ChangeExtension, CloseInspector, EnterPictureInPicture, EvaluateContentScript, ExportPage, FindInPage, GoToHistoryOffset, HasSidePanel, HidePage, InstalledExtensions, LayoutInspector, MovePageToWindow, MuteMediaSession, OpenInspector, PageCertificates, PageExtensions, PageIcon, PageInspected, PageMedia, PerformMediaAction, PinnedExtensions, PrepareProfile, RefreshPageIcon, RefreshStoreListing, ReloadPage, RestoreInteractionState, SaveInteractionState, SetSitePermission, ShowBlockedPopups, ShowPage, StopLoading, StopMediaCapture, WatchPage, ZoomPage>;
 template <typename T>
 struct PageRequestAnswer;
 template <>
@@ -3411,6 +3532,10 @@ struct PageRequestAnswer<AddContentScript> {
 };
 template <>
 struct PageRequestAnswer<AnswerInfoBar> {
+  using Type = bool;
+};
+template <>
+struct PageRequestAnswer<AnswerProfileNotification> {
   using Type = bool;
 };
 template <>
@@ -3582,216 +3707,222 @@ inline bool Read(WireReader& reader, PageRequest& value) {
       return true;
     }
     case 3: {
-      AnswerWebNotification member;
+      AnswerProfileNotification member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 4: {
-      CapturePage member;
+      AnswerWebNotification member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 5: {
-      ChangeExtension member;
+      CapturePage member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 6: {
-      CloseInspector member;
+      ChangeExtension member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 7: {
-      EnterPictureInPicture member;
+      CloseInspector member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 8: {
-      EvaluateContentScript member;
+      EnterPictureInPicture member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 9: {
-      ExportPage member;
+      EvaluateContentScript member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 10: {
-      FindInPage member;
+      ExportPage member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 11: {
-      GoToHistoryOffset member;
+      FindInPage member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 12: {
-      HasSidePanel member;
+      GoToHistoryOffset member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 13: {
-      HidePage member;
+      HasSidePanel member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 14: {
-      InstalledExtensions member;
+      HidePage member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 15: {
-      LayoutInspector member;
+      InstalledExtensions member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 16: {
-      MovePageToWindow member;
+      LayoutInspector member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 17: {
-      MuteMediaSession member;
+      MovePageToWindow member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 18: {
-      OpenInspector member;
+      MuteMediaSession member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 19: {
-      PageCertificates member;
+      OpenInspector member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 20: {
-      PageExtensions member;
+      PageCertificates member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 21: {
-      PageIcon member;
+      PageExtensions member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 22: {
-      PageInspected member;
+      PageIcon member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 23: {
-      PageMedia member;
+      PageInspected member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 24: {
-      PerformMediaAction member;
+      PageMedia member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 25: {
-      PinnedExtensions member;
+      PerformMediaAction member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 26: {
-      PrepareProfile member;
+      PinnedExtensions member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 27: {
-      RefreshPageIcon member;
+      PrepareProfile member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 28: {
-      RefreshStoreListing member;
+      RefreshPageIcon member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 29: {
-      ReloadPage member;
+      RefreshStoreListing member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 30: {
-      RestoreInteractionState member;
+      ReloadPage member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 31: {
-      SaveInteractionState member;
+      RestoreInteractionState member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 32: {
-      SetSitePermission member;
+      SaveInteractionState member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 33: {
-      ShowBlockedPopups member;
+      SetSitePermission member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 34: {
-      ShowPage member;
+      ShowBlockedPopups member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 35: {
-      StopLoading member;
+      ShowPage member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 36: {
-      StopMediaCapture member;
+      StopLoading member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 37: {
-      WatchPage member;
+      StopMediaCapture member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 38: {
+      WatchPage member;
+      if (!Read(reader, member)) return false;
+      value = std::move(member);
+      return true;
+    }
+    case 39: {
       ZoomPage member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
@@ -3803,7 +3934,7 @@ inline bool Read(WireReader& reader, PageRequest& value) {
   }
 }
 
-using EnginePresentation = std::variant<ContentFullscreenChanged, ContentMessagePosted, ContentScriptEvaluated, ExtensionsChanged, FindFinished, InfoBarRemoved, InfoBarShown, InspectorClosed, InspectorLayoutChanged, LinkHovered, MediaSessionChanged, PageCaptured, PageExported, PageHistoryChanged, PageInteracted, PageLoadingChanged, PageNavigationCommitted, PageNavigationFailed, PageNavigationStarted, PageRendererGone, PageThemeChanged, PageViewClosed, PageViewReady, PageViewUnavailable, PeekRequested, PopupBlocked, ProfilePrepared, ProfileReleased, ScreenCaptureAccessMissing, SidePanelRequested, StoreInstallRequested, StoreRemovalRequested, WebNotificationClosed, WebNotificationPosted>;
+using EnginePresentation = std::variant<ContentFullscreenChanged, ContentMessagePosted, ContentScriptEvaluated, ExtensionsChanged, FindFinished, InfoBarRemoved, InfoBarShown, InspectorClosed, InspectorLayoutChanged, LinkHovered, MediaSessionChanged, PageCaptured, PageExported, PageHistoryChanged, PageInteracted, PageLoadingChanged, PageNavigationCommitted, PageNavigationFailed, PageNavigationStarted, PageRendererGone, PageThemeChanged, PageViewClosed, PageViewReady, PageViewUnavailable, PeekRequested, PopupBlocked, ProfileNotificationClosed, ProfileNotificationPosted, ProfilePrepared, ProfileReleased, ScreenCaptureAccessMissing, SidePanelRequested, StoreInstallRequested, StoreRemovalRequested, WebNotificationClosed, WebNotificationPosted>;
 inline void Write(WireWriter& writer, const EnginePresentation& value) {
   writer.WriteVarint(value.index());
   std::visit([&writer](const auto& member) { Write(writer, member); }, value);
@@ -3967,48 +4098,60 @@ inline bool Read(WireReader& reader, EnginePresentation& value) {
       return true;
     }
     case 26: {
-      ProfilePrepared member;
+      ProfileNotificationClosed member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 27: {
-      ProfileReleased member;
+      ProfileNotificationPosted member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 28: {
-      ScreenCaptureAccessMissing member;
+      ProfilePrepared member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 29: {
-      SidePanelRequested member;
+      ProfileReleased member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 30: {
-      StoreInstallRequested member;
+      ScreenCaptureAccessMissing member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 31: {
-      StoreRemovalRequested member;
+      SidePanelRequested member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 32: {
-      WebNotificationClosed member;
+      StoreInstallRequested member;
       if (!Read(reader, member)) return false;
       value = std::move(member);
       return true;
     }
     case 33: {
+      StoreRemovalRequested member;
+      if (!Read(reader, member)) return false;
+      value = std::move(member);
+      return true;
+    }
+    case 34: {
+      WebNotificationClosed member;
+      if (!Read(reader, member)) return false;
+      value = std::move(member);
+      return true;
+    }
+    case 35: {
       WebNotificationPosted member;
       if (!Read(reader, member)) return false;
       value = std::move(member);

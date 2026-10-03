@@ -17,6 +17,10 @@ Chromium pages on Mac have no built-in blocking. Install a content-blocking exte
 
 For broader filter-list coverage, install a content-blocking extension in the Space that needs it. Built-in protection and an extension can have different rule coverage, so check which layer is active before assuming the page itself is broken.
 
+## Malicious sites and downloads
+
+Crest's Chromium build keeps Google services disabled and does not include Google Safe Browsing or another built-in site and download reputation service. It cannot warn about every known phishing site or malicious download. Certificate checks, Chromium's sandbox, and warnings about executable or insecure downloads remain in place. Those checks do not determine whether a file is malware, and a completed download is not a safety verdict.
+
 ## Site permissions
 
 Crest can remember decisions for:
@@ -24,11 +28,21 @@ Crest can remember decisions for:
 - Camera
 - Microphone
 - Camera and microphone together
+- Location
+- Notifications
 - Pop-ups
 - Automatic downloads
 - Opening external apps
 
 Open Site Controls on the affected page to inspect or reset the decision. Settings also provides the Space-level view of stored permissions.
+
+Screen sharing asks through the system picker each time. You can block it for a site, but cannot preapprove a screen or window. Chromium on Mac currently shares a screen or window without browser-tab selection or shared audio.
+
+## Notifications
+
+Allow the site in Crest and allow Crest in macOS notification settings to receive notifications. Document notifications belong to their open page. Chromium also supports local service-worker and extension notifications while Crest runs, including a service worker's notification after its tab closes. Private profiles do not deliver these background notifications. Locking a Space or revoking its site permission withdraws notifications it can no longer show.
+
+Remote Web Push delivery is not available in this Google-free Chromium build. Local service-worker notifications do not mean that a site can receive server pushes or wake Crest after it quits.
 
 ## Reset a site
 

@@ -203,6 +203,37 @@ public sealed partial class BrowserContractsTests {
     }
 
     [Fact]
+    public void ProfileNotificationsRequireAnAccessibleNonPrivateOwnerAndTheSourcesGrant() {
+        using var directory = new StorageDirectory();
+        var (app, workspace, _) = DeviceApp(directory);
+        using var disposal = app;
+        var space = app.Workspace(workspace).Current.Spaces.First(space => space.Settings.AccessPolicy == SpaceAccessPolicy.Open);
+        var privateWorkspace = TestWorkspaces.Opened(app.Send(new OpenWorkspace(WorkspaceKind.Private, Seed: null)));
+        var privateSpace = app.Workspace(privateWorkspace).Current.Spaces.Single();
+        var extension = new SiteOrigin("chrome-extension", "abcdefghijklmnopabcdefghijklmnop", 0);
+        bool Shows(Guid profile, SiteOrigin origin, ProfileNotificationSource source) =>
+            app.Query(new ProfileNotificationDisplayCheck(profile, origin, source)).Shows;
+
+        Assert.False(Shows(space.ProfileId, Conference, ProfileNotificationSource.ServiceWorker));
+        app.Send(new DecideSitePermission(space.Id, Conference, SitePermission.Notifications, null,
+            SitePermissionDecision.GrantForSession));
+        Assert.True(Shows(space.ProfileId, Conference, ProfileNotificationSource.ServiceWorker));
+        Assert.True(Shows(space.ProfileId, extension, ProfileNotificationSource.Extension));
+        Assert.False(Shows(space.ProfileId, Conference, ProfileNotificationSource.Extension));
+        Assert.False(Shows(space.ProfileId, extension, ProfileNotificationSource.ServiceWorker));
+        Assert.False(Shows(Guid.NewGuid(), extension, ProfileNotificationSource.Extension));
+        Assert.False(Shows(privateSpace.ProfileId, extension, ProfileNotificationSource.Extension));
+        app.Send(new DecideSitePermission(privateSpace.Id, Conference, SitePermission.Notifications, null,
+            SitePermissionDecision.GrantForSession));
+        Assert.False(Shows(privateSpace.ProfileId, Conference, ProfileNotificationSource.ServiceWorker));
+
+        app.Send(new SetSpaceAccess(workspace, space.Id, SpaceAccessPolicy.DeviceOwnerAuthentication));
+        app.Send(new LockSpace(space.Id));
+        Assert.False(Shows(space.ProfileId, Conference, ProfileNotificationSource.ServiceWorker));
+        Assert.False(Shows(space.ProfileId, extension, ProfileNotificationSource.Extension));
+    }
+
+    [Fact]
     public void SitePermissionLimitsRefuseWithTheirLimit() {
         using var directory = new StorageDirectory();
         var (app, _, spaces) = DeviceApp(directory);

@@ -75,7 +75,7 @@ public sealed class NativeSyncJournal {
         return JsonNode.Parse(bytes, documentOptions: new() { MaxDepth = 64 })!.AsObject();
     }
 
-    private static Guid Id(JsonNode? node) => NativeSessionAuthority.Id(node);
+    private static Guid Id(JsonNode? node) => SyncJson.Identity(node);
 
     private static string Kind(JsonNode record) => record["id"]!["kind"]!.GetValue<string>();
 

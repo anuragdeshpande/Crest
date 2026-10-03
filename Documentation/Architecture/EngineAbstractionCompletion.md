@@ -41,7 +41,7 @@ Rules every engine keeps:
   enables it. UI never gates on build flags.
 - Unsupported features have explicit product behavior. Reader, whole-page
   translation, built-in content blocking and protected media are unavailable
-  on Chromium by decision; a page that needs protected media moves to WebKit.
+  on Chromium by decision; a page that needs protected media switches to WebKit after before-unload checks, unless a website rule already chooses its engine.
   Selection translation works on both engines.
 
 ## Current state
@@ -158,8 +158,17 @@ Chromium:
   proceed-anyway of its own.
 - The host has no command to stop live camera, microphone or location use;
   revocation relies on Chromium ending capture once the setting blocks it.
-- Chromium shows no notification a service worker or an extension posts; it
-  closes each one at once.
+- Local service-worker and extension notifications belong to the profile,
+  independent of an open page. The core checks Space access and site permission
+  through `ProfileNotificationDisplayCheck`; Chromium also checks extension
+  permissions. The native host checks again around asynchronous system delivery
+  and before clicks, and withdraws notifications after access is revoked.
+  Private profiles do not deliver them. This does not provide remote Web Push
+  or wake the app after it quits.
+- Chromium reports whether each download can pause or resume. Core intents
+  authorize the action and the binding calls the existing `DownloadItem`;
+  resuming never approves a dangerous-download warning or recreates a removed
+  download record. WebKit does not expose pause and resume through this contract.
 - Relayed blocked popups follow each Space's automatic-popup decision, and
   allowing the site opens the popups the blocker held back.
 

@@ -6,9 +6,13 @@ struct BrowserDownloadRowAction: View {
     let destinations: [BrowserUtilityDownloadDestination]
     let perform: (BrowserUtilityDownloadAction) -> Void
 
-    /// The phase chooses the action; this is the one place that turns each
-    /// kind into the command the platform performs.
+    /// Engine capabilities offer pause or recovery beside the phase's action.
     var body: some View {
+        if item.canPause {
+            actionButton(.pause) { perform(.pause(item.id)) }
+        } else if item.canResume {
+            actionButton(.resume) { perform(.resume(item.id)) }
+        }
         let action = item.phase.primaryAction
         switch action.kind {
         case .retry:
@@ -24,6 +28,10 @@ struct BrowserDownloadRowAction: View {
             )
         case .remove:
             actionButton(action) { perform(.clear(item.id)) }
+        case .pause:
+            actionButton(action) { perform(.pause(item.id)) }
+        case .resume:
+            actionButton(action) { perform(.resume(item.id)) }
         }
     }
 

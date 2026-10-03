@@ -131,6 +131,11 @@ internal sealed class Page {
     /// Why the page moved to another engine, each reason once.
     private readonly HashSet<RehostReason> movedFor = [];
 
+    /// The document already offered a protected-media fallback, if any.
+    private long? protectedMediaAttempt;
+
+
+
     #endregion
 
     #region Constructors
@@ -185,6 +190,14 @@ internal sealed class Page {
         Icon = null;
         crashes = 0;
         stoppedUnseen = null;
+    }
+
+    /// Attempts fallback once per document, so repeated capability probes
+    /// never repeat a canceled before-unload prompt.
+    public bool TryProtectedMediaFallback() {
+        if (protectedMediaAttempt == Documents) return false;
+        protectedMediaAttempt = Documents;
+        return true;
     }
 
     /// Whether the page ever moved to another engine for `reason`.

@@ -50,7 +50,7 @@ public sealed record DownloadUpdated(DownloadState Download, int Position) : Cha
 /// other phase.
 public sealed record DownloadState(Guid Id, Guid ProfileId, DateTimeOffset CreatedAt, string Filename, string? Destination,
     double Progress, DownloadTelemetry Telemetry, DownloadPhase Phase, DownloadFailure? Failure, string? Message,
-    DownloadRiskAssessment? Risk, bool IsAcknowledged);
+    DownloadRiskAssessment? Risk, bool IsAcknowledged, bool CanPause = false, bool CanResume = false);
 
 /// Download records that were cleared, expired or removed with their profile.
 public sealed record DownloadsRemoved(IReadOnlyList<Guid> DownloadIds) : Change;

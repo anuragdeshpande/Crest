@@ -26,7 +26,7 @@ enum BrowserSidebarUtilityActionPolicy {
         for action: BrowserUtilityDownloadAction
     ) -> UUID {
         switch action {
-        case .open(let id, _), .retry(let id), .cancel(let id), .clear(let id):
+        case .open(let id, _), .retry(let id), .pause(let id), .resume(let id), .cancel(let id), .clear(let id):
             id
         }
     }

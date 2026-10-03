@@ -9,7 +9,8 @@ namespace CrestCore.Contracts;
 /// that. `DownloadId` is the engine's own name for it within its profile.
 public sealed record EngineDownload(string DownloadId, Guid ProfileId, Guid? SourcePageId, string Filename, string? Path,
     long Received, long Total, DateTimeOffset StartedAt, bool Restored, bool Paused, EngineDownloadState State,
-    EngineDownloadWarning? Warning, EngineDownloadInterruption? Interruption, string? FailureDetail, string ApprovalToken);
+    EngineDownloadWarning? Warning, EngineDownloadInterruption? Interruption, string? FailureDetail, string ApprovalToken,
+    bool CanPause = false, bool CanResume = false);
 
 /// What stopped an engine download before its file was saved.
 public enum EngineDownloadInterruption {

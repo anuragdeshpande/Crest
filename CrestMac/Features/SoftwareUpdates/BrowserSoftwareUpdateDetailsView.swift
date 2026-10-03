@@ -49,7 +49,13 @@ struct BrowserSoftwareUpdateDetailsPresentation: ViewModifier {
     @Environment(\.browserMacWindows) private var windows
 
     func body(content: Content) -> some View {
-        content.environment(\.browserSoftwareUpdateDetails) { [windows] in windows?.openSoftwareUpdateDetails() }
+        content.environment(
+            \.browserSoftwareUpdateDetails,
+            windows.map { windows in
+                BrowserSoftwareUpdateDetailsAction(owner: windows) { [weak windows] in
+                    windows?.openSoftwareUpdateDetails()
+                }
+            })
     }
 }
 

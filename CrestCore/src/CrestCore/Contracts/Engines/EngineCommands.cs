@@ -102,6 +102,12 @@ public sealed record ApproveEngineDownload(Guid ProfileId, string DownloadId, st
 /// Cancels an engine download.
 public sealed record CancelEngineDownload(Guid ProfileId, string DownloadId) : EngineCommand;
 
+/// Pauses a transfer without discarding the engine's saved request or partial file.
+public sealed record PauseEngineDownload(Guid ProfileId, string DownloadId) : EngineCommand;
+
+/// Resumes or restarts a download using the engine's saved request, when it permits recovery.
+public sealed record ResumeEngineDownload(Guid ProfileId, string DownloadId) : EngineCommand;
+
 /// Removes a finished or stopped engine download from the engine's list.
 public sealed record RemoveEngineDownload(Guid ProfileId, string DownloadId) : EngineCommand;
 

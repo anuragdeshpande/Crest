@@ -123,10 +123,10 @@ internal abstract class SyncPayloadType {
     private static JsonNode? MergeGroups(JsonArray? first, JsonArray? second, int winner) {
         if (first is null || second is null) return (first ?? second)?.DeepClone();
         var preferred = winner == 0 ? first : second;
-        var fallback = (winner == 0 ? second : first).ToDictionary(n => NativeSessionAuthority.Id(n!["id"]), n => n!.AsObject());
+        var fallback = (winner == 0 ? second : first).ToDictionary(n => SyncJson.Identity(n!["id"]), n => n!.AsObject());
         return new JsonArray(preferred.Select(n => {
             var group = n!.DeepClone().AsObject();
-            if (fallback.TryGetValue(NativeSessionAuthority.Id(group["id"]), out var older)) {
+            if (fallback.TryGetValue(SyncJson.Identity(group["id"]), out var older)) {
                 LatestFields(group, n.AsObject(), older, "titleModifiedAt", "customTitle");
                 LatestFields(group, n.AsObject(), older, "iconModifiedAt", "customIconSymbol");
                 LatestFields(group, n.AsObject(), older, "tintModifiedAt", "tint");

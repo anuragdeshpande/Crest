@@ -56,6 +56,10 @@ struct MobileDownloadsView: View {
             }
         case .cancel(let itemID):
             pages.cancelDownload(itemID)
+        case .pause(let itemID):
+            pages.downloadCenter.pause(itemID)
+        case .resume(let itemID):
+            pages.downloadCenter.resume(itemID)
         case .clear(let itemID):
             pages.clearDownload(itemID)
         }

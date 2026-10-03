@@ -1,9 +1,5 @@
-using System.Text.Json.Nodes;
-
 using CrestCore.Contracts;
 using CrestCore.Domain;
-
-using Key = CrestCore.Application.StoredSessionCodec.Key;
 
 namespace CrestCore.Application;
 
@@ -69,13 +65,6 @@ public sealed partial class NativeSessionAuthority {
     #endregion
 
     #region Actions - Session validation
-
-    internal static Guid Id(JsonNode? value) {
-        if (value is JsonObject obj) value = obj[Key.RawValue];
-        var id = Guid.Parse(value!.GetValue<string>());
-        if (id == Guid.Empty) throw new BrowserRuleException(BrowserRuleCodes.InvalidIdentity);
-        return id;
-    }
 
     /// Throws `Rejected` with `InvalidSession` unless `value`, a session that
     /// arrives whole, is one a workspace can hold; see `SessionIdentities`.

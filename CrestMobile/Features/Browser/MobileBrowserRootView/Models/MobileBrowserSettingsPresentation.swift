@@ -119,7 +119,7 @@ final class MobileBrowserSettingsPresentation {
         guard let sheetAssignment,
             let space = BrowserSidebarAccessPolicy.selectedUnlockedSpace(
                 matching: sheetAssignment, in: browser, accessController: spaceAccess),
-            sheetTabID == nil || sheetTabID.flatMap { space.tabs.model($0) }?.nativeTabContent == .settings
+            sheetTabID == nil || sheetTabID.flatMap({ space.tabs.model($0) })?.nativeTabContent == .settings
         else {
             dismissSheet()
             return

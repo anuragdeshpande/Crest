@@ -342,6 +342,14 @@ void EngineBinding::Handle(const engine::CancelEngineDownload& command) {
   Downloads().Cancel(command);
 }
 
+void EngineBinding::Handle(const engine::PauseEngineDownload& command) {
+  Downloads().Pause(command);
+}
+
+void EngineBinding::Handle(const engine::ResumeEngineDownload& command) {
+  Downloads().Resume(command);
+}
+
 void EngineBinding::Handle(const engine::RemoveEngineDownload& command) {
   Downloads().Remove(command);
 }
@@ -1147,6 +1155,10 @@ bool EngineBinding::Handle(const engine::StopMediaCapture&) {
 }
 
 bool EngineBinding::Handle(const engine::AnswerWebNotification& request) {
+  return Notifications().Answer(request);
+}
+
+bool EngineBinding::Handle(const engine::AnswerProfileNotification& request) {
   return Notifications().Answer(request);
 }
 

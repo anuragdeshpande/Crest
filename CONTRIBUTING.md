@@ -6,11 +6,13 @@ covered by [`TRADEMARKS.md`](TRADEMARKS.md).
 
 ## Local setup
 
-1. Install Xcode 27 or another Xcode containing the macOS 26 and iOS 26 SDKs.
+1. Install Xcode with SDKs supporting the macOS 26.1 and iOS 26.1 deployment targets.
 2. Install [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 3. Install the .NET SDK pinned by `CrestCore/global.json`, for example with
    `Scripts/control-plane/install-dotnet.sh`.
-4. Run `Scripts/bootstrap.sh` from the repository root.
+4. Use Python 3.11 or later for the Chromium and release tools. Check that
+   `python3 --version` resolves to that interpreter.
+5. Run `Scripts/bootstrap.sh` from the repository root.
 
 Building the `Crest` scheme produces the WebKit composition of the Mac app. The
 published Mac app also packages a prebuilt Chromium engine; see
@@ -34,9 +36,12 @@ justifies deletion without reference, build, and test proof. See
 [`Documentation/RepositoryGuardrails.md`](Documentation/RepositoryGuardrails.md)
 for the enforced contracts and current exact exemptions.
 
-Pull requests have no required automated checks. Run the relevant validation
-above before opening one. A maintainer dispatches the **Build Crest** workflow
-when a change needs the hosted source, core, macOS, iOS, and Help Center builds.
+**Build Crest** runs on pull requests and pushes to `main`, and can also be
+dispatched manually. It checks source, core tests and analyzers, architecture,
+scripts, Swift formatting, native contracts, macOS and iOS builds, and the Help
+Center. Release publication calls the same workflow for the exact source SHA
+and waits for it to pass. Run the relevant local validation before opening a
+pull request; builds do not replace native app acceptance checks.
 
 Run `Scripts/audit-licenses.py` whenever a package, website dependency, copied
 source file, font, or other third-party asset changes. New runtime dependencies

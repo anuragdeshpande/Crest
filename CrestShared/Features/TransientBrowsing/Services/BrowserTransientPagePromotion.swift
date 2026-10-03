@@ -27,7 +27,7 @@ struct BrowserTransientPagePromotion {
         adoptPage: (UUID, SpaceModel) -> Bool
     ) -> Outcome? {
         guard let destination = browser.spaceModel(matching: destinationAssignment) else { return nil }
-        guard let url else {
+        guard url != nil else {
             guard !isLocked(destination) else { return nil }
             browser.selectSpace(destination.id)
             return .selectedSpace

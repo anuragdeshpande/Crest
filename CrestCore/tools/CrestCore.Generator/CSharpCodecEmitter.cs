@@ -114,7 +114,7 @@ internal static class CSharpCodecEmitter {
     /// for the engine that asked it, so each question reaches its answer
     /// through its own type.
     private static void EmitEngineAnswers(StringBuilder code, ContractSchema schema) {
-        code.Append('\n').Append("    public static void WriteEngineAnswer(WireWriter writer, IEngineAnswers answers, Engine engine, object question) {\n");
+        code.Append('\n').Append("    public static void WriteEngineAnswer(WireWriter writer, CrestApp answers, Engine engine, object question) {\n");
         code.Append("        ArgumentNullException.ThrowIfNull(answers);\n        ArgumentNullException.ThrowIfNull(question);\n");
         code.Append("        switch (question) {\n");
         foreach (var member in schema.Members(ContractRoot.EngineQuestion)) {

@@ -6,6 +6,7 @@ import UserNotifications
 /// shows.
 @MainActor
 final class BrowserMacApplication {
+    let hostedNotificationCenter: BrowserHostedWebNotificationSystemCenter
     let browser: BrowserStore
     let cloudSync: BrowserCloudSyncController
     let onboardingProgress: BrowserOnboardingProgressStore
@@ -36,8 +37,7 @@ final class BrowserMacApplication {
     /// Answers the core's questions about every engine's downloads: where each
     /// file goes, and whether to keep one its engine warned about.
     let downloadPrompts: BrowserDownloadPrompts
-    /// Tells the person when a page moved to another engine to play protected
-    /// video, and moves it back if they ask.
+    /// Offers a switch to another engine for protected video, and a way back.
     let engineMoveNotices: BrowserEngineMoveNotices
     /// Follows the system's memory pressure for every window's pages; nil in
     /// an isolated launch, which leaves its pages alone.
@@ -138,6 +138,7 @@ final class BrowserMacApplication {
         let permissionCenter = BrowserSitePermissionCenter(core: core)
         permissionCenter.adoptLegacyRecords(legacyDevice.sitePermissions)
         let hostedNotificationCenter = BrowserHostedWebNotificationSystemCenter()
+        self.hostedNotificationCenter = hostedNotificationCenter
         let sidebarDefaults: UserDefaults?
         if usesIsolatedLaunch, let isolationID = launchEnvironment.persistentIsolationID {
             sidebarDefaults = UserDefaults(

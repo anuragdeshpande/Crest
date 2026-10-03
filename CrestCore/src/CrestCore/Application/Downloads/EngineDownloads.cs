@@ -33,8 +33,11 @@ internal sealed class EngineDownloads(Downloads downloads, Device device, Pages 
         public string EngineId { get; } = engineId;
         public Guid DownloadId { get; } = downloadId;
         public DownloadTransferEstimator? Estimator { get; set; }
-        /// The engine still runs it; once it ends, later reports change nothing.
+        /// The engine still runs it; after it ends only a requested recovery
+        /// can accept another transfer report.
         public bool IsLive { get; set; } = true;
+        public bool ResumeRequested { get; set; }
+        public EngineDownload? LastReport { get; set; }
         /// The warning the approval waiting on the person is about, or the
         /// blocked download a retry replays.
         public string? ApprovalToken { get; set; }
@@ -127,11 +130,29 @@ internal sealed class EngineDownloads(Downloads downloads, Device device, Pages 
     /// The engine download the ledger records as `downloadId`, or null.
     internal Tracked? Tracking(Guid downloadId) => byDownload.GetValueOrDefault(downloadId);
 
+    /// Controls require a retained row in a Space the person may still use.
+    internal DownloadState? Controllable(Tracked download) =>
+        download.LastReport is { } report && SpaceOf(report) is not null
+            ? downloads.Ledger.Items.FirstOrDefault(item => item.Id == download.DownloadId)
+            : null;
+
+    internal void SetControls(Tracked download, EngineDownload report, ChangeFeed changes) =>
+        downloads.Updated(downloads.Ledger.SetControls(download.DownloadId,
+            report.CanPause && !report.Paused && report.Warning is null,
+            report.CanResume && report.Warning is null), changes);
+
+    internal void Resume(Tracked download, ChangeFeed changes) {
+        downloads.Updated(downloads.Ledger.Resume(download.DownloadId), changes);
+        download.Estimator = null;
+        download.IsLive = true;
+    }
+
     /// The download ended: what it asked no longer waits, and later reports
     /// about it change nothing. Its identity stays, so a late report cannot
     /// bring back a record the person cleared.
     internal void End(Tracked download, ChangeFeed changes) {
         download.IsLive = false;
+        download.ResumeRequested = false;
         foreach (var (id, _) in waiting.Where(entry => entry.Value.Download == download).ToArray()) Settle(id, changes);
     }
 

@@ -8,7 +8,7 @@ namespace CrestCore.Application;
 /// What one page intent or engine report needs: where it publishes what it
 /// changed, and where it hands the engine commands it causes, which reach
 /// their engines once the core lets go of its lock.
-internal sealed record PageTurn(ChangeFeed Changes, Action<Engine, EngineCommand> Issue);
+internal sealed record PageTurn(ChangeFeed Changes, Action<Engine, EngineCommand> Issue, ClosePreparations Closing);
 
 #endregion
 
@@ -25,9 +25,9 @@ internal sealed record PageTurn(ChangeFeed Changes, Action<Engine, EngineCommand
 /// shows, when that engine is registered, and on the default engine
 /// otherwise. A page moves to another engine when the person asks, when the
 /// person asks for an address of a site chosen for another engine, when a
-/// page no other page opened heads to such a site, or when it asks for
-/// protected media its engine cannot play and another plays it through the
-/// platform.
+/// page no other page opened heads to such a site, or when the person accepts
+/// an offer to try protected media on another engine. A requested move first
+/// lets the current document refuse leaving through beforeunload.
 ///
 /// A window hosts one page for a tab. The Mac's windows over one workspace
 /// share one runtime store, so a second window shows the page the first opened

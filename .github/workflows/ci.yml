@@ -1,13 +1,22 @@
 name: Build Crest
 
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Exact source revision to validate before publication
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: validate-${{ github.ref }}
+  group: validate-${{ github.workflow }}-${{ github.event_name }}-${{ inputs.source_sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -17,6 +26,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
 
       - name: Check the publishable source and dependency licenses
         run: |
@@ -31,6 +42,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
 
       - name: Ensure script tools are available
         run: command -v rg >/dev/null || brew install ripgrep
@@ -44,6 +57,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
 
       - name: Install the repository shell
         run: |
@@ -60,12 +75,17 @@ jobs:
       - name: Check core analyzers and code style
         run: Scripts/control-plane/lint-dotnet.sh
 
+      - name: Check architecture boundaries
+        run: python3 Scripts/check-architecture.py
+
   app:
     name: Compile macOS and iOS
     runs-on: xcode-27
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
 
       - name: Ensure build tools are available
         run: |
@@ -75,6 +95,37 @@ jobs:
 
       - name: Generate the project
         run: Scripts/bootstrap.sh
+
+      - name: Check Swift formatting
+        run: |
+          python3 - <<'PYTHON'
+          import subprocess
+          paths = subprocess.check_output(["git", "ls-files", "-z", "*.swift"]).decode().split("\0")
+          paths = [path for path in paths if path and "/Generated/" not in path]
+          subprocess.run(["xcrun", "swift-format", "lint", "--strict", "--configuration", ".swift-format", *paths], check=True)
+          PYTHON
+
+      - name: Build Chromium product host
+        run: |
+          xcodebuild build \
+            -project Crest.xcodeproj \
+            -scheme CrestChromiumUIProduct \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/crest-build-derived-data" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Check native contracts against the built core
+        run: |
+          core="$RUNNER_TEMP/crest-build-derived-data/Build/Products/Release/CrestCore"
+          clang -std=c11 -Wall -Wextra -Werror -I CrestContracts/include \
+            CrestContracts/tests/native_abi.c "$core/CrestCore.Native.dylib" \
+            -Wl,-rpath,"$core" -o "$core/native-abi"
+          "$core/native-abi"
+          clang++ -std=c++20 -Wall -Wextra -Werror -Wconversion -I CrestContracts/include \
+            CrestContracts/tests/engine_abi.cc "$core/CrestCore.Native.dylib" \
+            -Wl,-rpath,"$core" -o "$core/engine-abi"
+          "$core/engine-abi"
 
       - name: Build macOS
         run: |
@@ -106,6 +157,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

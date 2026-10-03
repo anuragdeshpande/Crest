@@ -85,6 +85,10 @@ struct BrowserSidebarUtilityCoordinator {
             }
         case .cancel(let itemID):
             platformActions.cancelDownload(itemID)
+        case .pause(let itemID):
+            downloadCenter.pause(itemID)
+        case .resume(let itemID):
+            downloadCenter.resume(itemID)
         case .clear(let itemID):
             platformActions.clearDownload(itemID)
         }

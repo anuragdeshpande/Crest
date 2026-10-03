@@ -5,6 +5,18 @@ import XCTest
 
 @MainActor
 final class EnginePageAvailabilityTests: XCTestCase {
+    func testOnlyInitialViewSetupIsAcceptedWhileTheNativeEngineStarts() {
+        var starts = 0
+        let pages = NativeEnginePages(start: { starts += 1 }, present: { _ in })
+        let pageID = UUID()
+        XCTAssertFalse(pages.request(ReloadPage(pageID: pageID, bypassesCache: false)))
+        XCTAssertEqual(starts, 0, "A refused user action must not start the engine or be replayed later.")
+        XCTAssertTrue(pages.request(WatchPage(pageID: pageID)))
+        XCTAssertTrue(pages.request(ZoomPage(pageID: pageID, factor: 1.5)))
+        XCTAssertEqual(starts, 2)
+        XCTAssertFalse(pages.isReady)
+    }
+
     func testDeferredAndClosedPagesHaveNoQueryableDocument() {
         let pages = StartingEnginePages()
         let page = EnginePage(

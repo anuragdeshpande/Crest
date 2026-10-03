@@ -585,7 +585,8 @@ final class BrowserWebHostViewTests: XCTestCase {
 
         XCTAssertTrue(window.makeFirstResponder(addressField))
         AddressFocusAction.resign(in: window, keepingFocusIn: page)
-        XCTAssertTrue(window.firstResponder === window, "The address field still gives up focus as the selection moves.")
+        XCTAssertTrue(
+            window.firstResponder === window, "The address field still gives up focus as the selection moves.")
     }
 
     func testPresentationFocusProtectionBlocksOnlyTheMountingTurn() {

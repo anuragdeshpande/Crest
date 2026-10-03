@@ -157,7 +157,7 @@ public sealed partial class BrowserContractsTests {
                 Text(value["name"], 128, "space.name");
                 Text(value["symbol"], 128, "space.symbol");
                 var groups = value["splitGroups"]?.AsArray() ?? [];
-                if (groups.Select(group => NativeSessionAuthority.Id(group!["id"])).Distinct().Count() != groups.Count) refusals.Add("space.splitGroups");
+                if (groups.Select(group => SyncJson.Identity(group!["id"])).Distinct().Count() != groups.Count) refusals.Add("space.splitGroups");
                 foreach (var group in groups) {
                     if (group!["customTitle"] is { } title) Text(title, 2_048, "splitGroup.customTitle");
                     if (group["customIconSymbol"] is { } icon) {

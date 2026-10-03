@@ -7,8 +7,8 @@ namespace CrestCore.Domain;
 /// Engines report transfer events and the ledger decides what each event
 /// means for the record: live transfers accept progress, destinations, risk
 /// verdicts and a final outcome; a blocked automatic download may only be
-/// retried or failed; finished, canceled and failed records only expire or are
-/// removed. An event that does not apply to the record's phase is ignored and
+/// retried or failed; an interrupted transfer resumes only after the person
+/// requests recovery supported by its engine. An event that does not apply to the record's phase is ignored and
 /// answers null, so a late engine callback cannot revive a record. A broken
 /// rule throws `Rejected`. Nothing here is persisted or synced. Callers
 /// serialize access.
@@ -62,6 +62,29 @@ public sealed class DownloadLedger {
         });
     }
 
+    /// Only the engine knows which transfers it can pause or recover. A
+    /// terminal record never offers pause, and only a failed one may recover.
+    public DownloadState? SetControls(Guid id, bool canPause, bool canResume) =>
+        Update(id, item => item.CanPause != (canPause && item.Phase.IsTransferring)
+            || item.CanResume != (canResume && (item.Phase.IsTransferring || item.Phase == DownloadPhase.Failed)),
+            item => item with {
+                CanPause = canPause && item.Phase.IsTransferring,
+                CanResume = canResume && (item.Phase.IsTransferring || item.Phase == DownloadPhase.Failed)
+            });
+
+    /// The engine confirmed a requested recovery. Its next reading may start
+    /// at zero when the server cannot continue the existing partial file.
+    public DownloadState? Resume(Guid id) =>
+        Update(id, item => item.Phase == DownloadPhase.Failed && item.CanResume, item => item with {
+            Phase = DownloadPhase.Downloading,
+            Progress = 0,
+            Telemetry = DownloadTelemetry.Empty,
+            Failure = null,
+            Message = null,
+            CanPause = false,
+            CanResume = false
+        });
+
     /// A download with any risk reason waits for approval under its sanitized name.
     public DownloadState? AssessRisk(Guid id, DownloadRiskAssessment assessment) {
         ArgumentNullException.ThrowIfNull(assessment);
@@ -81,7 +104,9 @@ public sealed class DownloadLedger {
         return UpdateLive(id, item => item with {
             Progress = 1,
             Telemetry = item.Telemetry.Stopped(finalByteCount, completed: true),
-            Phase = DownloadPhase.Finished
+            Phase = DownloadPhase.Finished,
+            CanPause = false,
+            CanResume = false
         });
     }
 
@@ -113,7 +138,9 @@ public sealed class DownloadLedger {
             Failure = null,
             Message = null,
             Risk = null,
-            IsAcknowledged = false
+            IsAcknowledged = false,
+            CanPause = false,
+            CanResume = false
         });
 
     #endregion
@@ -179,7 +206,14 @@ public sealed class DownloadLedger {
     #region Actions - Transitions
 
     private static DownloadState Stopped(DownloadState item, DownloadPhase phase, string? message) =>
-        item with { Telemetry = item.Telemetry.Stopped(), Phase = phase, Failure = null, Message = message };
+        item with {
+            Telemetry = item.Telemetry.Stopped(),
+            Phase = phase,
+            Failure = null,
+            Message = message,
+            CanPause = false,
+            CanResume = false
+        };
 
     private DownloadState? UpdateLive(Guid id, Func<DownloadState, DownloadState> transition) =>
         Update(id, item => item.Phase.IsLive, transition);

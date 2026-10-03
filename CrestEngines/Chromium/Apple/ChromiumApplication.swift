@@ -68,7 +68,12 @@
 
         override func accessibilitySetValue(_ value: Any?, forAttribute attribute: NSAccessibility.Attribute) {
             if attribute.rawValue == "AXEnhancedUserInterface" {
-                engineEvents?.setEnhancedAccessibility((value as? NSNumber)?.boolValue ?? false)
+                let enabled = (value as? NSNumber)?.boolValue ?? false
+                if Thread.isMainThread {
+                    MainActor.assumeIsolated { engineEvents?.setEnhancedAccessibility(enabled) }
+                } else {
+                    Task { @MainActor [weak self] in self?.engineEvents?.setEnhancedAccessibility(enabled) }
+                }
             }
             super.accessibilitySetValue(value, forAttribute: attribute)
         }

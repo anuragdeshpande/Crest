@@ -3,6 +3,8 @@ import Foundation
 enum BrowserUtilityDownloadAction {
     case open(UUID, BrowserUtilityDownloadDestination)
     case retry(UUID)
+    case pause(UUID)
+    case resume(UUID)
     case cancel(UUID)
     case clear(UUID)
 }

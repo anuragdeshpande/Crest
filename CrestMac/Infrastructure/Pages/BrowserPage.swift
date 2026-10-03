@@ -4,7 +4,6 @@ import Foundation
 import Observation
 import PDFKit
 import UniformTypeIdentifiers
-import WebKit
 import os
 
 // MARK: - Types

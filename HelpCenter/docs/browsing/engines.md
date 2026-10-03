@@ -7,7 +7,7 @@ keywords: [engine, Chromium, WebKit, ungoogled-chromium, default engine, website
 
 # Chromium and WebKit on Mac
 
-Crest for Mac includes two web engines. New pages open in Chromium unless you choose otherwise, and any website or page can use WebKit, the engine behind Safari. Crest on iPhone and iPad uses WebKit.
+Crest 0.7 for Mac includes two web engines. New pages open in Chromium unless you choose otherwise, and any website or page can use WebKit, the engine behind Safari. Crest on iPhone and iPad uses WebKit.
 
 Your Spaces, tabs, history, passwords and settings are the same whichever engine shows a page. Website data is not: each engine keeps its own cookies and storage for a Space, so signing in to a site in Chromium does not sign you in to it in WebKit.
 
@@ -43,11 +43,11 @@ Rules match the website's scheme, host and port. A rule for `example.com` does n
 
 ## Protected video
 
-Chromium in Crest cannot play DRM-protected video. When a page asks for it, Crest moves the page to WebKit, which plays it with Apple's FairPlay, and shows **Moved to WebKit to play protected video**. The website then opens in WebKit. Select **Move Back** to return it to Chromium, or remove its rule in Settings.
+Chromium in Crest cannot play DRM-protected video. When a page asks for it, Crest automatically switches to WebKit to try Apple's FairPlay support, unless you have explicitly chosen an engine for that website. The switch checks for unsaved work first. Choosing **Stay on Page** keeps the page in Chromium and leaves its website rule unchanged; repeated requests from that document do not prompt again. After an allowed move, the website opens in WebKit on later visits. Select **Move Back** to return it to Chromium, or remove its rule in Settings. Playback still depends on the site's support for FairPlay.
 
 ## After updating from a WebKit-only Crest
 
-Versions of Crest before 0.6.460 used WebKit only. After updating, new pages open in Chromium. Your Spaces, tabs, history and Crest Passwords carry over, but Chromium starts with its own empty website data, so you may need to sign in to websites again. To keep browsing in WebKit, choose it as your default engine.
+The previous stable 0.6 release used WebKit only. Updating to Crest 0.7 keeps your Spaces, tabs, history and Crest Passwords. New pages open in Chromium unless you choose WebKit as your default. Each engine keeps separate website data, so Chromium does not inherit your WebKit sign-ins. Your existing WebKit website data remains available to pages opened in WebKit.
 
 Extensions installed in earlier versions do not carry over. Install them again from the Chrome Web Store.
 
@@ -59,9 +59,17 @@ Extensions installed in earlier versions do not carry over. Install them again f
 | Reader | No | Yes |
 | Translate the whole page | No. Translate selected text instead. | Yes |
 | Built-in ad and tracker blocking | No. Use a blocking extension. | Yes |
-| Protected video | Moves the page to WebKit | Yes |
+| Protected video | Automatically switches to WebKit after unsaved-changes checks | FairPlay, when the website supports it |
 | Find in Page | Shows the number of matches | Shows whether there is a match |
 | Save Web Archive | `.mhtml` file | `.webarchive` file |
 | Inspect a page | Chromium DevTools | Web Inspector |
 
-Tabs, Spaces, Split View, Peek, Crest Passwords, site permissions, Picture in Picture and downloads work the same in both. See [Translate, read, and use page tools](./page-tools.md) for the page features in detail.
+Tabs, Spaces, Split View, Peek, Crest Passwords, site permissions, Picture in Picture and downloads are available in both. Their engine controls can differ; Chromium downloads also offer pause and resume. See [Translate, read, and use page tools](./page-tools.md) and [Downloads](../privacy/history-archive-and-downloads.md#downloads) for details.
+
+## Current Chromium limits
+
+- Crest Passwords handles saved passwords. Built-in address and payment-card autofill are not available.
+- Screen sharing uses the macOS screen or window picker. Browser-tab sharing and shared audio are not available.
+- Local service-worker and extension notifications work while Crest runs. Remote Web Push is not available.
+
+See [Site permissions and notifications](../privacy/content-blocking-and-site-permissions.md) for permission controls and the Google-free engine's site and download protection limits.

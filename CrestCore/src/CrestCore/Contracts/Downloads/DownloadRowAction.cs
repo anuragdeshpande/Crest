@@ -9,7 +9,7 @@ public sealed class DownloadRowAction {
 
     /// Each platform performs an action with its own code, so the one place
     /// that performs it switches over the kind.
-    public enum Kinds { Retry, Cancel, Open, Remove }
+    public enum Kinds { Retry, Cancel, Open, Remove, Pause, Resume }
 
     #endregion
 
@@ -21,7 +21,10 @@ public sealed class DownloadRowAction {
     public static readonly DownloadRowAction Remove = new(Kinds.Remove, name: "remove", title: "Remove Download", symbol: "trash",
         isDestructive: true);
 
-    public static IReadOnlyList<DownloadRowAction> All { get; } = [Retry, Cancel, Open, Remove];
+    public static readonly DownloadRowAction Pause = new(Kinds.Pause, name: "pause", title: "Pause Download", symbol: "pause");
+    public static readonly DownloadRowAction Resume = new(Kinds.Resume, name: "resume", title: "Resume Download", symbol: "play");
+
+    public static IReadOnlyList<DownloadRowAction> All { get; } = [Retry, Cancel, Open, Remove, Pause, Resume];
 
     public Kinds Kind { get; }
     public string Name { get; }

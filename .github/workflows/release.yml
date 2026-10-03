@@ -212,6 +212,16 @@ jobs:
             printf 'source_sha=%s\n' "$source_sha"
           } >> "$GITHUB_OUTPUT"
 
+  validate:
+    name: Validate release source
+    needs: preflight
+    if: needs.preflight.outputs.should_publish == 'true'
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+    with:
+      source_sha: ${{ needs.preflight.outputs.source_sha }}
+
   engine:
     name: Prepare Chromium engine
     needs: preflight
@@ -224,7 +234,7 @@ jobs:
 
   release:
     name: Sign, notarize, and publish
-    needs: [preflight, engine]
+    needs: [preflight, validate, engine]
     if: needs.preflight.outputs.should_publish == 'true'
     runs-on: xcode-27
     timeout-minutes: 180

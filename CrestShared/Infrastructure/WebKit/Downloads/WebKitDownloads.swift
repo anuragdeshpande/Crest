@@ -371,7 +371,7 @@ final class WebKitDownloads: NSObject {
             filename: transfer.filename, path: transfer.destination?.path, received: transfer.received,
             total: transfer.total, startedAt: transfer.startedAt, restored: false, paused: transfer.isPaused,
             state: state, warning: nil, interruption: interruption, failureDetail: detail,
-            approvalToken: state == .blocked ? transfer.engineID : "")
+            approvalToken: state == .blocked ? transfer.engineID : "", canPause: false, canResume: false)
     }
 
     // MARK: - Actions - Facts

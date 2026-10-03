@@ -128,6 +128,15 @@ public sealed record WebNotificationPosted(Guid PageId, string NotificationId, S
 /// presented, so the platform takes it down.
 public sealed record WebNotificationClosed(Guid PageId, string NotificationId) : EnginePagePresentation(PageId);
 
+/// A notification belonging to a profile independently of any open page.
+public sealed record ProfileNotificationPosted(Guid ProfileId, string NotificationId, SiteOrigin Origin,
+    ProfileNotificationSource Source, string Title, string Body, bool Silent) : EnginePresentation;
+
+/// The engine withdrew a worker's or extension's notification.
+public sealed record ProfileNotificationClosed(Guid ProfileId, string NotificationId) : EnginePresentation;
+
+public enum ProfileNotificationSource { ServiceWorker, Extension }
+
 #endregion
 
 #region Extensions

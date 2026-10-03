@@ -68,12 +68,15 @@ final class NativeEnginePages: EnginePages {
         var writer = WireWriter()
         request.encodePageRequest(into: &writer)
         guard let table else {
-            // A page being created only watches its view and sets its zoom.
-            // Those Boolean actions can wait; queries require a ready page.
+            // Only initial view setup may wait. A refused user action must
+            // never execute later after its caller was told it failed.
             precondition(Request.Answer.self == Bool.self, "\(type(of: request)) requires a ready engine.")
-            startingRequests.append(writer.bytes)
-            start?()
-            var reader = WireReader([0])
+            let deferred = request is WatchPage || request is ZoomPage
+            if deferred {
+                startingRequests.append(writer.bytes)
+                start?()
+            }
+            var reader = WireReader([deferred ? 1 : 0])
             do { return try Request.decodeAnswer(from: &reader) } catch {
                 preconditionFailure("A Boolean page action has an invalid answer codec.")
             }

@@ -14,7 +14,14 @@ public sealed record EngineDownloadChanged(EngineDownload Download) : EngineDown
             turn.Issue(engine, new CancelEngineDownload(Download.ProfileId, Download.DownloadId));
             return;
         }
+        if (download.ResumeRequested) {
+            download.ResumeRequested = false;
+            if (!download.IsLive && Download.State is EngineDownloadState.Preparing or EngineDownloadState.Downloading
+                or EngineDownloadState.Finished or EngineDownloadState.AwaitingApproval)
+                engineDownloads.Resume(download, turn.Changes);
+        }
         if (!download.IsLive) return;
+        download.LastReport = Download;
         if (Download.Path is { Length: > 0 } path) {
             var destination = new SetDownloadDestination(download.DownloadId, EngineDownloads.FileAddress(path), Path.GetFileName(path));
             engineDownloads.Record(destination, turn.Changes);
@@ -70,6 +77,7 @@ public sealed record EngineDownloadChanged(EngineDownload Download) : EngineDown
                 download.ApprovalToken = Download.ApprovalToken;
                 break;
         }
+        engineDownloads.SetControls(download, Download, turn.Changes);
     }
 
     #endregion

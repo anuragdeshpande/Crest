@@ -7,6 +7,38 @@ and Crest uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-02
+
+Crest 0.7 brings Chromium and WebKit together in one Mac app, with Chromium as
+the default and a shared browser core across Mac, iPhone, and iPad.
+
+### Added
+
+- Run Chrome Web Store extensions in each Mac Space, including popups, side panels, shortcuts, and supported native companion apps.
+- Choose Chromium or WebKit for new pages, one page, or a website. Use WebKit for Reader, whole-page translation, built-in blocking, and supported FairPlay video.
+- Pause and resume Chromium downloads, including interrupted transfers when the server supports recovery.
+- Receive local service-worker and extension notifications while Crest runs, with Space access and notification permissions respected.
+
+### Changed
+
+- Use one browser core for Space isolation, navigation, persistence, permissions, and synchronization across the Apple apps.
+- Inspect Chromium pages with DevTools and save them as MHTML archives; WebKit keeps Web Inspector and web archives.
+- Check the exact release source and both platform builds before signing and publication.
+
+### Fixed
+
+- Resume interrupted Chromium profile upgrades without losing track of existing profiles.
+- Honor unsaved-changes prompts before switching engines or restarting for an update.
+- Refuse unavailable page actions during engine startup instead of running them later unexpectedly.
+- Advertise the macOS version required by the whole app when offering updates.
+
+### Upgrading
+
+- Mac requires Apple silicon and macOS 26.1 or later. iPhone and iPad continue to use WebKit on iOS and iPadOS 26.1 or later.
+- Spaces, tabs, history, and Crest Passwords carry over from the previous stable release. Chromium and WebKit keep separate website data, so switching engines can require signing in again.
+- Reinstall older WebKit extensions from the Chrome Web Store in the Spaces where you want them.
+- See the [engine guide](HelpCenter/docs/browsing/engines.md) for feature differences, screen-sharing limits, and notification support.
+
 ## [0.6.33] - 2026-09-18
 
 Crest 0.6.33 is a stability release with stronger permission boundaries, more

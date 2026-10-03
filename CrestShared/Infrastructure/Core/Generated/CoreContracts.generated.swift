@@ -392,9 +392,11 @@ enum EngineCommand: Equatable, Sendable {
     case eraseSiteData(EraseSiteData)
     case exitPictureInPicture(ExitPictureInPicture)
     case loadPage(LoadPage)
+    case pauseEngineDownload(PauseEngineDownload)
     case recoverPage(RecoverPage)
     case rejectOfferedPage(RejectOfferedPage)
     case removeEngineDownload(RemoveEngineDownload)
+    case resumeEngineDownload(ResumeEngineDownload)
     case settleAuthentication(SettleAuthentication)
     case settleDownloadDestination(SettleDownloadDestination)
     case settleExtensionInstall(SettleExtensionInstall)
@@ -431,6 +433,8 @@ enum EnginePresentation: Equatable, Sendable {
     case pageViewUnavailable(PageViewUnavailable)
     case peekRequested(PeekRequested)
     case popupBlocked(PopupBlocked)
+    case profileNotificationClosed(ProfileNotificationClosed)
+    case profileNotificationPosted(ProfileNotificationPosted)
     case profilePrepared(ProfilePrepared)
     case profileReleased(ProfileReleased)
     case screenCaptureAccessMissing(ScreenCaptureAccessMissing)
@@ -443,7 +447,7 @@ enum EnginePresentation: Equatable, Sendable {
     /// The `PageId` every member of the core's `EnginePagePresentation` carries, or nil for any other.
     var pageID: UUID? {
         switch self {
-        case .extensionsChanged, .profilePrepared, .profileReleased: nil
+        case .extensionsChanged, .profileNotificationClosed, .profileNotificationPosted, .profilePrepared, .profileReleased: nil
         case .contentFullscreenChanged(let value): value.pageID
         case .contentMessagePosted(let value): value.pageID
         case .contentScriptEvaluated(let value): value.pageID
@@ -679,6 +683,14 @@ struct AnswerPermission: Intent, PromptIntent, Equatable, Sendable {
     let promptID: UUID
     let grants: Bool
     let remembers: Bool
+}
+
+struct AnswerProfileNotification: PageRequest, Equatable, Sendable {
+    typealias Answer = Bool
+
+    let profileID: UUID
+    let notificationID: String
+    let answer: WebNotificationAnswer
 }
 
 struct AnswerQuitWithDownloads: Intent, PromptIntent, Equatable, Sendable {
@@ -1833,6 +1845,8 @@ struct DownloadState: Equatable, Sendable, Identifiable {
     let message: String?
     let risk: DownloadRiskAssessment?
     let isAcknowledged: Bool
+    let canPause: Bool
+    let canResume: Bool
 }
 
 struct DownloadTelemetry: Equatable, Sendable {
@@ -2017,6 +2031,8 @@ struct EngineDownload: Equatable, Sendable {
     var interruption: EngineDownloadInterruption?
     var failureDetail: String?
     var approvalToken: String
+    var canPause: Bool
+    var canResume: Bool
 }
 
 struct EngineDownloadChanged: EngineEvent, EngineDownloadEvent, Equatable, Sendable {
@@ -3866,6 +3882,15 @@ struct PasswordImportPreview: Query, Equatable, Sendable {
     let existing: [ExistingCredential]
 }
 
+struct PauseDownload: Intent, DownloadIntent, Equatable, Sendable {
+    let downloadID: UUID
+}
+
+struct PauseEngineDownload: Equatable, Sendable {
+    let profileID: UUID
+    let downloadID: String
+}
+
 struct PeekRequested: Equatable, Sendable {
     let pageID: UUID
     let url: String
@@ -4015,6 +4040,29 @@ struct ProfileInUse: Equatable, Sendable {
     }
 }
 
+struct ProfileNotificationClosed: Equatable, Sendable {
+    let profileID: UUID
+    let notificationID: String
+}
+
+struct ProfileNotificationDisplayCheck: Query, Equatable, Sendable {
+    typealias Answer = NotificationDisplayVerdict
+
+    let profileID: UUID
+    let origin: SiteOrigin
+    let source: ProfileNotificationSource
+}
+
+struct ProfileNotificationPosted: Equatable, Sendable {
+    let profileID: UUID
+    let notificationID: String
+    let origin: SiteOrigin
+    let source: ProfileNotificationSource
+    let title: String
+    let body: String
+    let silent: Bool
+}
+
 struct ProfilePrepared: Equatable, Sendable {
     let preparationID: UUID
     let ready: Bool
@@ -4113,6 +4161,7 @@ struct RefreshStoreListing: PageRequest, Equatable, Sendable {
 struct RehostPage: Intent, PageIntent, Equatable, Sendable {
     let pageID: UUID
     let engine: EngineKind
+    let remembersSite: Bool
 }
 
 struct RejectOfferedPage: Equatable, Sendable {
@@ -4302,6 +4351,15 @@ struct RestoreInteractionState: PageRequest, Equatable, Sendable {
     let pageID: UUID
     let state: Data
     let expectedURL: String
+}
+
+struct ResumeDownload: Intent, DownloadIntent, Equatable, Sendable {
+    let downloadID: UUID
+}
+
+struct ResumeEngineDownload: Equatable, Sendable {
+    let profileID: UUID
+    let downloadID: String
 }
 
 struct RetryCloudSync: Intent, CloudSyncControlIntent, Equatable, Sendable {
@@ -6365,6 +6423,11 @@ enum PasskeyDeviceConfiguration: Int, CaseIterable, Sendable {
     case unknown = 2
 }
 
+enum ProfileNotificationSource: Int, CaseIterable, Sendable {
+    case serviceWorker = 0
+    case `extension` = 1
+}
+
 enum SessionFlaw: Int, CaseIterable, Sendable {
     case unreadable = 0
     case missingIdentity = 1
@@ -8038,6 +8101,8 @@ struct DownloadRowAction: Hashable, Sendable {
         case cancel
         case open
         case remove
+        case pause
+        case resume
     }
 
     let tag: Int
@@ -8095,8 +8160,24 @@ struct DownloadRowAction: Hashable, Sendable {
         symbol: "trash",
         isDestructive: true
     )
+    static let pause = DownloadRowAction(
+        tag: 4,
+        kind: .pause,
+        name: "pause",
+        title: LocalizedStringResource("Pause Download"),
+        symbol: "pause",
+        isDestructive: false
+    )
+    static let resume = DownloadRowAction(
+        tag: 5,
+        kind: .resume,
+        name: "resume",
+        title: LocalizedStringResource("Resume Download"),
+        symbol: "play",
+        isDestructive: false
+    )
 
-    static let all: [DownloadRowAction] = [retry, cancel, open, remove]
+    static let all: [DownloadRowAction] = [retry, cancel, open, remove, pause, resume]
 
     static func named(_ name: String?) -> DownloadRowAction? {
         all.first { $0.name == name }
@@ -12800,7 +12881,7 @@ struct SitePermission: Hashable, Sendable {
         name: "notifications",
         title: LocalizedStringResource("Notifications"),
         symbol: "bell",
-        requestTitle: LocalizedStringResource("Wants to send notifications while this page is open"),
+        requestTitle: LocalizedStringResource("Wants to send notifications"),
         askTitle: LocalizedStringResource("Ask"),
         askChoiceTitle: LocalizedStringResource("Ask"),
         isMedia: false,

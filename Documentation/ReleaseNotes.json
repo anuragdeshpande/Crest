@@ -3545,6 +3545,34 @@
     "chromium-upstream-154-0-8037-57-1-1-1c2db5a842a1": {
       "category": "fixed",
       "message": "Chromium is updated to 154.0.8037.57 with upstream security and compatibility fixes."
+    },
+    "protected-video-consented-engine-switch": {
+      "category": "fixed",
+      "message": "Protected-video pages still switch to WebKit automatically. Engine switches respect unsaved-changes prompts and remember the website only after the move is allowed."
+    },
+    "chromium-profile-adoption-recovery": {
+      "category": "fixed",
+      "message": "Interrupted Chromium profile upgrades resume safely without losing track of your existing browsing profiles."
+    },
+    "chromium-download-pause-and-recovery": {
+      "category": "improved",
+      "message": "Pause and resume Chromium downloads, and recover interrupted transfers when the server supports it."
+    },
+    "chromium-local-background-notifications": {
+      "category": "improved",
+      "message": "Chromium can show local service-worker and extension notifications while Crest runs, with Space access and notification permissions respected."
+    },
+    "release-source-validation-and-startup-contracts": {
+      "category": "internal",
+      "message": "Validate the exact source before release, build the current native core with the Chromium host, and make startup cancellation and deferred requests explicit."
+    },
+    "chromium-update-macos-requirement": {
+      "category": "fixed",
+      "message": "Crest updates advertise the macOS version the whole app requires, so older Macs are not offered an incompatible update."
+    },
+    "crest-07-chromium-and-webkit": {
+      "category": "new",
+      "message": "Crest 0.7 brings Chromium and WebKit together on Mac, with Chrome Web Store extensions and engine choices for each website. iPhone and iPad continue to use WebKit."
     }
   }
 }

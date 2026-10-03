@@ -186,6 +186,8 @@ public sealed partial class BrowserContractsTests {
         app.Report(webKit, new NavigationStarted(opened, signIn, SameDocument: false));
         Assert.DoesNotContain(chromiumBinding.Commands, command => command is CreatePage creation && creation.PageId == opened);
         app.Send(new Navigate(opened, signIn));
+        Assert.Equal(new CheckBeforeUnload(opened), webKitBinding.Commands[^1]);
+        app.Report(webKit, new BeforeUnloadAnswered(opened, Proceeds: true));
         Assert.Equal(new ClosePage(opened, KeepsState: false), webKitBinding.Commands[^1]);
         Assert.Equal(opened, Assert.IsType<CreatePage>(chromiumBinding.Commands[^1]).PageId);
 

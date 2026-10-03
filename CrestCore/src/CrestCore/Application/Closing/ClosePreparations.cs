@@ -13,7 +13,8 @@ namespace CrestCore.Application;
 internal sealed class ClosePreparations(Device device, Pages pages, Downloads downloads, DataDeletions deletions, IIdSource ids) {
     #region Types
 
-    internal sealed class Preparation(Guid requestId, bool quits, IEnumerable<Guid> pageIds) {
+    internal sealed class Preparation(Guid requestId, bool quits, IEnumerable<Guid> pageIds, Action<bool, ChangeFeed>? completion) {
+        public Action<bool, ChangeFeed>? Completion { get; } = completion;
         public Guid RequestId { get; } = requestId;
         public bool Quits { get; } = quits;
         /// The pages still to ask, in order.
@@ -60,15 +61,42 @@ internal sealed class ClosePreparations(Device device, Pages pages, Downloads do
     /// Begins preparing to close `pageIds`, and to quit when `quits`. A close
     /// with no page to ask is ready at once, even while another preparation is
     /// under way; any other is refused with `ClosePreparationUnderway` then.
-    internal void Start(Guid requestId, bool quits, IEnumerable<Guid> pageIds, ChangeFeed changes, Action<Engine, EngineCommand> issue) {
+    internal void Start(Guid requestId, bool quits, IEnumerable<Guid> pageIds, ChangeFeed changes, Action<Engine, EngineCommand> issue,
+        Action<bool, ChangeFeed>? completion = null) {
         var closing = pageIds.Distinct().ToList();
         if (!quits && closing.All(pageId => Asking(pageId) is null)) {
-            changes.Publish(new CloseReady(requestId, Allowed: true));
+            if (completion is not null) completion(true, changes);
+            else changes.Publish(new CloseReady(requestId, Allowed: true));
             return;
         }
         if (underway is not null) throw new Rejected(new ClosePreparationUnderway(underway.RequestId));
-        underway = new(requestId, quits, closing);
+        underway = new(requestId, quits, closing, completion);
         Advance(changes, issue);
+    }
+
+    #endregion
+
+    #region Actions - Engines
+
+    /// Moving engines discards the old document. Its normal before-unload
+    /// decision must finish first, and a canceled or stale move changes no
+    /// site preference. A page that moved, closed or lost access while the
+    /// question was open never moves from this answer.
+    internal void Move(Page page, Engine engine, string? address, RehostReason reason, bool remembersSite, PageTurn turn) {
+        var previous = page.Engine;
+        long document = page.Documents;
+        var origin = address is null ? null : new WebAddress(address).Origin;
+        var siteEngine = origin is null ? null : device.ChosenEngine(page.SpaceId, origin);
+        Start(ids.Next(), quits: false, [page.Id], turn.Changes, turn.Issue, (allowed, changes) => {
+            if (!allowed || !ReferenceEquals(pages.Hosted(page.Id), page) || !ReferenceEquals(page.Engine, previous)
+                || page.Documents != document || pages.Shown(page) is null)
+                return;
+            if (remembersSite && origin is not null) {
+                if (device.ChosenEngine(page.SpaceId, origin) != siteEngine) return;
+                device.Choose(page.SpaceId, origin, engine.Kind);
+            }
+            pages.Rehost(page, engine, address, reason, new PageTurn(changes, turn.Issue, this));
+        });
     }
 
     #endregion
@@ -118,7 +146,8 @@ internal sealed class ClosePreparations(Device device, Pages pages, Downloads do
         underway = null;
         if (preparation.Quits && allowed) device.AcceptQuit();
         if (preparation.PromptId is { } prompt) changes.Publish(new PromptSettled(prompt));
-        changes.Publish(new CloseReady(preparation.RequestId, allowed));
+        if (preparation.Completion is { } completion) completion(allowed, changes);
+        else changes.Publish(new CloseReady(preparation.RequestId, allowed));
     }
 
     /// A live page, which its engine can ask.

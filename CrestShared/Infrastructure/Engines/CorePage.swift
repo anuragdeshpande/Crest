@@ -178,7 +178,7 @@ final class CorePage {
     func move(to engine: EngineKind) -> Bool {
         guard !isReleased, let core else { return false }
         do {
-            try core.send(RehostPage(pageID: id, engine: engine))
+            try core.send(RehostPage(pageID: id, engine: engine, remembersSite: false))
             return true
         } catch {
             Self.logger.debug(

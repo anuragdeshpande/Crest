@@ -23,6 +23,10 @@ Use **Command-E** to archive the current tab, **Shift-Command-T** to reopen the 
 
 Open Downloads with **Shift-Command-J**. Crest tracks status, destination, failures, and blocked automatic downloads. Removing or expiring a download record does not delete the downloaded file from disk.
 
+Chromium downloads offer **Pause Download** while transferring and **Resume Download** when the engine can continue a paused or interrupted transfer. Depending on the server, resuming may restart the file. The same download record keeps its chosen destination. Cancel ends the transfer; removing a failed record does not retry it. WebKit downloads do not offer these pause and resume controls.
+
+An unsafe-file warning requires its own decision. Resuming a transfer does not approve a warning or bypass a block. See [Malicious sites and downloads](./content-blocking-and-site-permissions.md#malicious-sites-and-downloads) for the limits of Chromium's Google-free protection.
+
 ## Retention per Space
 
 In **Settings → Privacy**, choose **1 Day, 1 Week, 30 Days, 90 Days, 1 Year, or Forever** independently for History, Archived Tabs, and Download Records.
@@ -30,4 +34,3 @@ In **Settings → Privacy**, choose **1 Day, 1 Week, 30 Days, 90 Days, 1 Year, o
 Crest checks retention when it opens, after sync, and every 15 minutes while active. Shortening a duration can permanently remove older synchronized records, so Crest confirms the destructive change first.
 
 Current-tab automatic cleanup is a different setting. It archives old unpinned tabs after the chosen interval, keeping them recoverable until the Archive retention policy later expires them.
-

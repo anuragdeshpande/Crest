@@ -229,6 +229,10 @@ public sealed record StopMediaCapture(Guid PageId, SitePermission Permission) : 
 public sealed record AnswerWebNotification(Guid PageId, string NotificationId, WebNotificationAnswer Answer)
     : PageRequest<bool>;
 
+/// The platform's answer to a notification owned by a profile instead of a page.
+public sealed record AnswerProfileNotification(Guid ProfileId, string NotificationId, WebNotificationAnswer Answer)
+    : PageRequest<bool>;
+
 /// What became of a notification a document posted.
 public enum WebNotificationAnswer {
     /// The person clicked it, and its page came forward.

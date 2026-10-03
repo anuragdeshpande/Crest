@@ -281,6 +281,7 @@ class EngineBinding {
   bool Handle(const engine::SetSitePermission& request);
   bool Handle(const engine::StopMediaCapture& request);
   bool Handle(const engine::AnswerWebNotification& request);
+  bool Handle(const engine::AnswerProfileNotification& request);
   bool Handle(const engine::PrepareProfile& request);
 
   void Perform(engine::EngineCommand command);
@@ -298,6 +299,8 @@ class EngineBinding {
   void Handle(const engine::SettleExtensionInstall& command);
   void Handle(const engine::SettleDownloadDestination& command);
   void Handle(const engine::CancelEngineDownload& command);
+  void Handle(const engine::PauseEngineDownload& command);
+  void Handle(const engine::ResumeEngineDownload& command);
   void Handle(const engine::RemoveEngineDownload& command);
   void Handle(const engine::ApproveEngineDownload& command);
   void Handle(const engine::EraseProfileData& command);

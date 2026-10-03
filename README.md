@@ -35,14 +35,15 @@ Most browsers put every login, tab, and distraction into one long-lived containe
 
 Switching Spaces changes more than the color of the window. It changes the browsing context.
 
-## Two engines on Mac
+## Crest 0.7: two engines on Mac
 
 Crest for Mac opens pages in **Chromium** by default. Its engine is built on
 [ungoogled-chromium](https://github.com/ungoogled-software/ungoogled-chromium),
 with Google integrations removed, and runs Chrome Web Store extensions. Any
 website or page can open in **WebKit** instead, which adds Reader, whole-page
-translation, built-in content blocking, and FairPlay video; pages that need
-protected video move to WebKit on their own. Choose the default engine and
+translation, built-in content blocking, and FairPlay video. When a page needs
+protected video, Crest switches to WebKit automatically, respecting any
+unsaved-changes prompt before moving it. Choose the default engine and
 per-website rules in **Settings → Engines**. iPhone and iPad use WebKit. The
 [engine guide](https://crestbrowser.com/guides/engines/) lists what each engine
 supports.
@@ -79,7 +80,7 @@ supports.
 | Extensions on Mac | Install Chrome Web Store extensions in each Space. They run on Chromium pages, with popups and tab-specific side panels. [Compatibility varies.](https://crestbrowser.com/guides/extension-compatibility/) |
 | Developer tools on Mac | Preview phone, desktop, and custom viewport sizes; capture pages; open Chromium DevTools or Web Inspector for the page's engine. The toolbar appears on localhost, or on any site with **Shift-Command-I**. |
 | Media | Control eligible active media from the sidebar. On Mac, keep supported videos visible with Picture in Picture, including optional automatic PiP. |
-| Downloads and uploads | Follow download progress and revisit files in Downloads. On iPhone and iPad, upload through Photos, camera, or Files. |
+| Downloads and uploads | Follow download progress and revisit files in Downloads. Pause and resume Chromium transfers when the server supports recovery. On iPhone and iPad, upload through Photos, camera, or Files. |
 
 ## Privacy and sync
 
@@ -144,10 +145,16 @@ Xcode builds and embeds the self-contained .NET core for Mac, iOS, and Simulator
 
 ## Releases and updates
 
-Read the [Crest 0.6.33 release notes](CHANGELOG.md#0633---2026-09-18) for the
-latest stability, security, extension compatibility, performance, and browsing
-improvements. Versions before 0.6.460 use WebKit only. The Development channel
-has both engines now; Nightly and Stable get them with their next release.
+The [Crest 0.7 release notes](CHANGELOG.md#070---2026-10-02) describe the new
+Mac browsing engines and shared browser core. Crest 0.7 requires Apple silicon
+and macOS 26.1 or later on Mac; iPhone and iPad continue to use WebKit.
+
+When updating from a WebKit-only release, your Spaces, tabs, history, and Crest
+Passwords carry over. Chromium has separate website storage, so sites may ask
+you to sign in again. You can keep WebKit as your default. Reinstall older
+WebKit extensions from the Chrome Web Store in each Space. The
+[upgrade guide](https://crestbrowser.com/guides/engines/#after-updating-from-a-webkit-only-crest)
+explains these changes and the engine feature limits.
 
 macOS releases are distributed directly through GitHub Releases as signed,
 notarized Apple-silicon disk images, one app with both engines. Crest uses
