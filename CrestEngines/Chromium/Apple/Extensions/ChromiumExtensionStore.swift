@@ -427,6 +427,8 @@ final class ChromiumExtensionInstallation {
     var withhold = false
     var canWithhold = false
     var preparing = true
+    /// The fraction of the package received, once its download knows its size.
+    var downloaded: Double?
     var installing = false
     var completed = false
     var installedCount = 0
@@ -436,6 +438,8 @@ final class ChromiumExtensionInstallation {
     @ObservationIgnored private var approvedIdentity: [String]?
     @ObservationIgnored private var approvedDestinations: [BrowserSpaceIdentity] = []
     @ObservationIgnored private var package: URL?
+    /// The package download while it runs, so closing the review stops it.
+    @ObservationIgnored private var transfer: (any CrestExtensionDownload)?
     @ObservationIgnored private var canceled = false
     @ObservationIgnored private var targetSpace: BrowserSpaceIdentity?
 
@@ -451,26 +455,9 @@ final class ChromiumExtensionInstallation {
     }
     func start() async {
         for target in store.spaces { await store.load(target) }
-        guard !canceled, let host = ChromiumComposition.engineHost else { return }
-        let session = URLSession(configuration: .ephemeral)
-        defer { session.invalidateAndCancel() }
+        guard !canceled else { return }
         do {
-            var components = URLComponents(string: "https://clients2.google.com/service/update2/crx")!
-            components.queryItems = [
-                URLQueryItem(name: "response", value: "redirect"),
-                URLQueryItem(name: "prodversion", value: host.engineVersion()),
-                URLQueryItem(name: "acceptformat", value: "crx3"),
-                URLQueryItem(name: "x", value: "id=\(id)&installsource=ondemand&uc"),
-            ]
-            var request = URLRequest(url: components.url!)
-            request.timeoutInterval = 120
-            let (file, response) = try await session.download(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
-            let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-            guard size > 0, size <= 64 * 1024 * 1024 else { throw URLError(.dataLengthExceedsMaximum) }
-            let retained = FileManager.default.temporaryDirectory.appendingPathComponent(
-                "crest-extension-\(UUID()).crx")
-            try FileManager.default.moveItem(at: file, to: retained)
+            let retained = try await download()
             package = retained
             defer {
                 try? FileManager.default.removeItem(at: retained)
@@ -493,6 +480,31 @@ final class ChromiumExtensionInstallation {
         }
         preparing = false
         installing = false
+    }
+    /// The package as the Space's own engine profile downloads it; Chromium's
+    /// installer then judges it for every Space it is installed in.
+    private func download() async throws -> URL {
+        guard let host = ChromiumComposition.engineHost else { throw URLError(.cancelled) }
+        let result: (String?, String) = await withCheckedContinuation { continuation in
+            transfer = host.downloadExtension(
+                id, profile: space.profileID,
+                progress: { [weak self] fraction in self?.downloaded = fraction },
+                completion: { package, message in
+                    continuation.resume(returning: (package, message))
+                })
+            if transfer == nil { continuation.resume(returning: (nil, "")) }
+        }
+        transfer = nil
+        guard let package = result.0 else {
+            throw NSError(
+                domain: "CrestExtension", code: 2,
+                userInfo: [
+                    NSLocalizedDescriptionKey: result.1.isEmpty
+                        ? String(localized: "The Space is no longer available.")
+                        : String(localized: "Couldn’t download this extension from the Chrome Web Store (\(result.1)).")
+                ])
+        }
+        return URL(fileURLWithPath: package)
     }
     private func installPackage(in target: BrowserSpaceIdentity) async throws {
         guard !canceled, store.authorized(target), let package, let host = ChromiumComposition.engineHost,
@@ -548,6 +560,9 @@ final class ChromiumExtensionInstallation {
     }
     func cancel() {
         canceled = true
+        // The download then reports failure, which a canceled review ignores.
+        transfer?.cancel()
+        transfer = nil
         let callback = consent
         consent = nil
         callback?(false, false)
