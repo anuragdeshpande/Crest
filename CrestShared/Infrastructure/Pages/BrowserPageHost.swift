@@ -18,8 +18,15 @@ final class BrowserPageHost {
     // MARK: - Variables
 
     /// Each tab's resident page.
-    @ObservationIgnored var runtimes: [UUID: BrowserTabRuntime] = [:]
-    /// Moves whenever a tab gains or loses its page, for what reads residency.
+    @ObservationIgnored var runtimes: [UUID: BrowserTabRuntime] = [:] {
+        didSet { residencyChanged() }
+    }
+    /// The tabs with a resident page, each observed on its own, so a sidebar
+    /// row or a card reads only whether its own tab has one. A tab's page and
+    /// the window presenting it are observed on its runtime.
+    let residentTabIDs = ObservedSet<UUID>()
+    /// Moves whenever a tab gains or loses its page, for what reads the
+    /// resident pages as a whole.
     var revision = 0
     /// Where tabs' pages leave their engine state on disk when they go, and
     /// when their scene stops being active. The core keeps what brings an
@@ -102,6 +109,15 @@ final class BrowserPageHost {
         } else {
             runtimes[tabID] = BrowserTabRuntime(page: page)
         }
+    }
+
+    /// Announces the tabs that gained or lost their page, and moves
+    /// `revision` once for readers of the whole set; a change that keeps the
+    /// same tabs resident announces nothing.
+    private func residencyChanged() {
+        let tabIDs = Set(runtimes.keys)
+        guard tabIDs != residentTabIDs.members else { return }
+        residentTabIDs.replace(with: tabIDs)
         revision &+= 1
     }
 
@@ -269,7 +285,6 @@ final class BrowserPageHost {
         guard let runtime = runtimes.removeValue(forKey: tabID) else { return }
         runtime.release(keepingState: preservingTabState)
         dropPresentation(tabID)
-        revision &+= 1
     }
 
     /// Unloads the tab's page while it belongs to the Space and profile
@@ -320,7 +335,6 @@ final class BrowserPageHost {
         if preservingTabState { archiveTabState(for: tabID) }
         guard let runtime = runtimes.removeValue(forKey: tabID) else { return }
         runtime.release(keepingState: preservingTabState)
-        revision &+= 1
     }
 
     /// Releases the pages of `tabIDs`, saying for `kept` that their state was
@@ -329,7 +343,6 @@ final class BrowserPageHost {
     func releasePages(
         for tabIDs: Set<UUID>, keepingStateOf kept: Set<UUID> = []
     ) -> [BrowserSpaceDataReleaseProbe] {
-        var releasedAnyPage = false
         var probes: [BrowserSpaceDataReleaseProbe] = []
         for tabID in tabIDs {
             let runtime = runtimes.removeValue(forKey: tabID)
@@ -337,9 +350,7 @@ final class BrowserPageHost {
             guard let runtime else { continue }
             probes.append(contentsOf: runtime.allPages.map { BrowserSpaceDataReleaseProbe($0) })
             runtime.release(keepingState: kept.contains(tabID))
-            releasedAnyPage = true
         }
-        if releasedAnyPage { revision &+= 1 }
         return probes
     }
 
@@ -352,7 +363,6 @@ final class BrowserPageHost {
         runtimes.removeValue(forKey: tabID)
         dropPresentation(tabID)
         runtime.unloaded()
-        revision &+= 1
     }
 
     /// Releases what memory pressure takes back that the core does not decide:

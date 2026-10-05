@@ -275,10 +275,10 @@ extension BrowserRootModel {
             } else {
                 pages.selectSpace(in: browser)
             }
-            address = selectedSpaceIsLocked ? "" : browser.shownTab?.url ?? ""
+            showAddressAtOnce(selectedSpaceIsLocked ? "" : browser.shownTab?.url ?? "")
             return
         }
-        address = browser.shownTab?.url ?? ""
+        showAddressAtOnce(browser.shownTab?.url ?? "")
     }
 
     func synchronizeAfterLockChange() {
@@ -290,7 +290,7 @@ extension BrowserRootModel {
         browser.consumeMovedTabActivation()
         guard !selectedSpaceIsLocked else {
             pages.deactivatePagePresentation()
-            address = ""
+            showAddressAtOnce("")
             return
         }
         if browser.shownTab?.surface == .startPage, browser.shownCards.count < 2 {
@@ -298,7 +298,17 @@ extension BrowserRootModel {
         } else {
             pages.select()
         }
-        address = browser.shownTab?.url ?? ""
+        showAddressAtOnce(browser.shownTab?.url ?? "")
+    }
+
+    /// Shows another tab's or Space's address the way browsers switch tabs:
+    /// at once. The address band fades in an address a navigation changes,
+    /// and that fade, run on every switch, redraws the band each frame for
+    /// its whole length.
+    private func showAddressAtOnce(_ value: String) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { address = value }
     }
 
     func handleAuxiliaryMouseAction(

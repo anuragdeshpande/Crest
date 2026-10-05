@@ -161,16 +161,18 @@ final class BrowserTabTearOffWindowTests: XCTestCase {
                     .environment(root.sidebarInteraction)
                     .environment(
                         \.browserSidebarWindowDrop,
-                        BrowserSidebarWindowDrop(perform: { [weak self, weak window] lift in
-                            guard let self, let window, let event = NSApp.currentEvent else { return false }
-                            let point = window.convertPoint(toScreen: event.locationInWindow)
-                            self.capturedDropPoint = point
-                            self.capturedGrabFraction = lift.anchorFraction
-                            return BrowserMacWindowDropAction(
-                                coordinator: self.coordinator, sourceWindowID: self.source.id,
-                                open: { [weak self] in self?.request = $0 }
-                            ).perform(lift.item, at: point, grabFraction: lift.anchorFraction)
-                        })))
+                        BrowserSidebarWindowDrop(
+                            windowID: UUID(),
+                            perform: { [weak self, weak window] lift in
+                                guard let self, let window, let event = NSApp.currentEvent else { return false }
+                                let point = window.convertPoint(toScreen: event.locationInWindow)
+                                self.capturedDropPoint = point
+                                self.capturedGrabFraction = lift.anchorFraction
+                                return BrowserMacWindowDropAction(
+                                    coordinator: self.coordinator, sourceWindowID: self.source.id,
+                                    open: { [weak self] in self?.request = $0 }
+                                ).perform(lift.item, at: point, grabFraction: lift.anchorFraction)
+                            })))
             coordinator.attach(window, to: source.id)
             window.makeKeyAndOrderFront(nil)
             // The app's initial scene or an earlier test may have another
@@ -194,6 +196,7 @@ final class BrowserTabTearOffWindowTests: XCTestCase {
                     .environment(
                         \.browserSidebarWindowDrop,
                         BrowserSidebarWindowDrop(
+                            windowID: UUID(),
                             perform: { _ in false },
                             didMeasureRow: { [weak self, weak model] row in
                                 guard let self, let model else { return }

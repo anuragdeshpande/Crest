@@ -204,13 +204,11 @@ extension BrowserPageOwner {
     var retainedTransientPageCount: Int { host.retainedTransientPageCount }
 
     func containsResidentPage(for tabID: UUID) -> Bool {
-        _ = host.revision
-        return host.page(for: tabID) != nil
+        host.residentTabIDs.contains(tabID)
     }
 
     func containsResidentPage(matching assignment: BrowserTabRuntimeAssignment) -> Bool {
-        _ = host.revision
-        return host.page(matching: assignment) != nil
+        host.residentTabIDs.contains(assignment.tabID) && host.page(matching: assignment) != nil
     }
 
     func siteThemeIconAccent(for tabID: UUID) -> BrowserTabIconAccent? {

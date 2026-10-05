@@ -230,13 +230,13 @@ final class BrowserPagePool:
     }
 
     func isMirroringPage(for tabID: UUID) -> Bool {
-        _ = residencyRevision
+        _ = host.residentTabIDs.contains(tabID)
         guard presentedTabIDs.contains(tabID), let runtime = tabRuntimes[tabID] else { return false }
         return runtime.presentationWindowID != nil && runtime.presentationWindowID != windowID
     }
 
     func mirroredPageSnapshot(for tabID: UUID) -> NSImage? {
-        _ = residencyRevision
+        _ = host.residentTabIDs.contains(tabID)
         return tabRuntimes[tabID]?.snapshot
     }
 
@@ -375,7 +375,7 @@ final class BrowserPagePool:
     /// Reads an already-resident page for its own Space's chrome without
     /// selecting or loading it. Web content hosts must use presentedPage.
     func residentPage(matching assignment: BrowserTabRuntimeAssignment) -> BrowserPage? {
-        _ = residencyRevision
+        guard host.residentTabIDs.contains(assignment.tabID) else { return nil }
         return host.page(matching: assignment)
     }
 
@@ -388,8 +388,7 @@ final class BrowserPagePool:
     }
 
     var activePage: BrowserPage? {
-        _ = residencyRevision
-        guard let activeTabID else { return nil }
+        guard let activeTabID, host.residentTabIDs.contains(activeTabID) else { return nil }
         return tabRuntimes[activeTabID]?.page
     }
 
@@ -400,8 +399,7 @@ final class BrowserPagePool:
     /// keep a resident page for as long as memory allows, and handing one to a
     /// card would put a second host on a web view that already has one.
     func presentedPage(for tabID: UUID) -> BrowserPage? {
-        _ = residencyRevision
-        guard presentedTabIDs.contains(tabID),
+        guard presentedTabIDs.contains(tabID), host.residentTabIDs.contains(tabID),
             let runtime = tabRuntimes[tabID],
             runtime.presentationWindowID == windowID
         else { return nil }

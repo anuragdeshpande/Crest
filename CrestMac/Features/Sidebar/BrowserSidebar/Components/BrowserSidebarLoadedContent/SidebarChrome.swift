@@ -30,6 +30,9 @@ struct SidebarChrome: View {
                     // title bar. Controls and tab gestures keep their input.
                     BrowserWindowTitleBarSurface()
                 }
+                // Another tab's history shows at once, as every browser switches
+                // tabs; a fade on each switch redraws the strip every frame.
+                .animation(nil, value: pages.activeTabID)
                 .animation(
                     BrowserVisualAccessibilityPolicy.animation(
                         SpacePagerSettlement.standardAnimation, reduceMotion: reduceMotion),

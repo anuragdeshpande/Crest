@@ -68,11 +68,12 @@ final class BrowserStore {
         BrowserSessionRevision(session: workspaceModel?.sessionRevision, window: windowRevision)
     }
 
-    var selectedSpaceID: UUID { window.shownSpace }
+    var selectedSpaceID: UUID { windowModel?.shownSpaceID ?? lastWindow.shownSpace }
 
     /// The tab this window shows in a Space, if any.
     func selectedTabID(in spaceID: UUID) -> UUID? {
-        window.shownTabID(in: spaceID)
+        guard let windowModel else { return lastWindow.shownTabID(in: spaceID) }
+        return windowModel.shownTabID(in: spaceID)
     }
 
     var isPrivateBrowsing: Bool { browsingMode.isPrivate }

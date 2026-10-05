@@ -136,14 +136,23 @@ private struct BrowserPageLoadingPresentation: View {
     let page: BrowserPage
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Whether the first load has run long enough to say the page is opening.
+    @State private var initialStatusIsDue = false
 
     var body: some View {
         Color.clear
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay {
-                if showsInitialStatus {
+                if showsInitialStatus, initialStatusIsDue {
                     initialStatus
                 }
+            }
+            .task(id: showsInitialStatus) {
+                initialStatusIsDue = false
+                guard showsInitialStatus else { return }
+                try? await Task.sleep(for: BrowserPageSurfacePolicy.initialLoadingStatusDelay)
+                guard !Task.isCancelled else { return }
+                initialStatusIsDue = true
             }
             .overlay(alignment: .top) {
                 loadingProgress

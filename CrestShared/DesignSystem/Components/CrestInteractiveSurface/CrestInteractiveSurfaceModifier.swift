@@ -57,7 +57,11 @@ struct CrestInteractiveSurfaceModifier: ViewModifier {
             )
             .animation(accessibleSurfaceAnimation, value: isHovering)
             .animation(accessibleSurfaceAnimation, value: selectionEmphasis)
-            .animation(accessibleSurfaceAnimation, value: isEmphasized)
+            // Selection shows at once, as browsers switch tabs; only a press
+            // eases in. Fading a selected surface in and out redraws its
+            // shadow, its glow and the content it covers every frame, on two
+            // surfaces at every tab switch.
+            .animation(accessibleSurfaceAnimation, value: isPressed)
     }
 
     private var fill: Color {

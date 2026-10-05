@@ -22,10 +22,12 @@ final class BrowserTabDragSafetyTests: XCTestCase {
         var releases = 0
         input?.retainPointerContinuation(
             source: source, reorder: reorder,
-            windowDrop: BrowserSidebarWindowDrop(perform: { _ in
-                releases += 1
-                return true
-            }))
+            windowDrop: BrowserSidebarWindowDrop(
+                windowID: UUID(),
+                perform: { _ in
+                    releases += 1
+                    return true
+                }))
         input = nil
         XCTAssertNotNil(retainedInput, "The window session owns input after the row disappears.")
         state.forwardPointerContinuation(at: CGPoint(x: 20, y: 90), released: false, eventTimestamp: 1)

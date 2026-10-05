@@ -20,93 +20,8 @@ struct BrowserRootShell: View, BrowserChromeAnimating {
 
     var body: some View {
         ZStack(alignment: .leading) {
-            if let page = model.pages.activePage, page.isContentFullscreen {
-                BrowserPlatformWebView(
-                    page: page,
-                    isPageActive: true,
-                    focusRestorationGate: .suppressed
-                )
-                .environment(\.browserPagePresentationWindowID, model.pages.windowID)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.black)
-                .ignoresSafeArea()
-            } else {
-                BrowserRootBackdrop(
-                    space: model.browser.shownSpace,
-                    spaces: BrowserSidebarAccessPolicy.availableSpaces(in: model.browser)
-                )
-
-                BrowserSidebarPageLayout(
-                    presentation: model.sidebarPresentation,
-                    width: model.sidebarWidth,
-                    edge: sidebarEdge,
-                    isApproachingDock: model.isSidebarApproachingDock
-                ) {
-                    BrowserSpacePageSurface(
-                        model: model, transientBrowsing: transientBrowsing,
-                        tabPromotionNamespace: tabPromotionNamespace, shortcuts: shortcuts, appearance: appearance
-                    )
-                    .clipped()
-                } sidebar: {
-                    BrowserRootSidebarSurfaceLayer(
-                        presentation: model.sidebarPresentation,
-                        width: model.sidebarWidth,
-                        edge: sidebarEdge,
-                        space: model.browser.shownSpace,
-                        reduceTransparency: reduceTransparency,
-                        spaces: BrowserSidebarAccessPolicy.availableSpaces(in: model.browser),
-                        hoverChanged: {
-                            model.sidebarSurfaceHoverChanged(
-                                $0,
-                                reduceMotion: reduceMotion
-                            )
-                        }
-                    ) {
-                        BrowserRootSidebarContent(
-                            model: model,
-                            sidebarOnRight: appearance.sidebarOnRight,
-                            spaceSettingsPresentation: spaceSettingsPresentation,
-                            commandSurfaceNamespace: commandSurfaceNamespace,
-                            tabPromotionNamespace: tabPromotionNamespace
-                        )
-                    }
-                    .background {
-                        BrowserSidebarPointerNavigation(
-                            isSidebarVisible:
-                                model.sidebarPresentation.showsSidebar
-                                && !model.chrome.isCommandPalettePresented,
-                            perform: model.handleAuxiliaryMouseAction,
-                            navigationTargets: { [pages = model.pages] in pages.livePages },
-                            activeTarget: { [pages = model.pages] in pages.activePage }
-                        )
-                    }
-                } controls: {
-                    BrowserRootShellControls(
-                        model: model, storedSidebarWidth: $storedSidebarWidth, sidebarEdge: sidebarEdge)
-                }
-                .allowsHitTesting(!model.chrome.isCommandPalettePresented)
-                .accessibilityHidden(model.chrome.isCommandPalettePresented)
-
-                BrowserRootUtilityFanLayer(model: model, sidebarOnRight: appearance.sidebarOnRight)
-                    .zIndex(BrowserRootMetrics.utilityFanZIndex)
-
-                BrowserMacDownloadFeedbackLayer(model: model, feedback: downloadFeedback)
-                    .zIndex(BrowserRootMetrics.utilityFanZIndex + 1)
-
-                BrowserRootDragPreviewLayer(
-                    model: model,
-                    reduceMotion: reduceMotion
-                )
-
-                BrowserWindowFocusBridge(isWindowFocused: model.isWindowFocusedBinding)
-                    .frame(width: 0, height: 0)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-
-                if let notice = model.visibleNotice {
-                    BrowserNoticeView(notice: notice)
-                        .id(notice)
-                }
+            BrowserRootFullscreenContent(pages: model.pages) {
+                standardContent
             }
 
             // The window's chrome belongs to the window, not to the chrome a
@@ -186,11 +101,7 @@ struct BrowserRootShell: View, BrowserChromeAnimating {
                 reduceMotion: reduceMotion
             )
         }
-        .onChange(of: model.pages.activePage?.sitePermissionRequests.current?.id) {
-            if model.pages.activePage?.sitePermissionRequests.current != nil {
-                model.presentFloatingSidebar(reduceMotion: reduceMotion)
-            }
-        }
+        .modifier(BrowserRootPermissionObserver(model: model, reduceMotion: reduceMotion))
         .transaction { transaction in
             if reduceMotion {
                 transaction.disablesAnimations = true
@@ -206,4 +117,121 @@ struct BrowserRootShell: View, BrowserChromeAnimating {
         }
     }
 
+    private var standardContent: some View {
+        ZStack(alignment: .leading) {
+            BrowserRootBackdrop(
+                space: model.browser.shownSpace,
+                spaces: BrowserSidebarAccessPolicy.availableSpaces(in: model.browser)
+            )
+
+            BrowserSidebarPageLayout(
+                presentation: model.sidebarPresentation,
+                width: model.sidebarWidth,
+                edge: sidebarEdge,
+                isApproachingDock: model.isSidebarApproachingDock
+            ) {
+                BrowserSpacePageSurface(
+                    model: model, transientBrowsing: transientBrowsing,
+                    tabPromotionNamespace: tabPromotionNamespace, shortcuts: shortcuts, appearance: appearance
+                )
+                .clipped()
+            } sidebar: {
+                BrowserRootSidebarSurfaceLayer(
+                    presentation: model.sidebarPresentation,
+                    width: model.sidebarWidth,
+                    edge: sidebarEdge,
+                    space: model.browser.shownSpace,
+                    reduceTransparency: reduceTransparency,
+                    spaces: BrowserSidebarAccessPolicy.availableSpaces(in: model.browser),
+                    hoverChanged: {
+                        model.sidebarSurfaceHoverChanged(
+                            $0,
+                            reduceMotion: reduceMotion
+                        )
+                    }
+                ) {
+                    BrowserRootSidebarContent(
+                        model: model,
+                        sidebarOnRight: appearance.sidebarOnRight,
+                        spaceSettingsPresentation: spaceSettingsPresentation,
+                        commandSurfaceNamespace: commandSurfaceNamespace,
+                        tabPromotionNamespace: tabPromotionNamespace
+                    )
+                }
+                .background {
+                    BrowserSidebarPointerNavigation(
+                        isSidebarVisible:
+                            model.sidebarPresentation.showsSidebar
+                            && !model.chrome.isCommandPalettePresented,
+                        perform: model.handleAuxiliaryMouseAction,
+                        navigationTargets: { [pages = model.pages] in pages.livePages },
+                        activeTarget: { [pages = model.pages] in pages.activePage }
+                    )
+                }
+            } controls: {
+                BrowserRootShellControls(
+                    model: model, storedSidebarWidth: $storedSidebarWidth, sidebarEdge: sidebarEdge)
+            }
+            .allowsHitTesting(!model.chrome.isCommandPalettePresented)
+            .accessibilityHidden(model.chrome.isCommandPalettePresented)
+
+            BrowserRootUtilityFanLayer(model: model, sidebarOnRight: appearance.sidebarOnRight)
+                .zIndex(BrowserRootMetrics.utilityFanZIndex)
+
+            BrowserMacDownloadFeedbackLayer(model: model, feedback: downloadFeedback)
+                .zIndex(BrowserRootMetrics.utilityFanZIndex + 1)
+
+            BrowserRootDragPreviewLayer(
+                model: model,
+                reduceMotion: reduceMotion
+            )
+
+            BrowserWindowFocusBridge(isWindowFocused: model.isWindowFocusedBinding)
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+
+            if let notice = model.visibleNotice {
+                BrowserNoticeView(notice: notice)
+                    .id(notice)
+            }
+        }
+    }
+
+}
+
+/// Tab selection is observed here so the ordinary shell's inputs stay stable
+/// when only the page occupying it changes.
+private struct BrowserRootFullscreenContent<Content: View>: View {
+    let pages: BrowserPagePool
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        if let page = pages.activePage, page.isContentFullscreen {
+            BrowserPlatformWebView(
+                page: page,
+                isPageActive: true,
+                focusRestorationGate: .suppressed
+            )
+            .environment(\.browserPagePresentationWindowID, pages.windowID)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.black)
+            .ignoresSafeArea()
+        } else {
+            content
+        }
+    }
+}
+
+private struct BrowserRootPermissionObserver: ViewModifier {
+    let model: BrowserRootModel
+    let reduceMotion: Bool
+
+    func body(content: Content) -> some View {
+        content.onChange(of: model.pages.activePage?.sitePermissionRequests.current?.id) {
+            if model.pages.activePage?.sitePermissionRequests.current != nil {
+                model.presentFloatingSidebar(reduceMotion: reduceMotion)
+            }
+        }
+    }
 }

@@ -29,8 +29,12 @@ final class BrowserMacDownloadFeedbackState {
         }
         guard previousContext != nil else { return false }
         if previousContext != context { cancel() }
-        flights.removeAll { !currentIDs.contains($0.id) }
         if let arrivalID, !currentIDs.contains(arrivalID) { self.arrivalID = nil }
+        // The flights are worked out apart and stored only when they differ:
+        // every tab switch changes the context, and a write announces the
+        // flights to the window even when there are none.
+        var next = flights.filter { currentIDs.contains($0.id) }
+        defer { if next.map(\.id) != flights.map(\.id) { flights = next } }
         guard context.isVisible, let window = context.windowIdentifier else { return false }
         let newEvents = events.filter {
             !observedIDs.contains($0.id)
@@ -39,9 +43,9 @@ final class BrowserMacDownloadFeedbackState {
                 && $0.profileID == context.profileID
         }
         for event in newEvents {
-            flights.append(Flight(id: event.id, path: path(for: event, context: context)))
+            next.append(Flight(id: event.id, path: path(for: event, context: context)))
         }
-        flights = Array(flights.suffix(BrowserDownloadFeedbackPolicy.maximumVisibleEvents))
+        next = Array(next.suffix(BrowserDownloadFeedbackPolicy.maximumVisibleEvents))
         return !newEvents.isEmpty
     }
 
@@ -54,8 +58,8 @@ final class BrowserMacDownloadFeedbackState {
     }
 
     func cancel() {
-        flights.removeAll()
-        arrivalID = nil
+        if !flights.isEmpty { flights.removeAll() }
+        if arrivalID != nil { arrivalID = nil }
     }
 
     private func path(

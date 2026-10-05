@@ -11,6 +11,36 @@ import XCTest
 @MainActor
 final class CoreReadModelTests: XCTestCase {
 
+    func testWindowSelectionReadsObserveOnlyTheirSpace() throws {
+        let store = BrowserStore(seed: .preview, core: CrestCore())
+        let spaces = store.spaceModels
+        let first = try XCTUnwrap(spaces.first)
+        let other = try XCTUnwrap(spaces.dropFirst().first)
+        let selected = try XCTUnwrap(store.selectedTabID(in: first.id))
+        let next = try XCTUnwrap(first.tabs.models.first { $0.id != selected })
+        let window = try XCTUnwrap(store.windowModel)
+        let spaceSelection = tripwire { _ = store.selectedSpaceID }
+        let tabSelection = tripwire { _ = store.selectedTabID(in: first.id) }
+        let otherTabSelection = tripwire { _ = store.selectedTabID(in: other.id) }
+        let cards = tripwire { _ = window.cards(in: first.id) }
+        let otherCards = tripwire { _ = window.cards(in: other.id) }
+
+        XCTAssertTrue(store.activateSessionTab(next.id, in: first.id))
+
+        XCTAssertEqual(store.selectedSpaceID, first.id)
+        XCTAssertEqual(store.selectedTabID(in: first.id), next.id)
+        XCTAssertTrue(tabSelection.isTripped)
+        XCTAssertTrue(cards.isTripped)
+        XCTAssertFalse(spaceSelection.isTripped)
+        XCTAssertFalse(otherTabSelection.isTripped)
+        XCTAssertFalse(otherCards.isTripped)
+
+        let spaceChange = tripwire { _ = store.selectedSpaceID }
+        store.selectSpace(other.id)
+        XCTAssertTrue(spaceChange.isTripped)
+        XCTAssertEqual(store.selectedSpaceID, other.id)
+    }
+
     func testAChangeNotifiesOnlyTheObjectsWhoseValuesItChanges() throws {
         let core = CrestCore()
         let store = BrowserStore(seed: .preview, core: core)

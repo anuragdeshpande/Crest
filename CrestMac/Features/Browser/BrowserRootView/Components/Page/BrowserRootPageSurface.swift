@@ -7,7 +7,7 @@ import SwiftUI
 /// iPadOS opens and closes its columns on exactly the same conditions. What is
 /// left here is macOS's half: which surface draws the answer, and what the
 /// pointer may do to it.
-struct BrowserRootPageSurface: View {
+struct BrowserRootPageSurface: View, @MainActor Equatable {
     @Environment(\.spaceContentPresentation) private var contentPresentation
     @Environment(\.browserMacWindows) private var windows
     let model: BrowserRootModel
@@ -19,6 +19,17 @@ struct BrowserRootPageSurface: View {
     let shortcuts: BrowserShortcutStore?
     var appearance = BrowserChromeAppearance()
     var layoutDirection = LayoutDirection.leftToRight
+
+    /// The retained host needs a new root only when its inputs change. The
+    /// models publish their own changes directly to the views that read them.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.model === rhs.model && lhs.space === rhs.space
+            && lhs.isSelectedSpace == rhs.isSelectedSpace
+            && lhs.transientBrowsing === rhs.transientBrowsing
+            && lhs.tabPromotionNamespace == rhs.tabPromotionNamespace
+            && lhs.shortcuts === rhs.shortcuts
+            && lhs.appearance == rhs.appearance && lhs.layoutDirection == rhs.layoutDirection
+    }
 
     private var isInteractive: Bool {
         isSelectedSpace && contentPresentation == .interactive

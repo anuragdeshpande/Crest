@@ -11,6 +11,30 @@ import Observation
 @MainActor
 @Observable
 final class WindowStateModel: ObservedModel, Identifiable {
+    // MARK: - Types
+
+    /// Each retained Space observes its own presentation, so changing a tab
+    /// never invalidates the content trees of neighboring Spaces.
+    @MainActor
+    @Observable
+    fileprivate final class SpacePresentation: BrowserStoreFirstObservable {
+        var tabID: UUID? {
+            get { observed(\.tabIDStorage, as: \.tabID) }
+            set { publish(newValue, into: \.tabIDStorage, as: \.tabID) }
+        }
+        @ObservationIgnored private var tabIDStorage: UUID?
+        var cards: ShownCards? {
+            get { observed(\.cardsStorage, as: \.cards) }
+            set { publish(newValue, into: \.cardsStorage, as: \.cards) }
+        }
+        @ObservationIgnored private var cardsStorage: ShownCards?
+
+        init(tabID: UUID?, cards: ShownCards?) {
+            tabIDStorage = tabID
+            cardsStorage = cards
+        }
+    }
+
     // MARK: - Variables
 
     let id: UUID
@@ -43,6 +67,7 @@ final class WindowStateModel: ObservedModel, Identifiable {
         set { publish(newValue, into: \.cardsStorage, as: \.cards) }
     }
     @ObservationIgnored private var cardsStorage: [ShownCards]
+    @ObservationIgnored private var spacePresentations: [UUID: SpacePresentation] = [:]
     /// The tabs the window shows, one per Space it has shown, each observed
     /// on its own. A tab lives in one Space, so a row of any Space's sidebar
     /// is shown exactly when its tab is here.
@@ -76,7 +101,24 @@ final class WindowStateModel: ObservedModel, Identifiable {
     /// The tabs the window's content shows side by side in the Space, or nil
     /// where it shows no tab.
     func cards(in spaceID: UUID) -> ShownCards? {
-        cards.first { $0.spaceID == spaceID }
+        _ = presentation(in: spaceID).cards
+        return cardsStorage.first { $0.spaceID == spaceID }
+    }
+
+    /// The tab shown in one Space, observed independently of every other
+    /// Space, split arrangement, and command availability.
+    func shownTabID(in spaceID: UUID) -> UUID? {
+        _ = presentation(in: spaceID).tabID
+        return shownTabsStorage.first { $0.spaceID == spaceID }?.tabID
+    }
+
+    private func presentation(in spaceID: UUID) -> SpacePresentation {
+        if let held = spacePresentations[spaceID] { return held }
+        let presentation = SpacePresentation(
+            tabID: shownTabsStorage.first { $0.spaceID == spaceID }?.tabID,
+            cards: cardsStorage.first { $0.spaceID == spaceID })
+        spacePresentations[spaceID] = presentation
+        return presentation
     }
 
     // MARK: - Actions - Changes
@@ -92,6 +134,12 @@ final class WindowStateModel: ObservedModel, Identifiable {
         cards = value.cards
         shownTabIDs.replace(with: Set(value.shownTabs.compactMap(\.tabID)))
         unavailableCommands.replace(with: Set(value.unavailableCommands))
+        // Store the whole record before announcing any scoped presentation.
+        // A reader notified of one Space can already read the others' values.
+        for (spaceID, presentation) in spacePresentations {
+            presentation.tabID = shownTabsStorage.first { $0.spaceID == spaceID }?.tabID
+            presentation.cards = cardsStorage.first { $0.spaceID == spaceID }
+        }
     }
 }
 

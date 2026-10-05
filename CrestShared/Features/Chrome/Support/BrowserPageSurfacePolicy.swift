@@ -10,6 +10,15 @@ enum BrowserPageSurfacePolicy {
     static let boundaryStrokeWidth: CGFloat = 0.5
     static let boundaryStrokeOpacity = CrestOpacity.border
 
+    /// How long a page's first load runs before the surface says it is
+    /// opening. A load that finishes sooner goes straight from the page
+    /// before to the page, as a browser's does, with nothing in between.
+    static let initialLoadingStatusDelay: Duration = .milliseconds(400)
+
+    /// Whether the card lets the Space's atmosphere through instead of
+    /// drawing its own background. A page's first load keeps the card's
+    /// background: letting the atmosphere through until the page drew flashed
+    /// it between every page and the next.
     static func usesTransparentInnerSurface(
         isStartPage: Bool,
         hasActivePage: Bool,
@@ -19,7 +28,6 @@ enum BrowserPageSurfacePolicy {
             && startPageUsesTransparentInnerSurface
             && isStartPage)
             || !hasActivePage
-            || completedNavigationCount == 0
     }
 
     static func revealsWebContent(committedNavigationCount: Int) -> Bool {

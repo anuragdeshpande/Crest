@@ -24,6 +24,7 @@ final class BrowserPageRuntimeStore {
         get { host.runtimes }
         set { host.runtimes = newValue }
     }
+    /// Moves whenever a tab gains or loses its page; see `BrowserPageHost`.
     var revision: Int {
         get { host.revision }
         set { host.revision = newValue }
@@ -95,7 +96,6 @@ final class BrowserPageRuntimeStore {
         runtime.presentationWindowID = pool.windowID
         runtime.routingWindowID = pool.windowID
         pool.bindRuntimeRouting(runtime, tabID: tabID)
-        revision &+= 1
     }
 
     /// Unregisters `pool`, when it is the pool registered for its window,
@@ -114,7 +114,6 @@ final class BrowserPageRuntimeStore {
                 }
             }
         }
-        revision &+= 1
     }
 
     func install(_ runtime: BrowserTabRuntime, for tabID: UUID, from pool: BrowserPagePool) {
@@ -141,7 +140,6 @@ final class BrowserPageRuntimeStore {
             claim(tabID, for: next)
         } else {
             runtime.presentationWindowID = nil
-            revision &+= 1
         }
     }
 
@@ -160,7 +158,6 @@ final class BrowserPageRuntimeStore {
                     return
                 }
                 if let image { runtime.snapshot = image }
-                self.revision &+= 1
             }
         }
     }

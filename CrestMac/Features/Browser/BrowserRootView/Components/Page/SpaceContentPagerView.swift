@@ -5,7 +5,7 @@ import SwiftUI
 /// A passive strip of real content surfaces. Only the sidebar owns gestures;
 /// web history gestures continue to belong to WebKit.
 @MainActor
-final class SpaceContentPagerView<Content: View>: NSView {
+final class SpaceContentPagerView<Content: View & Equatable>: NSView {
     private var spaces: [SpaceModel] = []
     private var selectedSpaceID: UUID?
     private var lockedSpaceIDs: Set<UUID> = []
@@ -183,14 +183,14 @@ final class SpaceContentPagerView<Content: View>: NSView {
             let contentPresentation = contentPresentation(at: index)
             if let host = hosts[key] {
                 let previous = host.hostingView.rootView.contentPresentation
-                if refresh || previous != contentPresentation {
+                var root = refresh ? makeRoot(space, space.id == selectedSpaceID) : host.hostingView.rootView
+                root.contentPresentation = contentPresentation
+                if host.hostingView.rootView.content != root.content || previous != contentPresentation {
                     if contentPresentation != .interactive,
                         let responder = window?.firstResponder as? NSView, responder.isDescendant(of: host)
                     {
                         window?.makeFirstResponder(nil)
                     }
-                    var root = refresh ? makeRoot(space, space.id == selectedSpaceID) : host.hostingView.rootView
-                    root.contentPresentation = contentPresentation
                     host.hostingView.rootView = root
                     if previous == .inactive, contentPresentation != .inactive {
                         // Admit the destination before moving its first frame

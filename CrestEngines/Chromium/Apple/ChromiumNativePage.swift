@@ -464,6 +464,9 @@
             if window != nil { page?.attachIfPossible() } else { page?.detach() }
         }
         func didAttach(to host: BrowserWebHostView) { page?.attachIfPossible() }
+        /// A Chromium page shown again composes a new frame before it draws
+        /// anything; see `BrowserNativePageSurfaceLifecycle`.
+        var holdsReplacedPageUntilDrawn: Bool { true }
         func willDetach(from host: BrowserWebHostView) { page?.detach() }
         func presentationDidChange(in host: BrowserWebHostView) {
             page?.presentationDidChange(takingFocus: host.allowsPageFocus)

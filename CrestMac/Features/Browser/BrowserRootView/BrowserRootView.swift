@@ -77,7 +77,16 @@ struct BrowserRootView: View {
         // window publishes the host that owns its row.
         .modifier(BrowserExtensionSidePanelRegistration(host: model.extensionSidePanel, pages: model.pages))
         .modifier(BrowserPopupWindowPresentation(pages: model.pages))
-        .navigationTitle(Text(verbatim: model.windowTitle))
+        .modifier(BrowserRootWindowTitle(model: model))
+    }
+}
+
+/// Page titles update the window without rebuilding its browser shell.
+private struct BrowserRootWindowTitle: ViewModifier {
+    let model: BrowserRootModel
+
+    func body(content: Content) -> some View {
+        content.navigationTitle(Text(verbatim: model.windowTitle))
     }
 }
 

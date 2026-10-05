@@ -77,6 +77,7 @@ struct BrowserMacWindowScene: View {
         .environment(
             \.browserSidebarWindowDrop,
             BrowserSidebarWindowDrop(
+                windowID: id,
                 perform: handleWindowDrop,
                 didMeasureRow: { coordinator.didMeasureRow($0, in: id) })
         )
@@ -94,9 +95,7 @@ struct BrowserMacWindowScene: View {
                 close: closeWindowRuntime)
         )
         .onAppear(perform: activateWindow)
-        .onChange(of: coordinator.browser.sessionRevision) {
-            coordinator.reconcileTemporaryWorkspaces()
-        }
+        .modifier(BrowserTemporaryWorkspaceReconciliation(coordinator: coordinator))
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             spaceAccess.lockAllForInactiveScene()
         }
@@ -187,6 +186,19 @@ struct BrowserMacWindowScene: View {
         Task {
             await browser.flushPendingSyncPersistence()
             await pages.flushPendingTabStateWrites()
+        }
+    }
+}
+
+/// Showing a tab moves the session revision, so the scene follows it in a
+/// modifier of its own: the window's body, and the environment it writes for
+/// every view below it, stay as they are.
+private struct BrowserTemporaryWorkspaceReconciliation: ViewModifier {
+    let coordinator: BrowserMacWindowCoordinator
+
+    func body(content: Content) -> some View {
+        content.onChange(of: coordinator.browser.sessionRevision) {
+            coordinator.reconcileTemporaryWorkspaces()
         }
     }
 }

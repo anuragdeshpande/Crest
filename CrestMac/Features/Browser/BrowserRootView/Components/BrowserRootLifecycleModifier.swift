@@ -5,9 +5,6 @@ struct BrowserRootLifecycleModifier: ViewModifier {
     let model: BrowserRootModel
     let persistSidebarWidth: (Double) -> Void
     @Binding var storedSidebarWidth: Double
-    @State private var runtimeSessionProjection: BrowserRuntimeSessionProjection
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         model: BrowserRootModel,
@@ -17,45 +14,100 @@ struct BrowserRootLifecycleModifier: ViewModifier {
         self.model = model
         self.persistSidebarWidth = persistSidebarWidth
         _storedSidebarWidth = storedSidebarWidth
-        _runtimeSessionProjection = State(
-            initialValue: model.pages.runtimeProjection
-        )
     }
 
+    /// Each observer reads only the state it follows in a modifier of its
+    /// own, so showing another tab re-evaluates the observers of the
+    /// selection, the page and the session, and leaves the rest of the
+    /// window's lifecycle, and the content below it, as it was.
     func body(content: Content) -> some View {
-        let preparedContent =
-            content
+        content
             .task {
                 await model.prepareBrowser()
             }
-            .onChange(of: model.isWindowFocused, initial: true) {
-                _, isFocused in
-                model.hostWindowFocusChanged(isFocused)
-            }
+            .modifier(BrowserRootWindowFocusObserver(model: model))
+            .modifier(BrowserRootSelectionFollower(model: model))
+            .modifier(BrowserRootPageMetadataObserver(model: model))
+            .modifier(BrowserRootSessionFollower(model: model))
             .modifier(
-                BrowserRootSelectionObserver(
-                    selection: model.selectionSnapshot,
-                    lock: model.selectedSpaceIsLocked,
-                    // A window with no locked-Space arrangement of its own has
-                    // nothing to do about a lock that is already up when it
-                    // appears; `prepareBrowser` settles that case.
-                    evaluatesLockInitially: false,
-                    selectionChanged: synchronizeSelection,
-                    lockChanged: { _, _ in
-                        model.synchronizeAfterLockChange()
-                    }
+                BrowserRootChromeObserver(
+                    model: model,
+                    storedSidebarWidth: $storedSidebarWidth,
+                    persistSidebarWidth: persistSidebarWidth
                 )
             )
+    }
+}
 
-        let pageObservedContent =
-            preparedContent
+private struct BrowserRootWindowFocusObserver: ViewModifier {
+    let model: BrowserRootModel
+
+    func body(content: Content) -> some View {
+        content.onChange(of: model.isWindowFocused, initial: true) { _, isFocused in
+            model.hostWindowFocusChanged(isFocused)
+        }
+    }
+}
+
+private struct BrowserRootSelectionFollower: ViewModifier {
+    let model: BrowserRootModel
+
+    func body(content: Content) -> some View {
+        content.modifier(
+            BrowserRootSelectionObserver(
+                selection: model.selectionSnapshot,
+                lock: model.selectedSpaceIsLocked,
+                // A window with no locked-Space arrangement of its own has
+                // nothing to do about a lock that is already up when it
+                // appears; `prepareBrowser` settles that case.
+                evaluatesLockInitially: false,
+                selectionChanged: synchronizeSelection,
+                lockChanged: { _, _ in
+                    model.synchronizeAfterLockChange()
+                }
+            )
+        )
+    }
+
+    /// A Space change and a tab change are different work, so the transition is
+    /// split here rather than inside the observer: moving Space resets the
+    /// address field and leaves the page swap to the content selection policy,
+    /// while a tab change performs it.
+    private func synchronizeSelection(
+        _ previous: BrowserRootSelectionSnapshot,
+        _ current: BrowserRootSelectionSnapshot
+    ) {
+        if previous.spaceID != current.spaceID {
+            model.synchronizeAfterSpaceChange()
+        } else if previous.tabID != current.tabID {
+            model.synchronizeAfterSelectionChange()
+        }
+    }
+}
+
+private struct BrowserRootPageMetadataObserver: ViewModifier {
+    let model: BrowserRootModel
+
+    func body(content: Content) -> some View {
+        content
             .onChange(of: model.browser.shownTab?.url) { model.synchronizePageMetadata() }
             .onChange(of: model.pages.activePage?.live.displayURL) {
                 model.synchronizePageMetadata()
             }
+    }
+}
 
-        let runtimeObservedContent =
-            pageObservedContent
+private struct BrowserRootSessionFollower: ViewModifier {
+    let model: BrowserRootModel
+    @State private var runtimeSessionProjection: BrowserRuntimeSessionProjection
+
+    init(model: BrowserRootModel) {
+        self.model = model
+        _runtimeSessionProjection = State(initialValue: model.pages.runtimeProjection)
+    }
+
+    func body(content: Content) -> some View {
+        content
             .onChange(of: model.browser.sessionRevision, initial: true) {
                 model.browser.followSession()
                 runtimeSessionProjection = model.pages.runtimeProjection
@@ -79,9 +131,18 @@ struct BrowserRootLifecycleModifier: ViewModifier {
             ) {
                 model.reconcileCredentialAccess()
             }
+    }
+}
 
-        let chromeObservedContent =
-            runtimeObservedContent
+private struct BrowserRootChromeObserver: ViewModifier {
+    let model: BrowserRootModel
+    @Binding var storedSidebarWidth: Double
+    let persistSidebarWidth: (Double) -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
             .onChange(of: storedSidebarWidth) { _, width in
                 model.restoreSidebarWidth(CGFloat(width))
                 persistSidebarWidth(width)
@@ -98,22 +159,5 @@ struct BrowserRootLifecycleModifier: ViewModifier {
             .onChange(of: model.lockedSpaceIDs, initial: true) { _, spaceIDs in
                 model.relockProtectedSpaces(spaceIDs)
             }
-
-        return chromeObservedContent
-    }
-
-    /// A Space change and a tab change are different work, so the transition is
-    /// split here rather than inside the observer: moving Space resets the
-    /// address field and leaves the page swap to the content selection policy,
-    /// while a tab change performs it.
-    private func synchronizeSelection(
-        _ previous: BrowserRootSelectionSnapshot,
-        _ current: BrowserRootSelectionSnapshot
-    ) {
-        if previous.spaceID != current.spaceID {
-            model.synchronizeAfterSpaceChange()
-        } else if previous.tabID != current.tabID {
-            model.synchronizeAfterSelectionChange()
-        }
     }
 }

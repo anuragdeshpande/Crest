@@ -297,11 +297,17 @@ protocol BrowserNativePageSurfaceLifecycle: AnyObject {
     /// `BrowserWebHostView.presentation`.
     func presentationDidChange(in host: BrowserWebHostView)
     func presentationGeometryDidChange()
+    /// Whether a page this view gives way to should stay on screen above the
+    /// view that replaces it until that one has drawn. An engine whose page
+    /// draws nothing for a few frames after it is shown again sets it, so a
+    /// tab switch never shows the page's bare background in between.
+    var holdsReplacedPageUntilDrawn: Bool { get }
 }
 
 extension BrowserNativePageSurfaceLifecycle {
     func presentationDidChange(in host: BrowserWebHostView) {}
     func presentationGeometryDidChange() {}
+    var holdsReplacedPageUntilDrawn: Bool { false }
 }
 
 /// Shows a page's engine-owned view where SwiftUI placed this host.
@@ -328,6 +334,10 @@ final class BrowserWebHostView: NSView {
     private static let claimants = NSHashTable<BrowserWebHostView>.weakObjects()
     /// The number of claims made so far, which orders them.
     private static var claimCount = 0
+    /// How many display frames a replaced page stays above the page that
+    /// replaced it: about 42 ms at 120 Hz, longer than the frames a page
+    /// shown again takes to draw.
+    private static let replacementHoldFrames = 5
 
     // MARK: - Variables
 
@@ -348,6 +358,12 @@ final class BrowserWebHostView: NSView {
     private var focusRestorationAttemptGeneration = 0
     /// When this host claimed `hostedWebView`: the newest claim is the largest.
     private var claim = 0
+    /// The page view this host showed before `hostedWebView`, still shown
+    /// above it while the new one draws its first frames; see
+    /// `holdsReplacedPageUntilDrawn`.
+    private var replacedWebView: NSView?
+    private var replacedFramesLeft = 0
+    private var replacedDisplayLink: CADisplayLink?
 
     // MARK: - Actions - Hosting
 
@@ -393,7 +409,12 @@ final class BrowserWebHostView: NSView {
         let detachInterval = Self.lifecycleSignposter.beginInterval(
             "Detach Previous Page View"
         )
-        detach()
+        let replaced = replaceableWebView()
+        if let replaced {
+            letGo(keepingOnScreen: replaced)
+        } else {
+            detach()
+        }
         Self.lifecycleSignposter.endInterval(
             "Detach Previous Page View",
             detachInterval
@@ -402,13 +423,15 @@ final class BrowserWebHostView: NSView {
         claim = Self.claimCount
         hostedWebView = webView
         Self.claimants.add(self)
-        show(webView, focusRestoration: focusRestoration)
+        show(webView, focusRestoration: focusRestoration, below: replaced)
+        if let replaced { holdUntilReplacementDraws(replaced) }
     }
 
     /// Lets go of the view this host claimed. When it was showing it, the view
     /// leaves and moves to the newest other host in its window that still
     /// claims it.
     func detach() {
+        releaseReplacedWebView()
         guard let hostedWebView else { return }
         Self.claimants.remove(self)
         let showsHostedWebView = hostedWebView.superview === self
@@ -435,8 +458,65 @@ final class BrowserWebHostView: NSView {
         return placement === window
     }
 
-    /// Puts `webView`, which this host claimed, on screen here.
-    private func show(_ webView: NSView, focusRestoration: BrowserWebFocusRestorationController?) {
+    // MARK: - Actions - Replacement
+
+    /// The view this host shows now, when the view replacing it should wait
+    /// beneath it until it draws: it is on screen here, asks for that, and
+    /// no other host claims it, which would take it once this host lets go.
+    /// A replacement still in progress ends first.
+    private func replaceableWebView() -> NSView? {
+        releaseReplacedWebView()
+        guard let hostedWebView, hostedWebView.superview === self, window != nil,
+            (hostedWebView as? any BrowserNativePageSurfaceLifecycle)?.holdsReplacedPageUntilDrawn == true,
+            !Self.claimants.allObjects.contains(where: { $0 !== self && $0.hostedWebView === hostedWebView })
+        else { return nil }
+        return hostedWebView
+    }
+
+    /// Lets go of `webView` as `detach` does, but leaves it on screen.
+    private func letGo(keepingOnScreen webView: NSView) {
+        Self.claimants.remove(self)
+        hostedWebView = nil
+        focusRestoration = nil
+        isPageActive = false
+        focusRestorationAttemptGeneration &+= 1
+    }
+
+    /// Keeps `webView` above its replacement for a few display frames: a
+    /// page shown again draws nothing until its engine composes a frame for
+    /// it, about two to four frames, and the one it replaces covers that
+    /// instead of the page's bare background.
+    private func holdUntilReplacementDraws(_ webView: NSView) {
+        replacedWebView = webView
+        replacedFramesLeft = Self.replacementHoldFrames
+        let link = displayLink(target: self, selector: #selector(replacementFrameElapsed(_:)))
+        link.add(to: .main, forMode: .common)
+        replacedDisplayLink = link
+    }
+
+    @objc private func replacementFrameElapsed(_ link: CADisplayLink) {
+        replacedFramesLeft -= 1
+        if replacedFramesLeft <= 0 { releaseReplacedWebView() }
+    }
+
+    /// Takes the replaced view off screen, which hides its page.
+    private func releaseReplacedWebView() {
+        replacedDisplayLink?.invalidate()
+        replacedDisplayLink = nil
+        guard let replaced = replacedWebView else { return }
+        replacedWebView = nil
+        guard replaced.superview === self else { return }
+        (replaced as? any BrowserNativePageSurfaceLifecycle)?.willDetach(from: self)
+        replaced.removeFromSuperview()
+    }
+
+    // MARK: - Actions - Showing
+
+    /// Puts `webView`, which this host claimed, on screen here, beneath
+    /// `replaced` while that one is held there.
+    private func show(
+        _ webView: NSView, focusRestoration: BrowserWebFocusRestorationController?, below replaced: NSView? = nil
+    ) {
         self.focusRestoration = focusRestoration ?? self.focusRestoration
 
         let removeInterval = Self.lifecycleSignposter.beginInterval(
@@ -461,7 +541,11 @@ final class BrowserWebHostView: NSView {
         let addInterval = Self.lifecycleSignposter.beginInterval(
             "Add Page View Subview"
         )
-        addSubview(webView)
+        if let replaced, replaced.superview === self {
+            addSubview(webView, positioned: .below, relativeTo: replaced)
+        } else {
+            addSubview(webView)
+        }
         Self.lifecycleSignposter.endInterval(
             "Add Page View Subview",
             addInterval
@@ -598,6 +682,7 @@ final class BrowserWebHostView: NSView {
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if newWindow !== window {
             titleBarTracker.release()
+            releaseReplacedWebView()
         }
         super.viewWillMove(toWindow: newWindow)
     }
