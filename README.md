@@ -250,3 +250,13 @@ license. The Crest name, app icon, logos, and official distribution identity
 are reserved; modified distributions must use their own branding as described
 in [TRADEMARKS.md](TRADEMARKS.md). Third-party notices are collected in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=pauljoda%2Fcrest&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=pauljoda/crest&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=pauljoda/crest&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=pauljoda/crest&type=date&legend=top-left" />
+ </picture>
+</a>
