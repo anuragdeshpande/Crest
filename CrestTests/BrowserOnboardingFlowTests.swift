@@ -34,6 +34,43 @@ final class BrowserOnboardingFlowTests: XCTestCase {
         XCTAssertEqual(flow.browser.spaceModels.filter { $0.settings.name == "Imported" }.count, 1)
     }
 
+    /// The extensions a review leaves on, and only those, go to the installer
+    /// once the import has made their Space.
+    func testExtensionsLeftOnAreHandedToTheInstallerWhenTheImportLands() async throws {
+        let (first, second) = ("cjpalhdlnbpafiamejdnhcphjbkeiagm", "eimadpbcbfnmbkopoojfekhnkhdbieeh")
+        var output = readOutput(application: .chrome, spaces: [makeSpace(name: "Extension Import Space")])
+        let spaceID = try XCTUnwrap(output.imported.first?.id)
+        output.extensions = [
+            ImportSpaceExtensions(
+                spaceID: spaceID,
+                extensions: [
+                    ImportExtension(extensionID: first, name: "uBlock Origin"),
+                    ImportExtension(extensionID: second, name: "Dark Reader"),
+                ])
+        ]
+        let installer = RecordingExtensionInstaller()
+        let flow = makeFlow(
+            sourceDiscovery: StubSourceDiscovery(sources: [source(.chrome)]),
+            reader: SequencedImportReader(results: [.success(output)]),
+            extensionInstaller: installer)
+        flow.start()
+        flow.discoverInstalledSources()
+        flow.toggleImportSelection(.chrome)
+        flow.continueImportQueue()
+        await waitUntil { flow.step == .review }
+        XCTAssertEqual(flow.review?.includedExtensionCount, 2)
+
+        flow.setExtensionIncluded(second, false, in: spaceID)
+        XCTAssertEqual(flow.review?.includedExtensionCount, 1)
+        XCTAssertTrue(installer.installs.isEmpty)
+
+        flow.commitReviewedImport()
+        await waitUntil { flow.step == .complete }
+        XCTAssertEqual(
+            installer.installs,
+            [[ImportExtensionInstall(extensionID: first, name: "uBlock Origin", iconPath: nil, spaceIDs: [spaceID])]])
+    }
+
     func testCancellationPreventsALateReadFromPublishingAReview() async {
         let reader = SuspendedFlowImportReader()
         let flow = makeFlow(sourceDiscovery: StubSourceDiscovery(sources: [source(.arc)]), reader: reader)
@@ -86,7 +123,8 @@ final class BrowserOnboardingFlowTests: XCTestCase {
     private func makeFlow(
         sourceDiscovery: any BrowserInstalledImportSourceDiscovering,
         reader: any BrowserOnboardingImportReading,
-        importCommitter: any BrowserOnboardingImportCommitting = LiveBrowserOnboardingImportCommitter()
+        importCommitter: any BrowserOnboardingImportCommitting = LiveBrowserOnboardingImportCommitter(),
+        extensionInstaller: (any BrowserImportedExtensionInstalling)? = nil
     ) -> BrowserOnboardingFlow {
         BrowserOnboardingFlow(
             request: BrowserOnboardingRequest(entryPoint: .importBrowser),
@@ -94,7 +132,8 @@ final class BrowserOnboardingFlowTests: XCTestCase {
             sourceDiscovery: sourceDiscovery,
             dataAccessProvider: StubDataAccessProvider(),
             importReader: reader,
-            importCommitter: importCommitter
+            importCommitter: importCommitter,
+            extensionInstaller: extensionInstaller
         )
     }
 
@@ -169,6 +208,14 @@ private struct StubSourceDiscovery: BrowserInstalledImportSourceDiscovering {
 }
 
 @MainActor
+private final class RecordingExtensionInstaller: BrowserImportedExtensionInstalling {
+    private(set) var installs: [[ImportExtensionInstall]] = []
+
+    func installImported(_ installs: [ImportExtensionInstall]) {
+        self.installs.append(installs)
+    }
+}
+
 private struct StubDataAccessProvider: BrowserOnboardingDataAccessProviding {
     func resolve(
         for application: ImportSource

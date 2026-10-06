@@ -1,38 +1,43 @@
 import SwiftUI
 
 struct BrowserOnboardingReviewSpaceControls: View {
+    // MARK: - Static Variables
+
+    /// Wide enough for a Space's symbol and a name of a dozen letters.
+    static let pickerWidth: CGFloat = 200
+
+    // MARK: - Variables
+
     let flow: BrowserOnboardingFlow
     let application: ImportSource?
     let spaces: [BrowserImportSpaceReview]
     let review: BrowserImportSpaceReview
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(alignment: .bottom, spacing: 14) {
+        VStack(spacing: 18) {
+            VStack(spacing: 8) {
                 BrowserOnboardingReviewSourcePicker(
-                    applicationName: application?.title ?? "browser",
+                    applicationName: flow.review?.title ?? application?.title ?? "browser",
                     spaces: spaces,
                     currentSpaceID: review.id,
                     sourceSpaceName: review.sourceSpace.settings.name,
                     show: { flow.shownReviewSpaceID = $0 }
                 )
 
-                Button(action: toggleSpaceInclusion) {
-                    Image(
-                        systemName: review.isIncluded ? "arrow.right" : "xmark"
+                Image(systemName: review.isIncluded ? "arrow.down" : "xmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(
+                        review.isIncluded
+                            ? BrowserOnboardingPalette.coral
+                            : BrowserOnboardingPalette.inkSoft
                     )
-                }
-                .buttonStyle(
-                    .crestIcon(
-                        tint: BrowserOnboardingPalette.coral,
-                        isProminent: true
+                    .frame(width: 28, height: 28)
+                    .background(
+                        BrowserOnboardingPalette.coral.opacity(review.isIncluded ? 0.16 : 0.06),
+                        in: .circle
                     )
-                )
-                .accessibilityLabel(
-                    review.isIncluded
-                        ? "Skip this Space"
-                        : "Include this Space"
-                )
+                    .contentTransition(.symbolEffect(.replace))
+                    .accessibilityHidden(true)
 
                 BrowserOnboardingReviewDestinationPicker(
                     spaces: flow.destinationSpaces,
@@ -41,46 +46,64 @@ struct BrowserOnboardingReviewSpaceControls: View {
                         for: review.destination
                     )
                 )
+                .disabled(!review.isIncluded)
             }
-            .offset(y: -10)
 
-            Toggle("Import this Space", isOn: spaceInclusionBinding)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .tint(BrowserOnboardingPalette.coral)
-
-            Text(review.isIncluded ? "Move Space" : "Skip Space")
-                .font(BrowserOnboardingTypography.sans(10, weight: .bold))
-                .foregroundStyle(BrowserOnboardingPalette.inkSoft)
-
-            if application?.suppliesPasswords == true {
-                Divider()
-                    .frame(width: 74)
-                    .padding(.vertical, 4)
-
-                Label(
-                    flow.passwordCountLabel(for: review),
-                    systemImage: "key.fill"
+            VStack(spacing: 0) {
+                BrowserOnboardingReviewChoice(
+                    title: "Import Space",
+                    systemImage: "square.stack.fill",
+                    accessibilityLabel: "Import this Space",
+                    isOn: spaceInclusionBinding
                 )
-                .font(BrowserOnboardingTypography.sans(10, weight: .bold))
-                .foregroundStyle(BrowserOnboardingPalette.inkSoft)
+                .disabled(isOutOfRoom)
 
-                Toggle(
-                    "Import passwords for \(review.sourceSpace.settings.name)",
-                    isOn: passwordInclusionBinding
-                )
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .tint(BrowserOnboardingPalette.coral)
-                .disabled(
-                    !review.isIncluded || review.record.passwordCount == 0
-                )
-                .accessibilityValue(
-                    review.includesPasswords ? "On" : "Off"
-                )
+                if application?.suppliesPasswords == true {
+                    Divider()
+                    BrowserOnboardingReviewChoice(
+                        title: flow.passwordCountLabel(for: review),
+                        systemImage: "key.fill",
+                        accessibilityLabel: "Import passwords for \(review.sourceSpace.settings.name)",
+                        isOn: passwordInclusionBinding
+                    )
+                    .disabled(!review.isIncluded || review.record.passwordCount == 0)
+                }
+
+                if !review.extensions.isEmpty {
+                    Divider()
+                    BrowserOnboardingReviewChoice(
+                        title: BrowserOnboardingSummary.extensionCount(
+                            included: review.includedExtensionIDs.count,
+                            total: review.extensions.count
+                        ),
+                        systemImage: "puzzlepiece.extension.fill",
+                        accessibilityLabel: "Install extensions for \(review.sourceSpace.settings.name)",
+                        isOn: extensionInclusionBinding
+                    )
+                    .disabled(!review.isIncluded)
+                }
+            }
+            .padding(.horizontal, 12)
+            .background(
+                Color.primary.opacity(0.06),
+                in: .rect(cornerRadius: 12, style: .continuous)
+            )
+            .frame(width: Self.pickerWidth)
+
+            if isOutOfRoom {
+                Text("No room for another Space")
+                    .font(.caption)
+                    .foregroundStyle(BrowserOnboardingPalette.inkSoft)
+                    .multilineTextAlignment(.center)
+                    .frame(width: Self.pickerWidth)
             }
         }
         .frame(width: 228)
+    }
+
+    /// The Space would come in new, but Crest holds no more new Spaces.
+    private var isOutOfRoom: Bool {
+        !review.isIncluded && review.destination == .newSpace && (flow.review?.newSpaceCapacity ?? 1) == 0
     }
 
     private var destinationBinding: Binding<BrowserImportDestination> {
@@ -99,13 +122,45 @@ struct BrowserOnboardingReviewSpaceControls: View {
 
     private var passwordInclusionBinding: Binding<Bool> {
         Binding(
-            get: { review.includesPasswords },
+            get: { review.includesPasswords && review.record.passwordCount > 0 },
             set: { flow.setPasswordsIncluded($0, in: review.id) }
         )
     }
 
-    private func toggleSpaceInclusion() {
-        flow.setSpaceIncluded(!review.isIncluded, in: review.id)
+    private var extensionInclusionBinding: Binding<Bool> {
+        Binding(
+            get: { !review.includedExtensionIDs.isEmpty },
+            set: { flow.setExtensionsIncluded($0, in: review.id) }
+        )
+    }
+}
+
+/// One choice the review makes for a Space: what it brings, and a switch.
+private struct BrowserOnboardingReviewChoice: View {
+    let title: LocalizedStringResource
+    let systemImage: String
+    let accessibilityLabel: LocalizedStringResource
+    @Binding var isOn: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            Label {
+                Text(title)
+            } icon: {
+                Image(systemName: systemImage)
+                    .frame(width: 16)
+            }
+            .font(BrowserOnboardingTypography.sans(11, weight: .semibold))
+            .foregroundStyle(BrowserOnboardingPalette.inkSoft)
+            .opacity(isEnabled ? 1 : 0.55)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .toggleStyle(.switch)
+        .controlSize(.small)
+        .tint(BrowserOnboardingPalette.coral)
+        .frame(minHeight: 36)
+        .accessibilityLabel(Text(accessibilityLabel))
     }
 }
 
@@ -117,21 +172,25 @@ private struct BrowserOnboardingReviewSourcePicker: View {
     let show: (UUID) -> Void
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 4) {
+        VStack(spacing: 4) {
             Text("From \(applicationName)")
                 .font(.caption)
                 .foregroundStyle(BrowserOnboardingPalette.inkSoft)
 
-            Picker("Source Space", selection: selection) {
-                ForEach(spaces) { item in
-                    BrowserSpaceIdentityLabel(space: item.sourceSpace).tag(item.id)
+            BrowserOnboardingReviewMenu {
+                Picker("Source Space", selection: selection) {
+                    ForEach(spaces) { item in
+                        BrowserSpaceIdentityLabel(space: item.sourceSpace).tag(item.id)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } label: {
+                if let current = spaces.first(where: { $0.id == currentSpaceID }) {
+                    BrowserSpaceIdentityLabel(space: current.sourceSpace)
                 }
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .controlSize(.regular)
-            .tint(BrowserOnboardingPalette.coral)
-            .frame(width: 80)
+            .accessibilityLabel("Source Space")
             .accessibilityValue(sourceSpaceName)
         }
     }
@@ -150,25 +209,66 @@ private struct BrowserOnboardingReviewDestinationPicker: View {
     let destinationName: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(spacing: 4) {
             Text("Into Crest")
                 .font(.caption)
                 .foregroundStyle(BrowserOnboardingPalette.inkSoft)
 
-            Picker("Destination Space", selection: $destination) {
-                Text("New Space").tag(BrowserImportDestination.newSpace)
-                ForEach(spaces) { space in
-                    BrowserSpaceIdentityLabel(space: space).tag(
-                        BrowserImportDestination.existing(space.id)
-                    )
+            BrowserOnboardingReviewMenu {
+                Picker("Destination Space", selection: $destination) {
+                    Text("New Space").tag(BrowserImportDestination.newSpace)
+                    ForEach(spaces) { space in
+                        BrowserSpaceIdentityLabel(space: space).tag(
+                            BrowserImportDestination.existing(space.id)
+                        )
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } label: {
+                if let space = spaces.first(where: { destination.spaceID == $0.id }) {
+                    BrowserSpaceIdentityLabel(space: space)
+                } else {
+                    Text("New Space")
                 }
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .controlSize(.regular)
-            .tint(BrowserOnboardingPalette.coral)
-            .frame(width: 80)
+            .accessibilityLabel("Destination Space")
             .accessibilityValue(destinationName)
         }
+    }
+}
+
+/// A Space menu as wide as the review's choices below it, so the route and
+/// the choices line up.
+private struct BrowserOnboardingReviewMenu<Content: View, Label: View>: View {
+    @ViewBuilder let content: () -> Content
+    @ViewBuilder let label: () -> Label
+
+    var body: some View {
+        Menu {
+            content()
+        } label: {
+            HStack(spacing: 6) {
+                label()
+                    .lineLimit(1)
+                    .foregroundStyle(BrowserOnboardingPalette.coral)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(BrowserOnboardingPalette.inkSoft)
+                    .accessibilityHidden(true)
+            }
+            .font(.system(size: 13, weight: .medium))
+            .padding(.horizontal, 12)
+            .frame(width: BrowserOnboardingReviewSpaceControls.pickerWidth, height: 30)
+            .background(
+                Color.primary.opacity(0.06),
+                in: .rect(cornerRadius: 9, style: .continuous)
+            )
+            .contentShape(.rect)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
     }
 }
