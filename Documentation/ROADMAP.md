@@ -89,11 +89,11 @@ the live status for each issue.
 - [ ] [feature: Double-click a tab to rename](https://github.com/pauljoda/Crest/issues/264)
 - [ ] [feature: Redesign bottom space picker in the sidebar. ](https://github.com/pauljoda/Crest/issues/265)
 - [ ] [feature: Reduce empty white space in the sidebar. ](https://github.com/pauljoda/Crest/issues/266)
-- [ ] [bug: extension install waits 180 s for the engine's download unless a page has loaded](https://github.com/pauljoda/Crest/issues/268)
 - [ ] [feature: Import from Aside and ego lite](https://github.com/pauljoda/Crest/issues/271)
 - [ ] [feature: Translate Crest into Korean, Japanese, and other languages](https://github.com/pauljoda/Crest/issues/273)
 - [ ] [Import every Chrome profile during setup](https://github.com/pauljoda/Crest/issues/275)
 - [ ] [Evaluate a setting for where new tabs open in the sidebar](https://github.com/pauljoda/Crest/issues/276)
+- [ ] [Keep find in page in step with what you type](https://github.com/pauljoda/Crest/issues/278)
 
 #### Completed
 
@@ -109,6 +109,7 @@ the live status for each issue.
 - [x] [Keep the back and forward history menu fast on long-lived tabs](https://github.com/pauljoda/Crest/issues/244) — [`86f5d23c`](https://github.com/pauljoda/Crest/commit/86f5d23cd6995e2d8790311bff1d09dbafa00bc5)
 - [x] [bug: Unable to import spaces from Zen](https://github.com/pauljoda/Crest/issues/252)
 - [x] [Link the Crest Discord from the website](https://github.com/pauljoda/Crest/issues/256)
+- [x] [bug: extension install waits 180 s for the engine's download unless a page has loaded](https://github.com/pauljoda/Crest/issues/268)
 
 <!-- crest-roadmap-sync:end -->
 

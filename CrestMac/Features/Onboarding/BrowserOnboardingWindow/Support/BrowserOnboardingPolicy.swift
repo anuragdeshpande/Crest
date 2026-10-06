@@ -31,6 +31,22 @@ enum BrowserOnboardingSummary {
         )
     }
 
+    static func extensionCount(included: Int, total: Int) -> LocalizedStringResource {
+        let total = max(total, 0)
+        let included = min(max(included, 0), total)
+        return LocalizedStringResource(
+            "\(included) of \(total) extensions",
+            comment: "Extension count shown while reviewing a browser import. The first count is how many are on."
+        )
+    }
+
+    static func leftOutCount(_ count: Int) -> LocalizedStringResource {
+        LocalizedStringResource(
+            "\(max(count, 0)) left out",
+            comment: "How many of a browser's profiles or Spaces an import cannot bring, shown in the import review."
+        )
+    }
+
     static func review(
         tabCount: Int,
         passwordCount: Int,
