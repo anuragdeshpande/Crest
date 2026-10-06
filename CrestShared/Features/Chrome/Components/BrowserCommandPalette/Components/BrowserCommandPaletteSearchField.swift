@@ -14,6 +14,18 @@ struct BrowserCommandPaletteSearchField: View {
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
 
+            if let site = model.activeSiteSearch {
+                Button {
+                    model.leaveSiteSearch()
+                } label: {
+                    BrowserSiteSearchPill(site: site, showsCloseControl: true, profileID: model.space?.profileID)
+                }
+                .buttonStyle(.plain)
+                .help("Leave site search (Escape)")
+                .accessibilityLabel("Stop searching \(site.name)")
+                .accessibilityIdentifier("command-palette-site-search-token")
+            }
+
             BrowserPlatformCommandPaletteField(
                 model: model,
                 presentation: presentation,
@@ -24,7 +36,24 @@ struct BrowserCommandPaletteSearchField: View {
             .focused(queryIsFocused)
             .frame(height: fieldHeight)
 
-            if let completion = model.urlCompletion {
+            if let site = model.siteSearchOffer {
+                Button {
+                    model.acceptSiteSearch()
+                } label: {
+                    HStack(spacing: CrestSpacing.small) {
+                        Text("Search")
+                        BrowserSiteSearchPill(site: site, profileID: model.space?.profileID)
+                        Label("Tab", systemImage: "arrow.right.to.line")
+                    }
+                    .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Press Tab to search this site")
+                .accessibilityLabel("Search \(site.name)")
+                .accessibilityHint("Press Tab, enter your query, then press Return.")
+                .accessibilityIdentifier("command-palette-site-search-offer")
+            } else if let completion = model.urlCompletion {
                 Button {
                     model.acceptURLCompletion()
                 } label: {

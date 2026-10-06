@@ -17,6 +17,8 @@ Choose startup, window, and update behavior. On Mac, this is also where you choo
 
 Control whether newly opened links receive focus, whether you follow tabs moved to another Space, and how pinned and saved tabs reopen. General also includes automatic page translation and, on Mac, drag-to-Peek and automatic Picture in Picture.
 
+On Mac, **Site Searches** lets you add, edit, and remove the sites offered when you type a site name or shortcut and press Tab in the command palette. Each entry has a search URL, a shortcut, optional additional shortcuts, and an editable color used by its pill and matching palette halo. Entries are shared across Spaces on this device and do not sync or change a Space's default search engine. See [Search a specific site](../browsing/command-palette.md#search-a-specific-site-on-mac).
+
 ## Look and Feel
 
 Customize the browser on this device with a live preview. Choose sidebar position, the window border, tab shape and scale, pinned-tab layout, tab and address-field colors, and an app icon palette. Set default page zoom anywhere from **25% to 500%**. Use presets to get started or reset individual changed settings.

@@ -33,6 +33,7 @@ struct BrowserCommandPaletteCard: View {
 
     var body: some View {
         surface
+            .modifier(BrowserSiteSearchGlow(color: model.activeSiteSearch?.color))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("command-palette")
     }

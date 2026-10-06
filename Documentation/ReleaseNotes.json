@@ -3613,6 +3613,10 @@
     "retina-tab-icons": {
       "category": "fixed",
       "message": "Site icons in tabs and pinned tabs on Mac are now sharp on Retina displays instead of blurry."
+    },
+    "native-site-search-shortcuts": {
+      "category": "new",
+      "message": "Search a specific site on Mac by typing its name or shortcut, pressing Tab, entering your query, and pressing Return. Site searches show favicon-bearing, color-coded pills and a matching palette glow. Fifteen sites are included, and Settings lets you add, edit, or remove entries, shortcuts, and colors. Entries stay local to this Mac without changing a Space's default search provider."
     }
   }
 }

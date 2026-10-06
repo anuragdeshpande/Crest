@@ -32,6 +32,9 @@ struct BrowserPlatformCommandPaletteField: NSViewRepresentable {
         model.applyCompletion = { [weak coordinator = coordinator] text, range in
             coordinator?.insert(text, replacementRange: range)
         }
+        model.replaceSiteSearchText = { [weak coordinator = coordinator] text in
+            coordinator?.replaceSiteSearchText(text)
+        }
         return field
     }
 
@@ -131,6 +134,15 @@ struct BrowserPlatformCommandPaletteField: NSViewRepresentable {
         }
 
         func refreshSuffix() {
+            field?.placeholderString =
+                model.activeSiteSearch.map { String(localized: "Search \($0.name)…") }
+                ?? String(localized: "Search or Enter URL…")
+            if let site = model.siteSearchOffer {
+                suffixLabel.isHidden = true
+                suffixLabel.rootView.isVisible = false
+                field?.setAccessibilityHelp(String(localized: "Search \(site.name). Press Tab to enter a query."))
+                return
+            }
             guard let field, let editor = field.currentEditor() as? NSTextView,
                 !editor.hasMarkedText(), let proposal = model.urlCompletion,
                 let window = editor.window
@@ -162,11 +174,27 @@ struct BrowserPlatformCommandPaletteField: NSViewRepresentable {
             editingChanged()
         }
 
+        func replaceSiteSearchText(_ text: String) {
+            guard let field else { return }
+            field.stringValue = text
+            field.window?.makeFirstResponder(field)
+            if let editor = field.currentEditor() as? NSTextView {
+                editor.breakUndoCoalescing()
+                editor.string = text
+                editor.setSelectedRange(NSRange(location: text.utf16.count, length: 0))
+                editingChanged()
+            }
+        }
+
         func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             guard !textView.hasMarkedText() else { return false }
             switch selector {
-            case #selector(NSResponder.insertTab(_:)), #selector(NSResponder.moveRight(_:)):
+            case #selector(NSResponder.insertTab(_:)):
+                return model.acceptSiteSearch() || model.acceptURLCompletion()
+            case #selector(NSResponder.moveRight(_:)):
                 return model.acceptURLCompletion()
+            case #selector(NSResponder.deleteBackward(_:)) where textView.string.isEmpty:
+                return model.leaveSiteSearch()
             case #selector(NSResponder.insertNewline(_:)):
                 model.activateSelectedResult()
                 return true
@@ -179,6 +207,10 @@ struct BrowserPlatformCommandPaletteField: NSViewRepresentable {
                 refreshSuffix()
                 return true
             case #selector(NSResponder.cancelOperation(_:)):
+                if model.leaveSiteSearch() {
+                    refreshSuffix()
+                    return true
+                }
                 if model.urlCompletion != nil {
                     model.rejectURLCompletion()
                     refreshSuffix()

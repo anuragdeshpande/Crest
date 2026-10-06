@@ -49,6 +49,7 @@ struct BrowserGeneralSettingsPane: View {
             }
 
             #if os(macOS)
+                BrowserSiteSearchSettingsSection(store: .shared, profileID: browser.shownSpace?.profileID)
                 BrowserSplitFocusSettingsSection()
                 Section("Link dragging", systemImage: "cursorarrow.motionlines") {
                     Toggle(

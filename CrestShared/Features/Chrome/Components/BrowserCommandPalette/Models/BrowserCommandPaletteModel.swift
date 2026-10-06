@@ -37,9 +37,22 @@ final class BrowserCommandPaletteModel {
     private(set) var completionEditing = BrowserURLCompletionEditingState()
     private var completionProposal: AddressCompletion?
     @ObservationIgnored var applyCompletion: ((String, NSRange) -> Void)?
+    @ObservationIgnored var replaceSiteSearchText: ((String) -> Void)?
+    let siteSearches: BrowserSiteSearchStore?
+    private var siteSearchID: UUID?
+    private var siteSearchCanActivate = false
+
+    var activeSiteSearch: BrowserSiteSearch? {
+        siteSearches?.entries.first { $0.id == siteSearchID }
+    }
+
+    var siteSearchOffer: BrowserSiteSearch? {
+        guard siteSearchID == nil, siteSearchCanActivate, isCompletionSourceAvailable else { return nil }
+        return siteSearches?.match(query)
+    }
 
     var urlCompletion: AddressCompletion? {
-        guard isCompletionSourceAvailable, completionEditing.canPropose(for: query),
+        guard siteSearchID == nil, isCompletionSourceAvailable, completionEditing.canPropose(for: query),
             completionProposal?.typed == query
         else { return nil }
         return completionProposal
@@ -95,7 +108,8 @@ final class BrowserCommandPaletteModel {
         selectTab: @escaping (BrowserTabRuntimeAssignment, BrowserTabRuntimeAssignment) -> Bool,
         openURL: @escaping (BrowserTabRuntimeAssignment, URL) -> Bool,
         dismiss: @escaping () -> Void,
-        emptySelectionActions: BrowserEmptySelectionPaletteActions? = nil
+        emptySelectionActions: BrowserEmptySelectionPaletteActions? = nil,
+        siteSearches: BrowserSiteSearchStore? = nil
     ) {
         self.browser = browser
         self.space = space
@@ -110,6 +124,11 @@ final class BrowserCommandPaletteModel {
         openURLAction = openURL
         dismissAction = dismiss
         self.emptySelectionActions = emptySelectionActions
+        #if os(macOS)
+            self.siteSearches = siteSearches ?? .shared
+        #else
+            self.siteSearches = siteSearches
+        #endif
         // The palette opens with its rows: the resting answer is quick to
         // rank, so it is asked for on the main thread.
         if let answer = try? browser.core.query(question(for: initialQuery)) { show(answer, for: sequence) }
@@ -118,6 +137,7 @@ final class BrowserCommandPaletteModel {
     // MARK: - Actions - Completion
 
     func updateCompletionEditing(text: String, selection: NSRange, isComposing: Bool) {
+        siteSearchCanActivate = !isComposing && selection == NSRange(location: text.utf16.count, length: 0)
         completionEditing.update(text: text, selection: selection, isComposing: isComposing)
         if !isComposing { query = text }
     }
@@ -144,6 +164,30 @@ final class BrowserCommandPaletteModel {
         return true
     }
 
+    @discardableResult
+    func acceptSiteSearch() -> Bool {
+        guard let site = siteSearchOffer else { return false }
+        siteSearchID = site.id
+        invalidateURLCompletion()
+        query = ""
+        replaceSiteSearchText?("")
+        return true
+    }
+
+    @discardableResult
+    func leaveSiteSearch() -> Bool {
+        guard siteSearchID != nil else { return false }
+        siteSearchID = nil
+        requestAnswer()
+        replaceSiteSearchText?(query)
+        return true
+    }
+
+    func refreshSiteSearch() {
+        guard siteSearchID != nil else { return }
+        if activeSiteSearch == nil { leaveSiteSearch() } else { showSiteSearchAnswer(for: sequence) }
+    }
+
     // MARK: - Actions - Selection
 
     func moveSelection(by offset: Int) {
@@ -160,12 +204,25 @@ final class BrowserCommandPaletteModel {
     }
 
     func activateSelectedResult() {
+        if siteSearchID != nil {
+            guard activeSiteSearch != nil else {
+                leaveSiteSearch()
+                return
+            }
+            showSiteSearchAnswer(for: sequence)
+        }
         guard items.indices.contains(selectedResultIndex) else { return }
         activate(items[selectedResultIndex].row)
     }
 
     func activate(_ row: PaletteRow) {
         guard shownSequence == sequence else { return }
+        if siteSearchID != nil {
+            guard let site = activeSiteSearch, row.address == site.url(for: query)?.absoluteString else {
+                if activeSiteSearch == nil { leaveSiteSearch() } else { showSiteSearchAnswer(for: sequence) }
+                return
+            }
+        }
         if selectedTabID == nil {
             guard let actions = emptySelectionActions, let space,
                 actions.source == BrowserSpaceRuntimeAssignment(spaceID: space.id, profileID: space.profileID),
@@ -252,10 +309,14 @@ final class BrowserCommandPaletteModel {
     /// no later keystroke has asked again.
     private func requestAnswer() {
         sequence &+= 1
+        answerTask?.cancel()
+        if siteSearchID != nil {
+            showSiteSearchAnswer(for: sequence)
+            return
+        }
         let asked = sequence
         let question = question(for: query)
         let core = browser.core
-        answerTask?.cancel()
         answerTask = Task { [weak self] in
             guard let answer = await Self.answer(question, from: core), !Task.isCancelled, let self,
                 asked == sequence
@@ -284,6 +345,24 @@ final class BrowserCommandPaletteModel {
                 // fetch or an unreadable response leave them as they are.
             }
         }
+    }
+
+    private func showSiteSearchAnswer(for asked: Int) {
+        let rows: [PaletteRow]
+        if let site = activeSiteSearch, let url = site.url(for: query) {
+            rows = [
+                PaletteRow(
+                    kind: .search, title: query, subtitle: String(localized: "Search \(site.name)"),
+                    symbol: "magnifyingglass", subjectID: nil, tabID: nil, address: url.absoluteString,
+                    command: nil, engine: nil, customEngineID: nil)
+            ]
+        } else {
+            rows = []
+        }
+        show(
+            PaletteAnswer(
+                groups: [PaletteGroup(section: .intent, rows: rows)], completion: nil, suggestionAddress: nil),
+            for: asked)
     }
 
     private func show(_ answer: PaletteAnswer, for asked: Int) {
