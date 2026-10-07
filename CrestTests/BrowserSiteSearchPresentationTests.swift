@@ -24,7 +24,7 @@ final class BrowserSiteSearchPresentationTests: XCTestCase {
                         BrowserSiteSearchPill(site: site, showsCloseControl: true)
                     }
                 }
-                BrowserSettingsSectionGrid {
+                BrowserSettingsPane(.tabs) {
                     BrowserSiteSearchSettingsSection(
                         store: BrowserSiteSearchStore(entries: Array(BrowserSiteSearch.builtIn.prefix(3))))
                 }

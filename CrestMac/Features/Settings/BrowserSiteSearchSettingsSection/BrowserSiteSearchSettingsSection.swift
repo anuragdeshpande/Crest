@@ -9,7 +9,7 @@ struct BrowserSiteSearchSettingsSection: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        Section("Site Searches", systemImage: "magnifyingglass") {
+        Section("Site Searches") {
             CrestFormFootnote(
                 "Type a site name or shortcut, press Tab, then enter your query. Press Return to open the results."
             )
